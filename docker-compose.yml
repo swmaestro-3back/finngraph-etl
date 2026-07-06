@@ -1,0 +1,25 @@
+services:
+  db:
+    build:
+      context: ./docker/db
+      args:
+        BASE_IMAGE: timescale/timescaledb:latest-pg16
+        PGVECTOR_VERSION: v0.8.4
+    image: etl-timescaledb-pgvector:pg16
+    environment:
+      POSTGRES_USER: etl
+      POSTGRES_PASSWORD: etl
+      POSTGRES_DB: etl
+    ports:
+      - "${ETL_DB_PORT:-15432}:5432"
+    volumes:
+      - etl_pgdata:/var/lib/postgresql/data
+      - ./docker/db/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etl -d etl"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  etl_pgdata:
