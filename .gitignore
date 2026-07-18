@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+prompts/
 
 # Docker / local database
 *.log
@@ -15,3 +16,4 @@ airflow.db
 airflow.cfg
 logs/
 
+AGENTS.md

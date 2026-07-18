@@ -1,4 +1,3 @@
-import logging
 import time
 from string import Formatter
 from typing import List, Dict, Any
@@ -144,8 +143,6 @@ def collect_anchor_category_headlines(
     wait = WebDriverWait(driver, wait_seconds)
 
     try:
-        logging.info(f"카테고리 접속: {category_name}")
-
         driver.get(category_url)
 
         wait.until(
@@ -154,7 +151,7 @@ def collect_anchor_category_headlines(
             )
         )
 
-        for click_index in range(more_click_count):
+        for _ in range(more_click_count):
             try:
                 more_button = wait.until(
                     EC.element_to_be_clickable(
@@ -170,15 +167,7 @@ def collect_anchor_category_headlines(
                 driver.execute_script("arguments[0].click();", more_button)
                 time.sleep(1.5)
 
-                logging.info(
-                    f"클릭 완료: "
-                    f"category={category_name}, count={click_index + 1}"
-                )
-
             except TimeoutException:
-                logging.info(
-                    f"클릭 불가: category={category_name}"
-                )
                 break
 
         article_elements = driver.find_elements(
@@ -220,10 +209,6 @@ def collect_anchor_category_headlines(
                     "_category_name": category_name
                 }
             )
-
-        logging.info(
-            f"수집 완료: category={category_name}, count={len(items)}"
-        )
 
         return items
 
