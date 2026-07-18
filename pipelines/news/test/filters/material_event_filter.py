@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -6,6 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from string import Template
 from typing import Any, Dict, List, Tuple
+
+import httpx
 
 from news.test.utils.text_utils import (
     clean_article_body_for_storage,
@@ -149,6 +152,11 @@ def get_material_event_filter_config() -> Dict[str, Any]:
             "body_limit": getattr(config, "MATERIAL_EVENT_FILTER_BODY_LIMIT", 12000),
             "max_tokens": getattr(config, "MATERIAL_EVENT_FILTER_MAX_TOKENS", 80),
             "max_workers": getattr(config, "MATERIAL_EVENT_FILTER_MAX_WORKERS", 3),
+            "max_concurrency": getattr(
+                config,
+                "MATERIAL_EVENT_FILTER_MAX_CONCURRENCY",
+                3,
+            ),
             "batch_size": getattr(config, "MATERIAL_EVENT_FILTER_BATCH_SIZE", 3),
             "fail_open": getattr(config, "MATERIAL_EVENT_FILTER_FAIL_OPEN", False),
             "vllm_base_url": getattr(config, "VLLM_BASE_URL", ""),
@@ -169,6 +177,7 @@ def get_material_event_filter_config() -> Dict[str, Any]:
             "body_limit": 12000,
             "max_tokens": 80,
             "max_workers": 3,
+            "max_concurrency": 3,
             "batch_size": 3,
             "fail_open": False,
             "vllm_base_url": "",
@@ -683,26 +692,24 @@ def build_llm_failure_result(
     }
 
 
-def judge_material_event_with_vllm(
+def build_vllm_chat_completion_request(
     item: Dict[str, Any],
     pipeline_input: Dict[str, Any] | None,
     filter_config: Dict[str, Any]
-) -> Dict[str, Any]:
-    import requests
-
-    base_url = str(filter_config.get("vllm_base_url", "")).rstrip("/")
-    model = filter_config.get("vllm_model", "")
+) -> Tuple[str, Dict[str, str], Dict[str, Any], int]:
+    base_url = str(filter_config.get("vllm_base_url") or "").rstrip("/")
+    model = str(filter_config.get("vllm_model") or "")
 
     if not base_url or not model:
         raise RuntimeError("vLLM 이벤트 필터 설정이 비어있음")
 
-    response = requests.post(
+    return (
         f"{base_url}/chat/completions",
-        headers={
+        {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {filter_config.get('vllm_api_key') or 'EMPTY'}",
         },
-        json={
+        {
             "model": model,
             "messages": [
                 {
@@ -727,11 +734,14 @@ def judge_material_event_with_vllm(
             },
             "stream": False,
         },
-        timeout=int(filter_config.get("vllm_timeout") or 300),
+        int(filter_config.get("vllm_timeout") or 300),
     )
-    response.raise_for_status()
 
-    choices = response.json().get("choices", [])
+
+def parse_vllm_material_event_response(
+    response_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    choices = response_data.get("choices", [])
 
     if not choices:
         raise RuntimeError("vLLM 이벤트 필터 choices가 비어있음")
@@ -744,6 +754,51 @@ def judge_material_event_with_vllm(
         raise RuntimeError("vLLM 이벤트 필터 JSON 파싱 실패")
 
     return normalize_llm_material_event_result(parsed)
+
+
+def judge_material_event_with_vllm(
+    item: Dict[str, Any],
+    pipeline_input: Dict[str, Any] | None,
+    filter_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    import requests
+
+    url, headers, payload, timeout = build_vllm_chat_completion_request(
+        item=item,
+        pipeline_input=pipeline_input,
+        filter_config=filter_config,
+    )
+    response = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+
+    return parse_vllm_material_event_response(response.json())
+
+
+async def judge_material_event_with_vllm_async(
+    item: Dict[str, Any],
+    pipeline_input: Dict[str, Any] | None,
+    filter_config: Dict[str, Any],
+    client: httpx.AsyncClient,
+) -> Dict[str, Any]:
+    url, headers, payload, timeout = build_vllm_chat_completion_request(
+        item=item,
+        pipeline_input=pipeline_input,
+        filter_config=filter_config,
+    )
+    response = await client.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+
+    return parse_vllm_material_event_response(response.json())
 
 
 def judge_material_event_with_cloud(
@@ -1146,6 +1201,81 @@ def build_material_event_analyses_sequential(
     }
 
 
+async def build_material_event_analysis_for_item_async(
+    item: Dict[str, Any],
+    pipeline_input: Dict[str, Any] | None,
+    use_llm: bool,
+    filter_config: Dict[str, Any] | None,
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
+) -> Dict[str, Any]:
+    body_limit = int((filter_config or {}).get("body_limit") or 12000)
+    deterministic_result = build_deterministic_material_event_result(
+        item=item,
+        body_limit=body_limit,
+    )
+
+    if deterministic_result:
+        return deterministic_result
+
+    if not use_llm:
+        return build_safe_keep_result(provider="llm_disabled")
+
+    try:
+        async with semaphore:
+            return await judge_material_event_with_vllm_async(
+                item=item,
+                pipeline_input=pipeline_input,
+                filter_config=filter_config or {},
+                client=client,
+            )
+    except Exception as e:
+        title = get_printable_text(item.get("title", ""))
+        fail_open = bool((filter_config or {}).get("fail_open", False))
+        logging.warning(
+            f"vLLM 비동기 이벤트 필터 실패: fail_open={fail_open}, "
+            f"title={title}, error={type(e).__name__}: {e}"
+        )
+        return build_llm_failure_result(
+            provider="llm_error",
+            fail_open=fail_open,
+        )
+
+
+async def build_material_event_analyses_async(
+    items: List[Dict[str, Any]],
+    pipeline_input: Dict[str, Any] | None,
+    use_llm: bool,
+    filter_config: Dict[str, Any] | None,
+    max_concurrency: int,
+) -> Dict[int, Dict[str, Any]]:
+    max_concurrency = max(int(max_concurrency or 1), 1)
+    semaphore = asyncio.Semaphore(max_concurrency)
+    limits = httpx.Limits(
+        max_connections=max_concurrency,
+        max_keepalive_connections=max_concurrency,
+    )
+
+    async with httpx.AsyncClient(limits=limits) as client:
+        tasks = [
+            build_material_event_analysis_for_item_async(
+                item=item,
+                pipeline_input=pipeline_input,
+                use_llm=use_llm,
+                filter_config=filter_config,
+                client=client,
+                semaphore=semaphore,
+            )
+            for item in items
+        ]
+        results = await asyncio.gather(*tasks)
+
+    return {
+        index: analysis
+        for index, analysis in enumerate(results)
+    }
+
+
 def build_material_event_analyses_threaded(
     items: List[Dict[str, Any]],
     pipeline_input: Dict[str, Any] | None,
@@ -1288,6 +1418,7 @@ def filter_material_event_news(
     min_confidence: float | None = None,
     mode: str = "sequential",
     max_workers: int | None = None,
+    max_concurrency: int | None = None,
     batch_size: int | None = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
@@ -1299,12 +1430,38 @@ def filter_material_event_news(
     if max_workers is None:
         max_workers = int(filter_config.get("max_workers", 3))
 
+    if max_concurrency is None:
+        max_concurrency = int(filter_config.get("max_concurrency", 3))
+
     if batch_size is None:
         batch_size = int(filter_config.get("batch_size", 3))
 
     mode = (mode or "sequential").lower()
+    provider = str(filter_config.get("provider") or "vllm").lower()
+    is_vllm_provider = provider not in {
+        "cloud",
+        "openai",
+        "openai_compatible",
+        "ollama",
+    }
 
-    if mode == "thread":
+    if mode == "async":
+        if not is_vllm_provider:
+            raise ValueError("async mode는 vLLM provider에서만 지원합니다.")
+
+        analyses = asyncio.run(
+            build_material_event_analyses_async(
+                items=items,
+                pipeline_input=pipeline_input,
+                use_llm=bool(use_llm),
+                filter_config=filter_config,
+                max_concurrency=max_concurrency,
+            )
+        )
+    elif mode == "thread":
+        if is_vllm_provider:
+            raise ValueError("vLLM provider는 thread 대신 async mode를 사용해야 합니다.")
+
         analyses = build_material_event_analyses_threaded(
             items=items,
             pipeline_input=pipeline_input,

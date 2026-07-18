@@ -8,6 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from news.config import (
     MATERIAL_EVENT_FILTER_BATCH_SIZE,
+    MATERIAL_EVENT_FILTER_MAX_CONCURRENCY,
     MATERIAL_EVENT_FILTER_MAX_WORKERS,
 )
 from news.test.filters.material_event_filter import filter_material_event_news
@@ -48,15 +49,21 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["sequential", "thread", "batch"],
+        choices=["sequential", "async", "thread", "batch"],
         default="sequential",
-        help="LLM 필터 실행 방식",
+        help="LLM 필터 실행 방식. vLLM은 async, Ollama/cloud는 thread 사용",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=MATERIAL_EVENT_FILTER_MAX_WORKERS,
-        help="thread mode에서 동시에 처리할 요청 수",
+        help="Ollama/cloud thread mode에서 동시에 처리할 요청 수",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=MATERIAL_EVENT_FILTER_MAX_CONCURRENCY,
+        help="vLLM async mode에서 동시에 처리할 요청 수",
     )
     parser.add_argument(
         "--batch-size",
@@ -74,6 +81,7 @@ def main():
         use_llm=True,
         mode=args.mode,
         max_workers=args.workers,
+        max_concurrency=args.concurrency,
         batch_size=args.batch_size,
     )
 
