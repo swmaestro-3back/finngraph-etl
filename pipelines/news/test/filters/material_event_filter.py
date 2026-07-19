@@ -147,7 +147,7 @@ def get_material_event_filter_config() -> Dict[str, Any]:
         from news import config
 
         return {
-            "enable_llm": getattr(config, "ENABLE_LLM_MATERIAL_EVENT_FILTER", True),
+            "enable_llm": True,
             "provider": getattr(config, "MATERIAL_EVENT_FILTER_PROVIDER", "vllm"),
             "body_limit": getattr(config, "MATERIAL_EVENT_FILTER_BODY_LIMIT", 12000),
             "max_tokens": getattr(config, "MATERIAL_EVENT_FILTER_MAX_TOKENS", 80),
