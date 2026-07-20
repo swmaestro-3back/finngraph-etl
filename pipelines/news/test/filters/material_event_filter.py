@@ -1459,9 +1459,6 @@ def filter_material_event_news(
             )
         )
     elif mode == "thread":
-        if is_vllm_provider:
-            raise ValueError("vLLM provider는 thread 대신 async mode를 사용해야 합니다.")
-
         analyses = build_material_event_analyses_threaded(
             items=items,
             pipeline_input=pipeline_input,

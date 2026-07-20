@@ -51,7 +51,7 @@ def main():
         "--mode",
         choices=["sequential", "async", "thread", "batch"],
         default="sequential",
-        help="LLM 필터 실행 방식. vLLM은 async, Ollama/cloud는 thread 사용",
+        help="LLM 필터 실행 방식. vLLM은 async 또는 thread, Ollama/cloud는 thread 사용",
     )
     parser.add_argument(
         "--workers",
