@@ -5,23 +5,23 @@ from pipelines.news.config import (
     OFFICIAL_SOURCE_THRESHOLD,
     MAX_TOTAL_COLLECTED_ITEMS
 )
-from pipelines.news.collectors.anchor_headline_collector import (
+from pipelines.news.extractors.anchor_headline_collector import (
     ANCHOR_CATEGORIES,
     iter_anchor_category_headline_pages,
     validate_anchor_headline_settings,
 )
-from pipelines.news.filters.duplicate_filter import (
+from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
     remove_duplicate_by_url,
     remove_duplicate_by_title,
 )
-from pipelines.news.repositories.news_repository import (
+from pipelines.news.loaders.news_repository import (
     filter_new_news_by_db,
     has_article_body,
     save_news_items
 )
-from pipelines.news.filters.news_type_filter import filter_official_source_news
-from pipelines.news.collectors.text_fetcher import enrich_items_with_article_body
+from pipelines.news.transformers.news_type_filter import filter_official_source_news
+from pipelines.news.extractors.text_fetcher import enrich_items_with_article_body
 
 
 def collect_category_new_headlines(

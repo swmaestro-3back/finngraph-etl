@@ -15,7 +15,7 @@ from pipelines.news.utils.text_utils import (
     get_printable_text,
 )
 from pipelines.news.utils.date_utils import parse_news_pub_date
-from pipelines.news.filters.duplicate_filter import (
+from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
     normalize_url_for_duplicate
 )

@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from pipelines.news.config import REQUEST_DELAY, ANCHOR_HOST
-from pipelines.news.collectors.article_metadata import extract_anchor_published_at
+from pipelines.news.extractors.article_metadata import extract_anchor_published_at
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,

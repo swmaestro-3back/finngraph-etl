@@ -5,8 +5,8 @@ from pipelines.news.config import (
     MATERIAL_EVENT_FILTER_MAX_CONCURRENCY,
     MATERIAL_EVENT_FILTER_MAX_WORKERS,
 )
-from pipelines.news.filters.material_event_filter import filter_material_event_news
-from pipelines.news.repositories.news_repository import (
+from pipelines.news.transformers.material_event_filter import filter_material_event_news
+from pipelines.news.loaders.news_repository import (
     delete_news_by_ids,
     extract_news_ids_from_removed_items,
     fetch_recent_news_items,
