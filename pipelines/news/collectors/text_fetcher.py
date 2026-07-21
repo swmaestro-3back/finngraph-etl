@@ -6,9 +6,9 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from news.config import REQUEST_DELAY, ANCHOR_HOST
-from news.test.collectors.article_metadata import extract_anchor_published_at
-from news.test.utils.text_utils import (
+from pipelines.news.config import REQUEST_DELAY, ANCHOR_HOST
+from pipelines.news.collectors.article_metadata import extract_anchor_published_at
+from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )

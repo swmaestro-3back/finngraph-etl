@@ -1,7 +1,7 @@
 import re
 from typing import List, Dict, Any, Tuple
 
-from news.test.utils.text_utils import get_printable_text, clean_text
+from pipelines.news.utils.text_utils import get_printable_text, clean_text
 
 
 EXCLUDE_REPORT_KEYWORDS = [

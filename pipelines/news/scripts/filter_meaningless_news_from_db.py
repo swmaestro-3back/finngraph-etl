@@ -1,23 +1,17 @@
-from pathlib import Path
 import argparse
-import sys
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from news.config import (
+from pipelines.news.config import (
     MATERIAL_EVENT_FILTER_BATCH_SIZE,
     MATERIAL_EVENT_FILTER_MAX_CONCURRENCY,
     MATERIAL_EVENT_FILTER_MAX_WORKERS,
 )
-from news.test.filters.material_event_filter import filter_material_event_news
-from news.test.repositories.news_repository import (
+from pipelines.news.filters.material_event_filter import filter_material_event_news
+from pipelines.news.repositories.news_repository import (
     delete_news_by_ids,
     extract_news_ids_from_removed_items,
     fetch_recent_news_items,
 )
-from news.test.utils.text_utils import get_printable_text
+from pipelines.news.utils.text_utils import get_printable_text
 
 
 def print_removed_candidate(removed):

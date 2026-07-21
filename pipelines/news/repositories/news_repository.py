@@ -3,19 +3,19 @@ from typing import Dict, Any, List, Set
 
 import psycopg2
 
-from news.config import (
+from pipelines.news.config import (
     DB_HOST,
     DB_PORT,
     DB_NAME,
     DB_USER,
     DB_PASSWORD,
 )
-from news.test.utils.text_utils import (
+from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-from news.test.utils.date_utils import parse_news_pub_date
-from news.test.filters.duplicate_filter import (
+from pipelines.news.utils.date_utils import parse_news_pub_date
+from pipelines.news.filters.duplicate_filter import (
     normalize_title_for_duplicate,
     normalize_url_for_duplicate
 )

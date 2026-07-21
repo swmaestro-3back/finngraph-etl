@@ -3,7 +3,7 @@ import re
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 
-from news.test.utils.text_utils import get_printable_text
+from pipelines.news.utils.text_utils import get_printable_text
 
 
 def normalize_title_for_duplicate(title: str) -> str:
