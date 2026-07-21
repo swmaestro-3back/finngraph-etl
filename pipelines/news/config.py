@@ -47,6 +47,11 @@ def load_anchor_categories() -> dict[int, str]:
 
 ANCHOR_CATEGORIES = load_anchor_categories()
 
+MORE_API_PATH_SECTION = os.getenv("MORE_API_PATH_SECTION")
+MORE_API_PATH_LATEST = os.getenv("MORE_API_PATH_LATEST")
+PARENT_SECTION_ID = os.getenv("PARENT_SECTION_ID")
+HEADLINE_SELECTOR = os.getenv("HEADLINE_SELECTOR")
+
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = int(os.getenv("DB_PORT"))
 DB_NAME = os.getenv("DB_NAME")
