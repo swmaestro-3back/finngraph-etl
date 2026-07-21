@@ -29,18 +29,6 @@ def collect_category_new_headlines(
     target_count: int,
     max_more_calls: int = HEADLINE_MORE_COUNT,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """카테고리 하나에서 신규 기사를 target_count개 확보할 때까지 수집한다.
-
-    페이지("더보기")를 순차적으로 받아 URL/제목 중복 제거 → DB 기존 제외 →
-    공식 출처 필터를 적용하며 통과분을 누적한다. 중단 조건은 셋 중 하나:
-
-    1. 누적된 신규 기사가 target_count에 도달 (목표 달성)
-    2. 한 페이지의 후보가 전부 DB에 이미 있음 → 지난 실행 이후 새 기사가
-       없는 구간(워터마크)에 도달했다고 보고 중단 (증분 수집)
-    3. 더 이상 페이지가 없거나 max_more_calls 상한 도달 (안전장치)
-
-    반환: (수집된 신규 기사 리스트, 통계 dict)
-    """
 
     category_name = ANCHOR_CATEGORIES.get(category_id, str(category_id))
 
@@ -100,7 +88,6 @@ def collect_category_new_headlines(
         page_new_news, page_db_removed = filter_new_news_by_db(page_candidates)
         stats["db_existing_removed"] += len(page_db_removed)
 
-        # 워터마크: 이 페이지 후보가 전부 DB에 있으면 과거 구간 도달 → 중단
         if not page_new_news:
             stats["stopped_by_watermark"] = True
             break
