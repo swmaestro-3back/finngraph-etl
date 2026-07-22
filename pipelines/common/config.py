@@ -10,6 +10,9 @@ ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
+    # .env 파일을 읽어오기 위한 설정
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+
     database_url: str = Field(
         default="postgresql+psycopg://etl:etl@localhost:15432/etl",
         validation_alias="DATABASE_URL",
@@ -29,7 +32,10 @@ class Settings(BaseSettings):
         validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
     )
 
-    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    NEO4J_URI: str
+    NEO4J_USERNAME: str
+    NEO4J_PASSWORD: str
+    NEO4J_DATABASE: str
 
 
 @lru_cache
