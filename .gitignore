@@ -8,6 +8,11 @@ __pycache__/
 .mypy_cache/
 prompts/
 
+# Python 빌드 산출물 (editable install 시 생성)
+*.egg-info/
+build/
+dist/
+
 # Docker / local database
 *.log
 
