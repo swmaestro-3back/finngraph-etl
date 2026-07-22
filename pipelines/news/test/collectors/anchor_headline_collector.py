@@ -1,13 +1,33 @@
+import logging
 import time
+from datetime import datetime
 from string import Formatter
-from typing import List, Dict, Any
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup
 
 from news.config import (
     ANCHOR_CATEGORIES,
     ANCHOR_HOST,
     ANCHOR_URL_TEMPLATE,
+    HEADLINE_MORE_COUNT,
+    HEADLINE_SELECTOR,
+    MORE_API_PATH_LATEST,
+    MORE_API_PATH_SECTION,
+    PARENT_SECTION_ID,
+    REQUEST_DELAY,
 )
+
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+}
 
 
 def normalize_anchor_article_link(url: str) -> str:
@@ -18,31 +38,6 @@ def normalize_anchor_article_link(url: str) -> str:
     parsed = urlparse(url)
 
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-
-
-def create_headless_chrome_driver():
-
-    try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-    except ImportError as e:
-        raise RuntimeError(
-            "라이브러리가 설치되어 있지 않습니다."
-        ) from e
-
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1280,2400")
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-
-    return webdriver.Chrome(options=options)
 
 
 def validate_anchor_headline_settings() -> None:
@@ -119,75 +114,158 @@ def build_anchor_category_url(category_id: int) -> str:
     return category_url
 
 
+def extract_section_ids(category_url: str) -> Tuple[str, str]:
+
+    parsed = urlparse(category_url)
+    numeric_segments = [
+        segment
+        for segment in parsed.path.split("/")
+        if segment.isdigit()
+    ]
+
+    if not numeric_segments:
+        return "", ""
+
+    if len(numeric_segments) >= 2:
+        return numeric_segments[0], numeric_segments[1]
+
+    if numeric_segments[0] == PARENT_SECTION_ID:
+        return PARENT_SECTION_ID, ""
+
+    return PARENT_SECTION_ID, numeric_segments[0]
+
+
+def extract_next_cursor(soup: BeautifulSoup) -> str:
+
+    cursor_elements = soup.select("[data-cursor]")
+
+    if not cursor_elements:
+        return ""
+
+    return (cursor_elements[-1].get("data-cursor") or "").strip()
+
+
+def extract_headline_pairs(
+    soup: BeautifulSoup,
+    base_url: str
+) -> List[tuple]:
+    pairs = []
+
+    for element in soup.select(HEADLINE_SELECTOR):
+        strong = element.select_one("strong")
+
+        if strong is not None:
+            title = strong.get_text(strip=True)
+        else:
+            title = element.get_text(strip=True)
+
+        href = element.get("href") or ""
+
+        if href:
+            href = urljoin(base_url, href)
+
+        link = normalize_anchor_article_link(href)
+        pairs.append((title, link))
+
+    return pairs
+
+
+def extract_rendered_html(payload: Any) -> str:
+
+    if isinstance(payload, str):
+        return payload
+
+    if isinstance(payload, dict):
+        rendered = payload.get("renderedComponent")
+
+        if isinstance(rendered, dict):
+            return "\n".join(
+                value
+                for value in rendered.values()
+                if isinstance(value, str)
+            )
+
+        return "\n".join(
+            extract_rendered_html(value)
+            for value in payload.values()
+            if isinstance(value, (str, dict, list))
+        )
+
+    if isinstance(payload, list):
+        return "\n".join(
+            extract_rendered_html(value)
+            for value in payload
+            if isinstance(value, (str, dict, list))
+        )
+
+    return ""
+
+
+def fetch_more_headline_fragment(
+    session: requests.Session,
+    category_url: str,
+    page_no: int,
+    cursor: str,
+    timeout: int
+) -> Optional[str]:
+    parsed = urlparse(category_url)
+    sid, sid2 = extract_section_ids(category_url)
+
+    api_path = MORE_API_PATH_LATEST if sid2 else MORE_API_PATH_SECTION
+    api_url = f"{parsed.scheme}://{parsed.netloc}{api_path}"
+
+    params = {
+        "sid": sid,
+        "sid2": sid2,
+        "cluid": "",
+        "pageNo": page_no,
+        "date": "",
+        "next": cursor,
+        "_": int(time.time() * 1000),
+    }
+
+    headers = dict(REQUEST_HEADERS)
+    headers["Referer"] = category_url
+
+    try:
+        response = session.get(
+            api_url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logging.warning(
+            "요청 실패 (sid=%s, sid2=%s, page_no=%s): %s",
+            sid, sid2, page_no, e
+        )
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text
+
+    return extract_rendered_html(payload)
+
+
 def collect_anchor_category_headlines(
     category_id: int,
-    more_click_count: int = 3,
+    more_click_count: int = HEADLINE_MORE_COUNT,
     wait_seconds: int = 10
 ) -> List[Dict[str, Any]]:
 
     category_url = build_anchor_category_url(category_id)
-
-    try:
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.common.exceptions import TimeoutException
-    except ImportError as e:
-        raise RuntimeError(
-            "라이브러리가 설치되어 있지 않습니다. "
-        ) from e
-
     category_name = ANCHOR_CATEGORIES.get(category_id, str(category_id))
 
-    driver = create_headless_chrome_driver()
-    wait = WebDriverWait(driver, wait_seconds)
+    items: List[Dict[str, Any]] = []
+    seen_links = set()
 
-    try:
-        driver.get(category_url)
+    def append_headlines(soup: BeautifulSoup) -> int:
+        appended = 0
 
-        wait.until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, "a.sa_text_title")
-            )
-        )
-
-        for _ in range(more_click_count):
-            try:
-                more_button = wait.until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, "._CONTENT_LIST_LOAD_MORE_BUTTON")
-                    )
-                )
-
-                driver.execute_script(
-                    "arguments[0].scrollIntoView({block: 'center'});",
-                    more_button
-                )
-                time.sleep(0.5)
-                driver.execute_script("arguments[0].click();", more_button)
-                time.sleep(1.5)
-
-            except TimeoutException:
-                break
-
-        article_elements = driver.find_elements(
-            By.CSS_SELECTOR,
-            "a.sa_text_title"
-        )
-
-        items = []
-        seen_links = set()
-
-        for element in article_elements:
-            try:
-                title = element.find_element(By.CSS_SELECTOR, "strong").text.strip()
-            except Exception:
-                title = element.text.strip()
-
-            link = normalize_anchor_article_link(
-                element.get_attribute("href") or ""
-            )
-
+        for title, link in extract_headline_pairs(soup, category_url):
             if not title or not link:
                 continue
 
@@ -195,6 +273,7 @@ def collect_anchor_category_headlines(
                 continue
 
             seen_links.add(link)
+            appended += 1
 
             items.append(
                 {
@@ -210,15 +289,58 @@ def collect_anchor_category_headlines(
                 }
             )
 
+        return appended
+
+    session = requests.Session()
+
+    try:
+        response = session.get(
+            category_url,
+            headers=REQUEST_HEADERS,
+            timeout=wait_seconds,
+        )
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        append_headlines(soup)
+
+        cursor = extract_next_cursor(soup)
+        if not cursor:
+            cursor = datetime.now().strftime("%Y%m%d%H%M%S")
+
+        for page_no in range(1, more_click_count + 1):
+            time.sleep(REQUEST_DELAY)
+
+            fragment_html = fetch_more_headline_fragment(
+                session=session,
+                category_url=category_url,
+                page_no=page_no,
+                cursor=cursor,
+                timeout=wait_seconds,
+            )
+
+            if not fragment_html:
+                break
+
+            fragment = BeautifulSoup(fragment_html, "html.parser")
+            appended = append_headlines(fragment)
+            next_cursor = extract_next_cursor(fragment)
+
+            if next_cursor:
+                cursor = next_cursor
+
+            if appended == 0:
+                break
+
         return items
 
     finally:
-        driver.quit()
+        session.close()
 
 
 def collect_anchor_headlines(
     category_ids: List[int] | None = None,
-    more_click_count: int = 3
+    more_click_count: int = HEADLINE_MORE_COUNT
 ) -> List[Dict[str, Any]]:
 
     validate_anchor_headline_settings()

@@ -147,7 +147,7 @@ def get_material_event_filter_config() -> Dict[str, Any]:
         from news import config
 
         return {
-            "enable_llm": getattr(config, "ENABLE_LLM_MATERIAL_EVENT_FILTER", True),
+            "enable_llm": True,
             "provider": getattr(config, "MATERIAL_EVENT_FILTER_PROVIDER", "vllm"),
             "body_limit": getattr(config, "MATERIAL_EVENT_FILTER_BODY_LIMIT", 12000),
             "max_tokens": getattr(config, "MATERIAL_EVENT_FILTER_MAX_TOKENS", 80),
@@ -1459,9 +1459,6 @@ def filter_material_event_news(
             )
         )
     elif mode == "thread":
-        if is_vllm_provider:
-            raise ValueError("vLLM provider는 thread 대신 async mode를 사용해야 합니다.")
-
         analyses = build_material_event_analyses_threaded(
             items=items,
             pipeline_input=pipeline_input,

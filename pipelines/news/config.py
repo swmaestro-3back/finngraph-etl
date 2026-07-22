@@ -47,6 +47,11 @@ def load_anchor_categories() -> dict[int, str]:
 
 ANCHOR_CATEGORIES = load_anchor_categories()
 
+MORE_API_PATH_SECTION = os.getenv("MORE_API_PATH_SECTION")
+MORE_API_PATH_LATEST = os.getenv("MORE_API_PATH_LATEST")
+PARENT_SECTION_ID = os.getenv("PARENT_SECTION_ID")
+HEADLINE_SELECTOR = os.getenv("HEADLINE_SELECTOR")
+
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = int(os.getenv("DB_PORT"))
 DB_NAME = os.getenv("DB_NAME")
@@ -70,8 +75,6 @@ REQUEST_DELAY = float(os.getenv("REQUEST_DELAY"))
 HEADLINE_MORE_COUNT = int(os.getenv("HEADLINE_MORE_COUNT"))
 
 ## 필터 관련 상수
-ENABLE_MATERIAL_EVENT_FILTER = True
-ENABLE_LLM_MATERIAL_EVENT_FILTER = True
 MATERIAL_EVENT_FILTER_PROVIDER = os.getenv("MATERIAL_EVENT_FILTER_PROVIDER")
 MATERIAL_EVENT_FILTER_BODY_LIMIT = int(os.getenv("MATERIAL_EVENT_FILTER_BODY_LIMIT"))
 MATERIAL_EVENT_FILTER_MAX_TOKENS = int(os.getenv("MATERIAL_EVENT_FILTER_MAX_TOKENS"))
@@ -92,3 +95,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
