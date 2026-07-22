@@ -12,10 +12,7 @@ CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 API_BASE_URL = os.getenv("API_BASE_URL")
 ANCHOR_HOST = os.getenv("ANCHOR_HOST", "").strip().lower()
-ANCHOR_URL_TEMPLATE = os.getenv(
-    "ANCHOR_URL_TEMPLATE",
-    ""
-).strip()
+ANCHOR_URL_TEMPLATE = os.getenv("ANCHOR_URL_TEMPLATE", "").strip()
 
 
 def load_anchor_categories() -> dict[int, str]:
@@ -27,14 +24,10 @@ def load_anchor_categories() -> dict[int, str]:
     try:
         parsed_categories = json.loads(raw_categories)
     except json.JSONDecodeError as e:
-        raise RuntimeError(
-            "ANCHOR_CATEGORIES 환경 변수는 올바른 JSON이어야 합니다."
-        ) from e
+        raise RuntimeError("ANCHOR_CATEGORIES 환경 변수는 올바른 JSON이어야 합니다.") from e
 
     if not isinstance(parsed_categories, dict):
-        raise RuntimeError(
-            "ANCHOR_CATEGORIES 환경 변수는 JSON 객체여야 합니다."
-        )
+        raise RuntimeError("ANCHOR_CATEGORIES 환경 변수는 JSON 객체여야 합니다.")
 
     try:
         return {
@@ -42,9 +35,7 @@ def load_anchor_categories() -> dict[int, str]:
             for category_id, category_name in parsed_categories.items()
         }
     except (TypeError, ValueError) as e:
-        raise RuntimeError(
-            "ANCHOR_CATEGORIES의 카테고리 ID는 정수여야 합니다."
-        ) from e
+        raise RuntimeError("ANCHOR_CATEGORIES의 카테고리 ID는 정수여야 합니다.") from e
 
 
 ANCHOR_CATEGORIES = load_anchor_categories()
@@ -88,15 +79,11 @@ MATERIAL_EVENT_FILTER_MAX_CONCURRENCY = int(
     )
 )
 MATERIAL_EVENT_FILTER_BATCH_SIZE = int(os.getenv("MATERIAL_EVENT_FILTER_BATCH_SIZE"))
-MATERIAL_EVENT_FILTER_FAIL_OPEN = (
-    os.getenv("MATERIAL_EVENT_FILTER_FAIL_OPEN", "false").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+MATERIAL_EVENT_FILTER_FAIL_OPEN = os.getenv(
+    "MATERIAL_EVENT_FILTER_FAIL_OPEN", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)

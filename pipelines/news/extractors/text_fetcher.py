@@ -1,18 +1,17 @@
-import time
 import logging
-from typing import List, Dict, Any, Tuple
+import time
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
-from pipelines.news.config import REQUEST_DELAY, ANCHOR_HOST
+from pipelines.news.config import ANCHOR_HOST, REQUEST_DELAY
 from pipelines.news.extractors.article_metadata import extract_anchor_published_at
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-
 
 DESCRIPTION_FROM_BODY_LENGTH = 150
 
@@ -28,18 +27,15 @@ def is_anchor_link(url: str) -> bool:
         parsed = urlparse(url)
         host = parsed.netloc.lower()
 
-        return (
-            host == ANCHOR_HOST
-            or host.endswith(f".{ANCHOR_HOST}")
-        )
+        return host == ANCHOR_HOST or host.endswith(f".{ANCHOR_HOST}")
 
     except Exception:
         return False
 
 
 def filter_only_anchor_items(
-    items: List[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     anchor_items = []
     removed_items = []
 
@@ -49,17 +45,19 @@ def filter_only_anchor_items(
         if is_anchor_link(link):
             anchor_items.append(item)
         else:
-            removed_items.append({
-                "removed_item": item,
-                "reason": "지정된 링크가 아님",
-                "link": link,
-                "originallink": item.get("originallink", "")
-            })
+            removed_items.append(
+                {
+                    "removed_item": item,
+                    "reason": "지정된 링크가 아님",
+                    "link": link,
+                    "originallink": item.get("originallink", ""),
+                }
+            )
 
     return anchor_items, removed_items
 
 
-def fetch_anchor_article_data_from_url(url: str) -> Tuple[str, str]:
+def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
 
     if not url:
         return "", ""
@@ -73,15 +71,11 @@ def fetch_anchor_article_data_from_url(url: str) -> Tuple[str, str]:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
-        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
     }
 
     try:
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=10
-        )
+        response = requests.get(url, headers=headers, timeout=10)
 
         response.raise_for_status()
 
@@ -91,12 +85,7 @@ def fetch_anchor_article_data_from_url(url: str) -> Tuple[str, str]:
         for tag in soup(["script", "style", "nav", "footer", "aside", "iframe"]):
             tag.decompose()
 
-        selectors = [
-            "#dic_area",
-            "#articeBody",
-            "#articleBodyContents",
-            "article"
-        ]
+        selectors = ["#dic_area", "#articeBody", "#articleBodyContents", "article"]
 
         for selector in selectors:
             selected = soup.select(selector)
@@ -111,15 +100,9 @@ def fetch_anchor_article_data_from_url(url: str) -> Tuple[str, str]:
             if selector_candidates:
                 return max(selector_candidates, key=len), published_at
 
-        paragraphs = [
-            p.get_text(separator="\n", strip=True)
-            for p in soup.find_all("p")
-        ]
+        paragraphs = [p.get_text(separator="\n", strip=True) for p in soup.find_all("p")]
 
-        paragraphs = [
-            p for p in paragraphs
-            if len(p) >= 30
-        ]
+        paragraphs = [p for p in paragraphs if len(p) >= 30]
 
         fallback_text = "\n".join(paragraphs)
 
@@ -157,30 +140,17 @@ def fetch_article_body_from_url(url: str) -> str:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
-        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
     }
 
     try:
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=10
-        )
+        response = requests.get(url, headers=headers, timeout=10)
 
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        for tag in soup([
-            "script",
-            "style",
-            "nav",
-            "footer",
-            "aside",
-            "iframe",
-            "form",
-            "button"
-        ]):
+        for tag in soup(["script", "style", "nav", "footer", "aside", "iframe", "form", "button"]):
             tag.decompose()
 
         selectors = [
@@ -218,15 +188,9 @@ def fetch_article_body_from_url(url: str) -> str:
             if selector_candidates:
                 return max(selector_candidates, key=len)
 
-        paragraphs = [
-            p.get_text(separator="\n", strip=True)
-            for p in soup.find_all("p")
-        ]
+        paragraphs = [p.get_text(separator="\n", strip=True) for p in soup.find_all("p")]
 
-        paragraphs = [
-            p for p in paragraphs
-            if len(p) >= 30
-        ]
+        paragraphs = [p for p in paragraphs if len(p) >= 30]
 
         fallback_text = "\n".join(paragraphs)
 
@@ -245,9 +209,7 @@ def fetch_article_body_from_url(url: str) -> str:
 
 
 def fill_empty_description_from_body(
-    item: Dict[str, Any],
-    body_text: str,
-    max_chars: int = DESCRIPTION_FROM_BODY_LENGTH
+    item: dict[str, Any], body_text: str, max_chars: int = DESCRIPTION_FROM_BODY_LENGTH
 ) -> None:
 
     if get_printable_text(item.get("description", "")):
@@ -264,9 +226,7 @@ def fill_empty_description_from_body(
         item["description"] = body_text
 
 
-def enrich_items_with_article_body(
-    items: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+def enrich_items_with_article_body(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     enriched_items = []
 
@@ -285,29 +245,18 @@ def enrich_items_with_article_body(
                 article_title=get_printable_text(item.get("title", "")),
             )
             item["_body_text"] = body_text
-            item["_body_noise_removed"] = (
-                previous_removed_noise + removed_body_noise
-            )
+            item["_body_noise_removed"] = previous_removed_noise + removed_body_noise
             fill_empty_description_from_body(item, body_text)
 
             if removed_body_noise:
                 title = get_printable_text(item.get("title", ""))
-                logging.info(
-                    f"노이즈 제거: {title} / "
-                    f"{len(removed_body_noise)}개"
-                )
+                logging.info(f"노이즈 제거: {title} / {len(removed_body_noise)}개")
 
             if body_text:
                 enriched_items.append(item)
                 continue
 
-        urls = [
-            url for url in [
-                item.get("link", ""),
-                item.get("originallink", "")
-            ]
-            if url
-        ]
+        urls = [url for url in [item.get("link", ""), item.get("originallink", "")] if url]
 
         body_text = ""
         body_source_url = ""
@@ -315,9 +264,7 @@ def enrich_items_with_article_body(
 
         for url in dict.fromkeys(urls):
             if is_anchor_link(url):
-                raw_body_text, candidate_published_at = (
-                    fetch_anchor_article_data_from_url(url)
-                )
+                raw_body_text, candidate_published_at = fetch_anchor_article_data_from_url(url)
             else:
                 raw_body_text = fetch_article_body_from_url(url)
                 candidate_published_at = ""
@@ -340,9 +287,7 @@ def enrich_items_with_article_body(
 
         item["_body_text"] = body_text
         item["_body_source_url"] = body_source_url
-        item["_body_noise_removed"] = (
-            previous_removed_noise + removed_body_noise
-        )
+        item["_body_noise_removed"] = previous_removed_noise + removed_body_noise
 
         if published_at and not get_printable_text(item.get("pubDate", "")):
             item["pubDate"] = published_at
@@ -352,10 +297,7 @@ def enrich_items_with_article_body(
         title = get_printable_text(item.get("title", ""))
 
         if body_text:
-            body_source_label = (
-                "대상" if is_anchor_link(body_source_url)
-                else body_source_url
-            )
+            body_source_label = "대상" if is_anchor_link(body_source_url) else body_source_url
             logging.info(
                 f"추출 성공: {title} / "
                 f"{len(body_text)}자 / source={body_source_label} / "

@@ -1,6 +1,6 @@
-import re
 import html
-from typing import List, Dict, Any, Tuple
+import re
+from typing import Any
 
 DEFAULT_ARTICLE_BODY_FRONT_LIMIT = 1000
 DEFAULT_COMPANY_CONTEXT_WINDOW = 250
@@ -10,32 +10,32 @@ ARTICLE_BODY_HTML_BREAK_PATTERN = re.compile(
     r"<\s*/?\s*(?:br|p|div|section|article|li|ul|ol|h[1-6]|blockquote)\b[^>]*>",
     re.IGNORECASE,
 )
-ARTICLE_BODY_TRANSLATION_TABLE = str.maketrans({
-    "\u00a0": " ",
-    "\u200b": "",
-    "\u200c": "",
-    "\u200d": "",
-    "\ufeff": "",
-    "｜": "|",
-    "│": "|",
-    "┃": "|",
-    "［": "[",
-    "］": "]",
-    "【": "[",
-    "】": "]",
-    "〈": "[",
-    "〉": "]",
-    "《": "[",
-    "》": "]",
-    "＜": "[",
-    "＞": "]",
-    "（": "(",
-    "）": ")",
-    "：": ":",
-})
-ARTICLE_BODY_PERSON_PATTERN_TEXT = (
-    r"(?:[가-힣]{2,12}|[A-Z][A-Za-z.' -]{1,50})"
+ARTICLE_BODY_TRANSLATION_TABLE = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u200b": "",
+        "\u200c": "",
+        "\u200d": "",
+        "\ufeff": "",
+        "｜": "|",
+        "│": "|",
+        "┃": "|",
+        "［": "[",
+        "］": "]",
+        "【": "[",
+        "】": "]",
+        "〈": "[",
+        "〉": "]",
+        "《": "[",
+        "》": "]",
+        "＜": "[",
+        "＞": "]",
+        "（": "(",
+        "）": ")",
+        "：": ":",
+    }
 )
+ARTICLE_BODY_PERSON_PATTERN_TEXT = r"(?:[가-힣]{2,12}|[A-Z][A-Za-z.' -]{1,50})"
 ARTICLE_BODY_ROLE_PATTERN_TEXT = (
     r"(?:선임기자|전문기자|수습기자|객원기자|인턴기자|촬영기자|사진기자|"
     r"기자|특파원|편집자|앵커|논설위원|에디터|PD|피디|리포터|통신원)"
@@ -373,9 +373,7 @@ ARTICLE_BODY_BROADCAST_SIGNOFF_PATTERN = re.compile(
     rf"(?:{ARTICLE_BODY_ROLE_PATTERN_TEXT}\s*)?)(?:이었|였|이)?습니다[.!?]?\s*$",
     re.IGNORECASE,
 )
-ARTICLE_BODY_SENTENCE_BOUNDARY_PATTERN = re.compile(
-    r"(?<=[.!?。])\s+|[\r\n]+"
-)
+ARTICLE_BODY_SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?。])\s+|[\r\n]+")
 ARTICLE_BODY_URL_PATTERN = re.compile(
     r"(?:https?://|www\.)\S+",
     re.IGNORECASE,
@@ -455,12 +453,8 @@ ARTICLE_BODY_TAG_LINE_PATTERN = re.compile(
     r"^\s*(?:(?:태그|키워드|해시태그)\s*[:=]\s*.+|(?:#\S+\s*)+)$",
     re.IGNORECASE,
 )
-ARTICLE_BODY_DECORATION_LINE_PATTERN = re.compile(
-    r"^\s*[-_=·•◆◇■□▶▷※★☆|/\\]{3,}\s*$"
-)
-ARTICLE_BODY_PHONE_PATTERN = re.compile(
-    r"(?<!\d)(?:0\d{1,2}[-.)\s]?)?\d{3,4}[-\s]\d{4}(?!\d)"
-)
+ARTICLE_BODY_DECORATION_LINE_PATTERN = re.compile(r"^\s*[-_=·•◆◇■□▶▷※★☆|/\\]{3,}\s*$")
+ARTICLE_BODY_PHONE_PATTERN = re.compile(r"(?<!\d)(?:0\d{1,2}[-.)\s]?)?\d{3,4}[-\s]\d{4}(?!\d)")
 ARTICLE_BODY_ROLE_AT_END_PATTERN = re.compile(
     rf"{ARTICLE_BODY_ROLE_PATTERN_TEXT}"
     r"(?:\s*[|·,;:\-])?\s*$",
@@ -486,7 +480,7 @@ ARTICLE_BODY_MEANINGFUL_CONTENT_PATTERN = re.compile(
 )
 
 
-def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
+def calculate_trailing_noise_score(block: str) -> tuple[int, list[str]]:
 
     block = re.sub(r"\s+", " ", block or "").strip()
 
@@ -495,28 +489,17 @@ def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
 
     score = 0
     reasons = []
-    has_reported_context = bool(
-        ARTICLE_BODY_REPORTED_CONTEXT_PATTERN.search(block)
-    )
+    has_reported_context = bool(ARTICLE_BODY_REPORTED_CONTEXT_PATTERN.search(block))
 
-    if (
-        ARTICLE_BODY_COPYRIGHT_PATTERN.search(block)
-        and not has_reported_context
-    ):
+    if ARTICLE_BODY_COPYRIGHT_PATTERN.search(block) and not has_reported_context:
         score += 6
         reasons.append("copyright_notice")
 
-    if (
-        ARTICLE_BODY_TIP_OR_CONTACT_CTA_PATTERN.search(block)
-        and not has_reported_context
-    ):
+    if ARTICLE_BODY_TIP_OR_CONTACT_CTA_PATTERN.search(block) and not has_reported_context:
         score += 6
         reasons.append("tip_or_contact_cta")
 
-    if (
-        ARTICLE_BODY_SUBSCRIPTION_CTA_PATTERN.search(block)
-        and not has_reported_context
-    ):
+    if ARTICLE_BODY_SUBSCRIPTION_CTA_PATTERN.search(block) and not has_reported_context:
         score += 6
         reasons.append("subscription_cta")
 
@@ -524,10 +507,7 @@ def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
         score += 6
         reasons.append("social_promotion")
 
-    if (
-        ARTICLE_BODY_SERVICE_NOTICE_PATTERN.search(block)
-        and not has_reported_context
-    ):
+    if ARTICLE_BODY_SERVICE_NOTICE_PATTERN.search(block) and not has_reported_context:
         score += 6
         reasons.append("service_notice")
 
@@ -547,17 +527,11 @@ def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
         score += 5
         reasons.append("navigation_or_social")
 
-    if (
-        ARTICLE_BODY_TRAILING_DISCLAIMER_PATTERN.search(block)
-        and not has_reported_context
-    ):
+    if ARTICLE_BODY_TRAILING_DISCLAIMER_PATTERN.search(block) and not has_reported_context:
         score += 6
         reasons.append("investment_or_source_disclaimer")
 
-    if (
-        ARTICLE_BODY_PRODUCTION_CREDIT_PATTERN.fullmatch(block)
-        and not has_reported_context
-    ):
+    if ARTICLE_BODY_PRODUCTION_CREDIT_PATTERN.fullmatch(block) and not has_reported_context:
         score += 7
         reasons.append("production_credit")
 
@@ -585,8 +559,7 @@ def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
         reasons.append("short_byline")
 
     has_contact_signal = bool(
-        ARTICLE_BODY_TIP_OR_CONTACT_CTA_PATTERN.search(block)
-        and not has_reported_context
+        ARTICLE_BODY_TIP_OR_CONTACT_CTA_PATTERN.search(block) and not has_reported_context
     )
 
     if ARTICLE_BODY_EMAIL_PATTERN.search(block):
@@ -609,10 +582,7 @@ def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
         score += 2
         reasons.append("url")
 
-        if (
-            has_contact_signal
-            or ARTICLE_BODY_TRAILING_NAVIGATION_PATTERN.search(block)
-        ):
+        if has_contact_signal or ARTICLE_BODY_TRAILING_NAVIGATION_PATTERN.search(block):
             score += 2
             reasons.append("promotional_url")
 
@@ -674,7 +644,7 @@ def calculate_trailing_noise_score(block: str) -> Tuple[int, List[str]]:
     return score, reasons
 
 
-def calculate_leading_noise_score(block: str) -> Tuple[int, List[str]]:
+def calculate_leading_noise_score(block: str) -> tuple[int, list[str]]:
 
     block = re.sub(r"\s+", " ", block or "").strip()
 
@@ -713,10 +683,10 @@ def calculate_leading_noise_score(block: str) -> Tuple[int, List[str]]:
 
 
 def remove_leading_noise_blocks(
-    blocks: List[str],
+    blocks: list[str],
     max_blocks: int = 30,
     threshold: int = 5,
-) -> Tuple[List[str], List[Dict[str, Any]]]:
+) -> tuple[list[str], list[dict[str, Any]]]:
 
     kept_blocks = list(blocks)
     removed_blocks = []
@@ -730,24 +700,24 @@ def remove_leading_noise_blocks(
             break
 
         kept_blocks.pop(0)
-        removed_blocks.append({
-            "text": candidate,
-            "score": score,
-            "reasons": reasons,
-        })
+        removed_blocks.append(
+            {
+                "text": candidate,
+                "score": score,
+                "reasons": reasons,
+            }
+        )
         removed_count += 1
 
     return kept_blocks, removed_blocks
 
 
 def remove_leading_repeated_title(
-    blocks: List[str],
+    blocks: list[str],
     article_title: str,
-) -> Tuple[List[str], List[Dict[str, Any]]]:
+) -> tuple[list[str], list[dict[str, Any]]]:
 
-    normalized_title = clean_text(
-        ARTICLE_BODY_ANY_BRACKET_PATTERN.sub(" ", article_title or "")
-    )
+    normalized_title = clean_text(ARTICLE_BODY_ANY_BRACKET_PATTERN.sub(" ", article_title or ""))
 
     if len(normalized_title) < 8:
         return list(blocks), []
@@ -761,30 +731,30 @@ def remove_leading_repeated_title(
         if normalized_block != normalized_title:
             break
 
-        removed_blocks.append({
-            "text": kept_blocks.pop(0),
-            "score": 7,
-            "reasons": ["repeated_article_title"],
-        })
+        removed_blocks.append(
+            {
+                "text": kept_blocks.pop(0),
+                "score": 7,
+                "reasons": ["repeated_article_title"],
+            }
+        )
 
     return kept_blocks, removed_blocks
 
 
 def remove_trailing_noise_blocks(
-    blocks: List[str],
+    blocks: list[str],
     max_blocks: int | None = None,
     threshold: int = 5,
-) -> Tuple[List[str], List[Dict[str, Any]]]:
+) -> tuple[list[str], list[dict[str, Any]]]:
 
     kept_blocks = list(blocks)
     removed_groups = []
 
-    while kept_blocks and (
-        max_blocks is None or len(removed_groups) < max_blocks
-    ):
+    while kept_blocks and (max_blocks is None or len(removed_groups) < max_blocks):
         candidate = kept_blocks[-1]
-        cleaned_candidate, removed_sentences = (
-            remove_trailing_noise_sentences_with_details(candidate)
+        cleaned_candidate, removed_sentences = remove_trailing_noise_sentences_with_details(
+            candidate
         )
 
         if removed_sentences:
@@ -803,26 +773,26 @@ def remove_trailing_noise_blocks(
             break
 
         kept_blocks.pop()
-        removed_groups.append([{
-            "text": candidate,
-            "score": score,
-            "reasons": reasons,
-        }])
+        removed_groups.append(
+            [
+                {
+                    "text": candidate,
+                    "score": score,
+                    "reasons": reasons,
+                }
+            ]
+        )
 
-    removed_blocks = [
-        removed
-        for group in reversed(removed_groups)
-        for removed in group
-    ]
+    removed_blocks = [removed for group in reversed(removed_groups) for removed in group]
 
     return kept_blocks, removed_blocks
 
 
 def remove_trailing_noise_region(
-    blocks: List[str],
+    blocks: list[str],
     max_tail_blocks: int = 30,
     max_tail_chars: int = 6000,
-) -> Tuple[List[str], List[Dict[str, Any]]]:
+) -> tuple[list[str], list[dict[str, Any]]]:
 
     if not blocks:
         return [], []
@@ -858,7 +828,7 @@ def remove_trailing_noise_region(
         if not match:
             continue
 
-        prefix = block[:match.start()].rstrip()
+        prefix = block[: match.start()].rstrip()
         prefix = re.sub(
             r"[\s|·•◆◇■□▶▷※★☆+\-]+$",
             "",
@@ -870,21 +840,25 @@ def remove_trailing_noise_region(
             kept_blocks.append(prefix)
 
         removed_blocks = []
-        matched_suffix = block[match.start():].strip()
+        matched_suffix = block[match.start() :].strip()
 
         if matched_suffix:
-            removed_blocks.append({
-                "text": matched_suffix,
-                "score": 10,
-                "reasons": ["footer_region_start"],
-            })
+            removed_blocks.append(
+                {
+                    "text": matched_suffix,
+                    "score": 10,
+                    "reasons": ["footer_region_start"],
+                }
+            )
 
-        for trailing_block in blocks[index + 1:]:
-            removed_blocks.append({
-                "text": trailing_block,
-                "score": 10,
-                "reasons": ["after_footer_region_start"],
-            })
+        for trailing_block in blocks[index + 1 :]:
+            removed_blocks.append(
+                {
+                    "text": trailing_block,
+                    "score": 10,
+                    "reasons": ["after_footer_region_start"],
+                }
+            )
 
         return kept_blocks, removed_blocks
 
@@ -918,7 +892,7 @@ def remove_trailing_noise_sentences(
 def remove_trailing_noise_sentences_with_details(
     text: str,
     max_sentences: int | None = None,
-) -> Tuple[str, List[Dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]]]:
 
     if not text:
         return "", []
@@ -938,11 +912,13 @@ def remove_trailing_noise_sentences_with_details(
     ):
         removed_sentence = sentences.pop()
         score, reasons = calculate_trailing_noise_score(removed_sentence)
-        removed_sentences.append({
-            "text": removed_sentence,
-            "score": score,
-            "reasons": reasons,
-        })
+        removed_sentences.append(
+            {
+                "text": removed_sentence,
+                "score": score,
+                "reasons": reasons,
+            }
+        )
         removed_count += 1
 
     removed_sentences.reverse()
@@ -951,7 +927,7 @@ def remove_trailing_noise_sentences_with_details(
 
 
 def append_noise_change(
-    removed_noise: List[Dict[str, Any]] | None,
+    removed_noise: list[dict[str, Any]] | None,
     before: str,
     after: str,
     reason: str,
@@ -961,12 +937,14 @@ def append_noise_change(
     if removed_noise is None or before == after:
         return
 
-    removed_noise.append({
-        "text": before,
-        "cleaned_text": after,
-        "score": score,
-        "reasons": [reason],
-    })
+    removed_noise.append(
+        {
+            "text": before,
+            "cleaned_text": after,
+            "score": score,
+            "reasons": [reason],
+        }
+    )
 
 
 def clean_text(text: str) -> str:
@@ -993,7 +971,7 @@ def get_printable_text(text: str) -> str:
 
 def clean_article_body_for_storage(
     text: str,
-    removed_noise: List[Dict[str, Any]] | None = None,
+    removed_noise: list[dict[str, Any]] | None = None,
     article_title: str = "",
 ) -> str:
 
@@ -1044,7 +1022,6 @@ def clean_article_body_for_storage(
             "pipe_byline_segment",
         )
 
-
         before = line
         line = ARTICLE_BODY_LEADING_MEDIA_CREDIT_PATTERN.sub(
             "",
@@ -1071,10 +1048,9 @@ def clean_article_body_for_storage(
             )
             continue
 
-        if (
-            ARTICLE_BODY_REPORTER_LINE_PATTERN.fullmatch(line)
-            or ARTICLE_BODY_REPEATED_REPORTER_LINE_PATTERN.fullmatch(line)
-        ):
+        if ARTICLE_BODY_REPORTER_LINE_PATTERN.fullmatch(
+            line
+        ) or ARTICLE_BODY_REPEATED_REPORTER_LINE_PATTERN.fullmatch(line):
             append_noise_change(
                 removed_noise,
                 line,
@@ -1122,9 +1098,7 @@ def clean_article_body_for_storage(
             cleaned_lines.append(line)
             continue
 
-        line, removed_inline_sentences = (
-            remove_trailing_noise_sentences_with_details(line)
-        )
+        line, removed_inline_sentences = remove_trailing_noise_sentences_with_details(line)
 
         if removed_noise is not None:
             removed_noise.extend(removed_inline_sentences)
@@ -1136,11 +1110,13 @@ def clean_article_body_for_storage(
 
         if noise_score >= 5:
             if removed_noise is not None:
-                removed_noise.append({
-                    "text": line,
-                    "score": noise_score,
-                    "reasons": noise_reasons,
-                })
+                removed_noise.append(
+                    {
+                        "text": line,
+                        "score": noise_score,
+                        "reasons": noise_reasons,
+                    }
+                )
             continue
 
         cleaned_lines.append(line)
@@ -1158,9 +1134,7 @@ def clean_article_body_for_storage(
     if removed_noise is not None:
         removed_noise.extend(removed_titles)
 
-    cleaned_lines, removed_after_title = remove_leading_noise_blocks(
-        cleaned_lines
-    )
+    cleaned_lines, removed_after_title = remove_leading_noise_blocks(cleaned_lines)
 
     if removed_noise is not None:
         removed_noise.extend(removed_after_title)
@@ -1197,7 +1171,7 @@ def clean_article_body_for_storage(
     return cleaned_text
 
 
-def split_korean_sentences(text: str) -> List[str]:
+def split_korean_sentences(text: str) -> list[str]:
     if not text:
         return []
 
@@ -1223,7 +1197,7 @@ def get_front_sentences(text: str, max_chars: int = 1000) -> str:
     return " ".join(selected)
 
 
-def get_company_names(company: Dict[str, Any]) -> List[str]:
+def get_company_names(company: dict[str, Any]) -> list[str]:
     names = []
 
     company_name = company.get("company_name", "")
@@ -1237,7 +1211,7 @@ def get_company_names(company: Dict[str, Any]) -> List[str]:
     return [clean_text(name) for name in names if name]
 
 
-def get_company_link_keywords(company: Dict[str, Any]) -> List[str]:
+def get_company_link_keywords(company: dict[str, Any]) -> list[str]:
     keywords = []
 
     inclusion_reason = company.get("inclusion_reason", "")
@@ -1255,10 +1229,10 @@ def get_company_link_keywords(company: Dict[str, Any]) -> List[str]:
 
 
 def shorten_article_body_for_analysis(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any],
+    item: dict[str, Any],
+    pipeline_input: dict[str, Any],
     front_limit: int | None = None,
-    context_window: int | None = None
+    context_window: int | None = None,
 ) -> str:
     if front_limit is None:
         front_limit = DEFAULT_ARTICLE_BODY_FRONT_LIMIT
@@ -1273,10 +1247,7 @@ def shorten_article_body_for_analysis(
 
     parts = []
 
-    front_body = get_front_sentences(
-        text=body_text,
-        max_chars=front_limit
-    )
+    front_body = get_front_sentences(text=body_text, max_chars=front_limit)
 
     if front_body:
         parts.append(front_body)
@@ -1314,18 +1285,12 @@ def shorten_article_body_for_analysis(
     return " ".join(unique_parts)
 
 
-def get_article_text(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None = None
-) -> str:
+def get_article_text(item: dict[str, Any], pipeline_input: dict[str, Any] | None = None) -> str:
     title = clean_text(item.get("title", ""))
     description = clean_text(item.get("description", ""))
 
     if pipeline_input:
-        body_text = shorten_article_body_for_analysis(
-            item=item,
-            pipeline_input=pipeline_input
-        )
+        body_text = shorten_article_body_for_analysis(item=item, pipeline_input=pipeline_input)
     else:
         body_text = clean_text(item.get("_body_text", ""))[:DEFAULT_ARTICLE_BODY_FRONT_LIMIT]
 
