@@ -11,6 +11,13 @@ load_dotenv(_REPO_ROOT / ".env")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 API_BASE_URL = os.getenv("API_BASE_URL")
+
+SEARCH_DISPLAY = int(os.getenv("SEARCH_DISPLAY"))
+SEARCH_SORT = os.getenv("SEARCH_SORT")
+MAX_PAGES = int(os.getenv("MAX_PAGES"))
+
+# 한 번 실행에서 처리할 active 키워드 개수(재검색 주기 관리).
+KEYWORD_SEARCH_BATCH_SIZE = int(os.getenv("KEYWORD_SEARCH_BATCH_SIZE"))
 ANCHOR_HOST = os.getenv("ANCHOR_HOST", "").strip().lower()
 ANCHOR_URL_TEMPLATE = os.getenv("ANCHOR_URL_TEMPLATE", "").strip()
 

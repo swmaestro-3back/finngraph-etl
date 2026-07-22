@@ -20,6 +20,10 @@ _ENV_DEFAULTS = {
     "DB_NAME": "etl",
     "DB_USER": "etl",
     "DB_PASSWORD": "etl",
+    # 키워드 검색 config 상수(import 시점 int 캐스팅). 로더 테스트와 무관하지만 import 통과에 필요.
+    "SEARCH_DISPLAY": "1",
+    "MAX_PAGES": "1",
+    "KEYWORD_SEARCH_BATCH_SIZE": "1",
     # config import 시점에 캐스팅되는 상수. 로더 테스트와 무관하지만 import 통과에 필요.
     "MAX_TOTAL_COLLECTED_ITEMS": "1",
     "OFFICIAL_SOURCE_THRESHOLD": "1",
