@@ -1,0 +1,1 @@
+"""Stock theme ETL pipeline."""
