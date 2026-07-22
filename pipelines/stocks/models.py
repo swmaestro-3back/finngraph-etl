@@ -9,4 +9,3 @@ class StockSymbol:
     name: str
     market: str
     is_active: bool = True
-

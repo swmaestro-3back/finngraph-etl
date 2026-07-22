@@ -1,2 +1,1 @@
 """Stock data transformers."""
-
