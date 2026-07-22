@@ -5,6 +5,7 @@ import asyncio
 from pipelines.common.http import http_client
 from pipelines.common.logging import get_logger
 from pipelines.common.neo4j import neo4j_database
+from pipelines.themes.crud import delete_all_themes
 from pipelines.themes.extractors.factory import ExtractorFactory
 from pipelines.themes.loader import load
 from pipelines.themes.models import Theme
@@ -13,6 +14,7 @@ from pipelines.themes.validator import validate
 logger = get_logger(__name__)
 
 SOURCES = ["judal", "naver", "antwinner"]
+
 
 async def _run_pipeline() -> None:
     """
@@ -37,6 +39,9 @@ async def _run_pipeline() -> None:
 async def _run_async() -> None:
     http_client.start()
     neo4j_database.init_driver()
+    await delete_all_themes()
+    logger.info("기존 Theme 및 연결 간선 삭제 완료")
+
     try:
         await _run_pipeline()
     finally:
