@@ -16,5 +16,6 @@ airflow.db
 airflow.cfg
 logs/
 
+.claude/
 AGENTS.md
 CLAUDE.md
