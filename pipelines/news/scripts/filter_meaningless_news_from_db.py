@@ -5,11 +5,9 @@ from pipelines.news.config import (
     MATERIAL_EVENT_FILTER_MAX_CONCURRENCY,
     MATERIAL_EVENT_FILTER_MAX_WORKERS,
 )
-from pipelines.news.transformers.material_event_filter import filter_material_event_news
-from pipelines.news.loaders.news_repository import (
-    delete_news_by_ids,
-    extract_news_ids_from_removed_items,
-    fetch_recent_news_items,
+from pipelines.news.jobs.filter_meaningless_news import (
+    DEFAULT_MAX_ITEMS_PER_RUN,
+    run,
 )
 from pipelines.news.utils.text_utils import get_printable_text
 
@@ -28,18 +26,21 @@ def print_removed_candidate(removed):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="필터링하고 삭제 후보 또는 실제 삭제를 수행"
+        description=(
+            "material_event 필터로 판정한다. 기본은 dry-run이며 "
+            "--apply 시 소프트 삭제(is_material=false)로 기록한다."
+        )
     )
     parser.add_argument(
         "--limit",
         type=int,
-        default=30,
-        help="최근 뉴스 수",
+        default=DEFAULT_MAX_ITEMS_PER_RUN,
+        help="한 번에 처리할 미판정 뉴스 상한",
     )
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="실제 삭제한다. 없으면 dry-run으로 삭제 후보만 출력",
+        help="실제 소프트 삭제 기록. 없으면 dry-run으로 삭제 후보만 출력",
     )
     parser.add_argument(
         "--mode",
@@ -67,43 +68,18 @@ def main():
     )
     args = parser.parse_args()
 
-    source_news = fetch_recent_news_items(limit=args.limit)
-
-    passed_items, removed_items = filter_material_event_news(
-        items=source_news,
-        pipeline_input={},
-        use_llm=True,
+    summary = run(
+        apply=args.apply,
+        limit=args.limit,
         mode=args.mode,
         max_workers=args.workers,
         max_concurrency=args.concurrency,
         batch_size=args.batch_size,
     )
 
-    delete_candidate_ids = extract_news_ids_from_removed_items(removed_items)
-
-    print("\n" + "=" * 80)
-    print("의미 없는 뉴스 필터링 결과")
-    print("=" * 80)
-    print(f"조회 수: {len(source_news)}")
-    print(f"통과 수: {len(passed_items)}")
-    print(f"삭제 후보 수: {len(removed_items)}")
-    print("=" * 80)
-
     if not args.apply:
-        for removed in removed_items:
+        for removed in summary.get("removed_items", []):
             print_removed_candidate(removed)
-
-        return
-
-    delete_result = delete_news_by_ids(delete_candidate_ids)
-
-    print("\n" + "=" * 80)
-    print("삭제 완료")
-    print("=" * 80)
-    print(f"삭제 요청 수: {delete_result.get('requested_count')}")
-    print(f"삭제 임베딩 수: {delete_result.get('deleted_embedding_count')}")
-    print(f"삭제 수: {delete_result.get('deleted_news_count')}")
-    print("=" * 80)
 
 
 if __name__ == "__main__":
