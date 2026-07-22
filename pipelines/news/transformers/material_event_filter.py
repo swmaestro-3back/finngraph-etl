@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Tuple
 
 import httpx
 
-from news.test.utils.text_utils import (
+from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
@@ -144,7 +144,7 @@ MATERIAL_RELATION_SURFACE_PATTERN = re.compile(
 
 def get_material_event_filter_config() -> Dict[str, Any]:
     try:
-        from news import config
+        from pipelines.news import config
 
         return {
             "enable_llm": True,

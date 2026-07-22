@@ -2,13 +2,13 @@ import logging
 import time
 from datetime import datetime
 from string import Formatter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
-from news.config import (
+from pipelines.news.config import (
     ANCHOR_CATEGORIES,
     ANCHOR_HOST,
     ANCHOR_URL_TEMPLATE,
@@ -250,20 +250,19 @@ def fetch_more_headline_fragment(
     return extract_rendered_html(payload)
 
 
-def collect_anchor_category_headlines(
+def iter_anchor_category_headline_pages(
     category_id: int,
-    more_click_count: int = HEADLINE_MORE_COUNT,
+    max_more_calls: int = HEADLINE_MORE_COUNT,
     wait_seconds: int = 10
-) -> List[Dict[str, Any]]:
+) -> Iterator[List[Dict[str, Any]]]:
 
     category_url = build_anchor_category_url(category_id)
     category_name = ANCHOR_CATEGORIES.get(category_id, str(category_id))
 
-    items: List[Dict[str, Any]] = []
-    seen_links = set()
+    seen_links: set = set()
 
-    def append_headlines(soup: BeautifulSoup) -> int:
-        appended = 0
+    def build_page_items(soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        page_items: List[Dict[str, Any]] = []
 
         for title, link in extract_headline_pairs(soup, category_url):
             if not title or not link:
@@ -273,9 +272,8 @@ def collect_anchor_category_headlines(
                 continue
 
             seen_links.add(link)
-            appended += 1
 
-            items.append(
+            page_items.append(
                 {
                     "title": title,
                     "description": "",
@@ -289,7 +287,7 @@ def collect_anchor_category_headlines(
                 }
             )
 
-        return appended
+        return page_items
 
     session = requests.Session()
 
@@ -302,13 +300,13 @@ def collect_anchor_category_headlines(
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
-        append_headlines(soup)
+        yield build_page_items(soup)
 
         cursor = extract_next_cursor(soup)
         if not cursor:
             cursor = datetime.now().strftime("%Y%m%d%H%M%S")
 
-        for page_no in range(1, more_click_count + 1):
+        for page_no in range(1, max_more_calls + 1):
             time.sleep(REQUEST_DELAY)
 
             fragment_html = fetch_more_headline_fragment(
@@ -323,19 +321,37 @@ def collect_anchor_category_headlines(
                 break
 
             fragment = BeautifulSoup(fragment_html, "html.parser")
-            appended = append_headlines(fragment)
+            page_items = build_page_items(fragment)
             next_cursor = extract_next_cursor(fragment)
 
             if next_cursor:
                 cursor = next_cursor
 
-            if appended == 0:
-                break
+            yield page_items
 
-        return items
+            if not page_items:
+                break
 
     finally:
         session.close()
+
+
+def collect_anchor_category_headlines(
+    category_id: int,
+    more_click_count: int = HEADLINE_MORE_COUNT,
+    wait_seconds: int = 10
+) -> List[Dict[str, Any]]:
+
+    items: List[Dict[str, Any]] = []
+
+    for page_items in iter_anchor_category_headline_pages(
+        category_id=category_id,
+        max_more_calls=more_click_count,
+        wait_seconds=wait_seconds,
+    ):
+        items.extend(page_items)
+
+    return items
 
 
 def collect_anchor_headlines(
