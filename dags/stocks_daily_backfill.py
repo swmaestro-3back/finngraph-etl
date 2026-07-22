@@ -29,4 +29,3 @@ if dag and task:
         run_backfill_daily()
 
     stocks_daily_backfill()
-

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "etl-platform"
 version = "0.1.0"
@@ -18,6 +22,7 @@ dependencies = [
 dev = [
   "pytest>=8.2",
   "ruff>=0.5",
+  "pre-commit>=3.7",
 ]
 airflow = [
   "apache-airflow>=2.9",
@@ -26,9 +31,25 @@ airflow = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# pipelines/news 는 별도 도메인(news 팀) 코드라 이 CI 도입 시점엔 lint 대상에서 제외한다.
+# news 팀이 자체적으로 정리한 뒤 이 제외를 없애고 편입하는 것을 전제로 한 임시 조치다.
+extend-exclude = ["pipelines/news"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# AIR: Airflow 관련 정적 검증(API deprecation, DAG 인자/네이밍 관례 등). DagBag 런타임
+# 검증(scripts/validate_dags.py)과 겹치지 않고 보완한다.
+select = ["E", "F", "I", "UP", "B", "AIR"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# integration: 외부 인프라(로컬 DB 컨테이너 등)가 필요한 테스트. CI unit-test job은
+# `-m "not integration"`으로 제외한다. 로컬에서는 DB 기동 후 `pytest -m integration`으로 실행.
+markers = [
+  "integration: 실행에 로컬 DB 등 외부 인프라가 필요한 테스트",
+]
+
+[tool.setuptools.packages.find]
+# 배포/설치 대상은 import 되는 pipelines 패키지뿐. dags/migrations/docker는 flat-layout
+# 자동탐지에서 제외해야 "multiple top-level packages" 에러 없이 editable 설치가 된다.
+where = ["."]
+include = ["pipelines*"]

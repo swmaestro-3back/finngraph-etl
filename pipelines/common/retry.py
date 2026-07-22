@@ -9,4 +9,3 @@ def retry_external_call():
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
-

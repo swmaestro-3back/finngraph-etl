@@ -1,2 +1,1 @@
 """Executable stock ETL jobs."""
-

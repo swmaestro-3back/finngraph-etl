@@ -12,4 +12,3 @@ def fetch_symbols() -> list[StockSymbol]:
 
 def fetch_daily_candles(symbol: str, start: date, end: date) -> list[DailyCandle]:
     raise NotImplementedError("FinanceDataReader daily candle extraction is not implemented yet.")
-

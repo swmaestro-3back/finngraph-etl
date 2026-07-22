@@ -29,4 +29,3 @@ if dag and task:
         aggregate_candles()
 
     stocks_aggregate_candles()
-
