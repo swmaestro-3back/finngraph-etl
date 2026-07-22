@@ -28,6 +28,11 @@ airflow = [
   "apache-airflow>=2.9",
 ]
 
+news = [
+  "psycopg2-binary>=2.9",
+  "beautifulsoup4>=4.12",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

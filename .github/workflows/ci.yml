@@ -82,16 +82,61 @@ jobs:
       - name: Validate DAGs
         run: python scripts/validate_dags.py
 
-  # NOTE: DB 통합 job은 의도적으로 아직 넣지 않았다. 현재 DB는 공식 timescaledb 이미지라
-  # 확장 존재 확인은 남의 이미지를 테스트하는 셈이고, migration/loader 등 DB에 의존하는
-  # 우리 코드가 아직 없다. migration과 loader 테스트가 생기면 그때 db-integration을 추가한다.
-  # 통합 테스트 씨앗은 tests/integration/ 에 있으며 로컬에서 `pytest -m integration`으로 실행 가능.
+  db-integration:
+    name: DB integration
+    runs-on: ubuntu-latest
+    # 실제 Postgres에 붙어 loader/DDL을 검증한다. news 로더는 psycopg2, 기존
+    # test_db_extensions는 common(psycopg v3/SQLAlchemy) 경로를 스모크한다.
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: etl
+          POSTGRES_PASSWORD: etl
+          POSTGRES_DB: etl
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U etl -d etl"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # news 로더(psycopg2 직접 연결)용. conftest 기본값(15432)을 서비스 포트로 덮어씀.
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: etl
+      DB_USER: etl
+      DB_PASSWORD: etl
+      # common.database(psycopg v3 + SQLAlchemy)용.
+      DATABASE_URL: postgresql+psycopg://etl:etl@localhost:5432/etl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install deps (dev + news)
+        # news extra로 psycopg2-binary/beautifulsoup4까지 설치해야 로더 import가 된다.
+        run: python -m pip install -e ".[dev,news]"
+      - name: Prepare DB (timescaledb 확장 보장)
+        # test_db_extensions가 요구하는 확장을 idempotent하게 보장한다. news 테이블은
+        # 통합 테스트 픽스처가 최소 스키마를 직접 생성하므로 여기서 만들지 않는다.
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://etl:etl@localhost:5432/etl", autocommit=True) as conn:
+              conn.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
+          PY
+      - name: pytest (integration만)
+        run: pytest -m integration
 
   # 브랜치 보호 규칙에서 이 하나만 required check로 걸면 위 job 결과가 모두 반영된다.
   ci-ok:
     name: CI OK
     runs-on: ubuntu-latest
-    needs: [lint, unit-test, dag-validation]
+    needs: [lint, unit-test, dag-validation, db-integration]
     if: always()
     steps:
       - name: 결과 집계
@@ -99,9 +144,11 @@ jobs:
           echo "lint=${{ needs.lint.result }}"
           echo "unit-test=${{ needs.unit-test.result }}"
           echo "dag-validation=${{ needs.dag-validation.result }}"
+          echo "db-integration=${{ needs.db-integration.result }}"
           if [ "${{ needs.lint.result }}" != "success" ] \
           || [ "${{ needs.unit-test.result }}" != "success" ] \
-          || [ "${{ needs.dag-validation.result }}" != "success" ]; then
+          || [ "${{ needs.dag-validation.result }}" != "success" ] \
+          || [ "${{ needs.db-integration.result }}" != "success" ]; then
             echo "하나 이상의 필수 job이 실패했습니다."
             exit 1
           fi
