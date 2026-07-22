@@ -43,17 +43,16 @@ python -m compileall pipelines dags scripts
 
 ## Database
 
-The local database image is built from `timescale/timescaledb` with `pgvector` added.
+The local database uses the official `timescale/timescaledb:latest-pg16` image.
 This gives one PostgreSQL-compatible database for:
 
 - relational tables such as symbols, calendars, jobs, and source metadata
 - TimescaleDB hypertables for OHLCV time-series data
-- pgvector tables for embeddings and semantic search
 
 Start the database:
 
 ```bash
-docker compose up --build db
+docker compose up -d db
 ```
 
 The default host port is `15432` to avoid colliding with local PostgreSQL
@@ -63,5 +62,4 @@ On first initialization, `docker/db/initdb/001_extensions.sql` enables:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS timescaledb;
-CREATE EXTENSION IF NOT EXISTS vector;
 ```
