@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
-from pipelines.news.transformers.material_event_filter import filter_material_event_news
 from pipelines.news.loaders.news_repository import (
+    extract_news_ids_from_removed_items,
     fetch_unchecked_news_items,
     mark_news_material_checked,
-    extract_news_ids_from_removed_items,
 )
+from pipelines.news.transformers.material_event_filter import filter_material_event_news
 
 DEFAULT_MAX_ITEMS_PER_RUN = 300
 
@@ -19,7 +19,7 @@ def run(
     max_workers: int | None = None,
     max_concurrency: int | None = None,
     batch_size: int | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
 
     source_news = fetch_unchecked_news_items(limit=limit)
 
@@ -33,14 +33,10 @@ def run(
         batch_size=batch_size,
     )
 
-    kept_ids = [
-        item.get("_news_id")
-        for item in passed_items
-        if item.get("_news_id")
-    ]
+    kept_ids = [item.get("_news_id") for item in passed_items if item.get("_news_id")]
     dropped_ids = extract_news_ids_from_removed_items(removed_items)
 
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "fetched": len(source_news),
         "kept": len(passed_items),
         "dropped": len(removed_items),
@@ -67,8 +63,7 @@ def run(
     print(f"소프트삭제 후보 수: {summary['dropped']}")
     if summary["applied"]:
         print(
-            f"기록됨 → 유지 {summary['marked_kept']}개 / "
-            f"소프트삭제 {summary['marked_dropped']}개"
+            f"기록됨 → 유지 {summary['marked_kept']}개 / 소프트삭제 {summary['marked_dropped']}개"
         )
     else:
         print("dry-run: DB 변경 없음")

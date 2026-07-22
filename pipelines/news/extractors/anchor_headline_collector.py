@@ -1,8 +1,9 @@
 import logging
 import time
+from collections.abc import Iterator
 from datetime import datetime
 from string import Formatter
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -45,40 +46,27 @@ def validate_anchor_headline_settings() -> None:
         raise RuntimeError("ANCHOR_HOST 환경 변수가 설정되지 않았습니다.")
 
     if not ANCHOR_CATEGORIES:
-        raise RuntimeError(
-            "ANCHOR_CATEGORIES 환경 변수가 설정되지 않았습니다."
-        )
+        raise RuntimeError("ANCHOR_CATEGORIES 환경 변수가 설정되지 않았습니다.")
 
     if not ANCHOR_URL_TEMPLATE:
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE 환경 변수가 설정되지 않았습니다."
-        )
+        raise RuntimeError("ANCHOR_URL_TEMPLATE 환경 변수가 설정되지 않았습니다.")
 
     try:
         template_fields = {
             field_name
-            for _, field_name, _, _ in Formatter().parse(
-                ANCHOR_URL_TEMPLATE
-            )
+            for _, field_name, _, _ in Formatter().parse(ANCHOR_URL_TEMPLATE)
             if field_name is not None
         }
     except ValueError as e:
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE 형식이 올바르지 않습니다."
-        ) from e
+        raise RuntimeError("ANCHOR_URL_TEMPLATE 형식이 올바르지 않습니다.") from e
 
     if "category_id" not in template_fields:
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE에 {category_id}가 필요합니다."
-        )
+        raise RuntimeError("ANCHOR_URL_TEMPLATE에 {category_id}가 필요합니다.")
 
     unsupported_fields = template_fields - {"host", "category_id"}
 
     if unsupported_fields:
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE에는 "
-            "{host}와 {category_id}만 사용할 수 있습니다."
-        )
+        raise RuntimeError("ANCHOR_URL_TEMPLATE에는 {host}와 {category_id}만 사용할 수 있습니다.")
 
 
 def build_anchor_category_url(category_id: int) -> str:
@@ -90,38 +78,24 @@ def build_anchor_category_url(category_id: int) -> str:
             category_id=category_id,
         )
     except (AttributeError, IndexError, KeyError, ValueError) as e:
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE 형식이 올바르지 않습니다."
-        ) from e
+        raise RuntimeError("ANCHOR_URL_TEMPLATE 형식이 올바르지 않습니다.") from e
 
     parsed_url = urlparse(category_url)
     category_host = (parsed_url.hostname or "").lower()
 
     if parsed_url.scheme not in {"http", "https"} or not category_host:
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE은 완전한 HTTP(S) URL이어야 합니다."
-        )
+        raise RuntimeError("ANCHOR_URL_TEMPLATE은 완전한 HTTP(S) URL이어야 합니다.")
 
-    if not (
-        category_host == ANCHOR_HOST
-        or category_host.endswith(f".{ANCHOR_HOST}")
-    ):
-        raise RuntimeError(
-            "ANCHOR_URL_TEMPLATE의 호스트가 "
-            "ANCHOR_HOST와 일치하지 않습니다."
-        )
+    if not (category_host == ANCHOR_HOST or category_host.endswith(f".{ANCHOR_HOST}")):
+        raise RuntimeError("ANCHOR_URL_TEMPLATE의 호스트가 ANCHOR_HOST와 일치하지 않습니다.")
 
     return category_url
 
 
-def extract_section_ids(category_url: str) -> Tuple[str, str]:
+def extract_section_ids(category_url: str) -> tuple[str, str]:
 
     parsed = urlparse(category_url)
-    numeric_segments = [
-        segment
-        for segment in parsed.path.split("/")
-        if segment.isdigit()
-    ]
+    numeric_segments = [segment for segment in parsed.path.split("/") if segment.isdigit()]
 
     if not numeric_segments:
         return "", ""
@@ -145,10 +119,7 @@ def extract_next_cursor(soup: BeautifulSoup) -> str:
     return (cursor_elements[-1].get("data-cursor") or "").strip()
 
 
-def extract_headline_pairs(
-    soup: BeautifulSoup,
-    base_url: str
-) -> List[tuple]:
+def extract_headline_pairs(soup: BeautifulSoup, base_url: str) -> list[tuple]:
     pairs = []
 
     for element in soup.select(HEADLINE_SELECTOR):
@@ -179,11 +150,7 @@ def extract_rendered_html(payload: Any) -> str:
         rendered = payload.get("renderedComponent")
 
         if isinstance(rendered, dict):
-            return "\n".join(
-                value
-                for value in rendered.values()
-                if isinstance(value, str)
-            )
+            return "\n".join(value for value in rendered.values() if isinstance(value, str))
 
         return "\n".join(
             extract_rendered_html(value)
@@ -202,12 +169,8 @@ def extract_rendered_html(payload: Any) -> str:
 
 
 def fetch_more_headline_fragment(
-    session: requests.Session,
-    category_url: str,
-    page_no: int,
-    cursor: str,
-    timeout: int
-) -> Optional[str]:
+    session: requests.Session, category_url: str, page_no: int, cursor: str, timeout: int
+) -> str | None:
     parsed = urlparse(category_url)
     sid, sid2 = extract_section_ids(category_url)
 
@@ -236,10 +199,7 @@ def fetch_more_headline_fragment(
         )
         response.raise_for_status()
     except requests.RequestException as e:
-        logging.warning(
-            "요청 실패 (sid=%s, sid2=%s, page_no=%s): %s",
-            sid, sid2, page_no, e
-        )
+        logging.warning("요청 실패 (sid=%s, sid2=%s, page_no=%s): %s", sid, sid2, page_no, e)
         return None
 
     try:
@@ -251,18 +211,16 @@ def fetch_more_headline_fragment(
 
 
 def iter_anchor_category_headline_pages(
-    category_id: int,
-    max_more_calls: int = HEADLINE_MORE_COUNT,
-    wait_seconds: int = 10
-) -> Iterator[List[Dict[str, Any]]]:
+    category_id: int, max_more_calls: int = HEADLINE_MORE_COUNT, wait_seconds: int = 10
+) -> Iterator[list[dict[str, Any]]]:
 
     category_url = build_anchor_category_url(category_id)
     category_name = ANCHOR_CATEGORIES.get(category_id, str(category_id))
 
     seen_links: set = set()
 
-    def build_page_items(soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        page_items: List[Dict[str, Any]] = []
+    def build_page_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
+        page_items: list[dict[str, Any]] = []
 
         for title, link in extract_headline_pairs(soup, category_url):
             if not title or not link:
@@ -283,7 +241,7 @@ def iter_anchor_category_headline_pages(
                     "pubLabel": "news",
                     "_source_type": "anchor_headline",
                     "_category_id": category_id,
-                    "_category_name": category_name
+                    "_category_name": category_name,
                 }
             )
 
@@ -337,12 +295,10 @@ def iter_anchor_category_headline_pages(
 
 
 def collect_anchor_category_headlines(
-    category_id: int,
-    more_click_count: int = HEADLINE_MORE_COUNT,
-    wait_seconds: int = 10
-) -> List[Dict[str, Any]]:
+    category_id: int, more_click_count: int = HEADLINE_MORE_COUNT, wait_seconds: int = 10
+) -> list[dict[str, Any]]:
 
-    items: List[Dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
 
     for page_items in iter_anchor_category_headline_pages(
         category_id=category_id,
@@ -355,9 +311,8 @@ def collect_anchor_category_headlines(
 
 
 def collect_anchor_headlines(
-    category_ids: List[int] | None = None,
-    more_click_count: int = HEADLINE_MORE_COUNT
-) -> List[Dict[str, Any]]:
+    category_ids: list[int] | None = None, more_click_count: int = HEADLINE_MORE_COUNT
+) -> list[dict[str, Any]]:
 
     validate_anchor_headline_settings()
 
@@ -366,8 +321,7 @@ def collect_anchor_headlines(
 
     for category_id in category_ids:
         category_items = collect_anchor_category_headlines(
-            category_id=category_id,
-            more_click_count=more_click_count
+            category_id=category_id, more_click_count=more_click_count
         )
 
         all_items.extend(category_items)

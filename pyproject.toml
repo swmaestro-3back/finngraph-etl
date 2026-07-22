@@ -31,9 +31,6 @@ airflow = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# pipelines/news 는 별도 도메인(news 팀) 코드라 이 CI 도입 시점엔 lint 대상에서 제외한다.
-# news 팀이 자체적으로 정리한 뒤 이 제외를 없애고 편입하는 것을 전제로 한 임시 조치다.
-extend-exclude = ["pipelines/news"]
 
 [tool.ruff.lint]
 # AIR: Airflow 관련 정적 검증(API deprecation, DAG 인자/네이밍 관례 등). DagBag 런타임

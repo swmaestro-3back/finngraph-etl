@@ -1,38 +1,38 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from pipelines.news.config import (
     HEADLINE_MORE_COUNT,
+    MAX_TOTAL_COLLECTED_ITEMS,
     OFFICIAL_SOURCE_THRESHOLD,
-    MAX_TOTAL_COLLECTED_ITEMS
 )
 from pipelines.news.extractors.anchor_headline_collector import (
     ANCHOR_CATEGORIES,
     iter_anchor_category_headline_pages,
     validate_anchor_headline_settings,
 )
-from pipelines.news.transformers.duplicate_filter import (
-    normalize_title_for_duplicate,
-    remove_duplicate_by_url,
-    remove_duplicate_by_title,
-)
+from pipelines.news.extractors.text_fetcher import enrich_items_with_article_body
 from pipelines.news.loaders.news_repository import (
     filter_new_news_by_db,
     has_article_body,
-    save_news_items
+    save_news_items,
+)
+from pipelines.news.transformers.duplicate_filter import (
+    normalize_title_for_duplicate,
+    remove_duplicate_by_title,
+    remove_duplicate_by_url,
 )
 from pipelines.news.transformers.news_type_filter import filter_official_source_news
-from pipelines.news.extractors.text_fetcher import enrich_items_with_article_body
 
 
 def collect_category_new_headlines(
     category_id: int,
     target_count: int,
     max_more_calls: int = HEADLINE_MORE_COUNT,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
     category_name = ANCHOR_CATEGORIES.get(category_id, str(category_id))
 
-    collected: List[Dict[str, Any]] = []
+    collected: list[dict[str, Any]] = []
     seen_titles: set = set()
 
     stats = {
@@ -61,17 +61,13 @@ def collect_category_new_headlines(
         page_url_unique, page_url_removed = remove_duplicate_by_url(page_items)
         stats["url_duplicate_removed"] += len(page_url_removed)
 
-        page_title_unique, page_title_removed = remove_duplicate_by_title(
-            page_url_unique
-        )
+        page_title_unique, page_title_removed = remove_duplicate_by_title(page_url_unique)
         stats["title_duplicate_removed"] += len(page_title_removed)
 
         # 카테고리 내 페이지 간 제목 중복 제거 (배치 헬퍼는 페이지 내부만 처리)
-        page_candidates: List[Dict[str, Any]] = []
+        page_candidates: list[dict[str, Any]] = []
         for item in page_title_unique:
-            normalized_title = normalize_title_for_duplicate(
-                item.get("title", "")
-            )
+            normalized_title = normalize_title_for_duplicate(item.get("title", ""))
 
             if normalized_title and normalized_title in seen_titles:
                 stats["title_duplicate_removed"] += 1
@@ -116,8 +112,8 @@ def run() -> None:
 
     category_ids = list(ANCHOR_CATEGORIES.keys())
 
-    selected_news: List[Dict[str, Any]] = []
-    category_result_counts: Dict[str, Dict[str, Any]] = {}
+    selected_news: list[dict[str, Any]] = []
+    category_result_counts: dict[str, dict[str, Any]] = {}
 
     for category_id in category_ids:
         category_selected_news, category_stats = collect_category_new_headlines(
@@ -131,26 +127,21 @@ def run() -> None:
 
     selected_news = enrich_items_with_article_body(selected_news)
 
-    storable_news = [
-        item for item in selected_news
-        if has_article_body(item)
-    ]
+    storable_news = [item for item in selected_news if has_article_body(item)]
     body_success_count = len(storable_news)
     body_failed_count = len(selected_news) - body_success_count
 
-    save_result = save_news_items(
-        items=storable_news,
-        save_summary=False,
-        skip_existing=True
-    )
+    save_result = save_news_items(items=storable_news, save_summary=False, skip_existing=True)
 
     print("\n" + "=" * 70)
     print("카테고리별 수집 결과")
     print("=" * 70)
     for category_name, category_stats in category_result_counts.items():
         stop_reason = (
-            "목표달성" if category_stats["stopped_by_target"]
-            else "워터마크(신규없음)" if category_stats["stopped_by_watermark"]
+            "목표달성"
+            if category_stats["stopped_by_target"]
+            else "워터마크(신규없음)"
+            if category_stats["stopped_by_watermark"]
             else "페이지소진"
         )
         print(
