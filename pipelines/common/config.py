@@ -32,10 +32,10 @@ class Settings(BaseSettings):
         validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
     )
 
-    NEO4J_URI: str
-    NEO4J_USERNAME: str
-    NEO4J_PASSWORD: str
-    NEO4J_DATABASE: str
+    NEO4J_URI: str = Field(default="", validation_alias="NEO4J_URI")
+    NEO4J_USERNAME: str = Field(default="", validation_alias="NEO4J_USERNAME")
+    NEO4J_PASSWORD: str = Field(default="", validation_alias="NEO4J_PASSWORD")
+    NEO4J_DATABASE: str = Field(default="", validation_alias="NEO4J_DATABASE")
 
 
 @lru_cache
