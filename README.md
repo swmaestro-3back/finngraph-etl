@@ -37,29 +37,40 @@ etl/
 
 ## Local Checks
 
+CI와 동일한 검사를 로컬에서 돌리려면 먼저 dev 의존성을 설치한다.
+
 ```bash
+python -m pip install -e ".[dev]"
+```
+
+### 자동 (pre-commit)
+
+한 번 설정하면 commit·push 때 검사가 자동으로 돈다.
+
+```bash
+pre-commit install                       # commit 시 ruff(자동수정) + ruff-format
+pre-commit install --hook-type pre-push  # push 시 pytest
+```
+
+### 수동
+
+```bash
+ruff check . && ruff format --check .            # lint (CI: lint job)
+pytest -m "not integration"                      # 유닛 테스트 (CI: unit-test job)
 python -m compileall pipelines dags scripts
 ```
 
-## Database
+DAG 파싱 검증은 airflow가 필요하다(CI: dag-validation job).
 
-The local database uses the official `timescale/timescaledb:latest-pg16` image.
-This gives one PostgreSQL-compatible database for:
+```bash
+python -m pip install -e ".[airflow]"
+python scripts/validate_dags.py
+```
 
-- relational tables such as symbols, calendars, jobs, and source metadata
-- TimescaleDB hypertables for OHLCV time-series data
-
-Start the database:
+DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
 
 ```bash
 docker compose up -d db
+pytest -m integration
 ```
 
-The default host port is `15432` to avoid colliding with local PostgreSQL
-instances on `5432` or `5433`. Override it with `ETL_DB_PORT` when needed.
-
-On first initialization, `docker/db/initdb/001_extensions.sql` enables:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-```
