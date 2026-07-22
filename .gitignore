@@ -24,5 +24,6 @@ logs/
 # 테마 로컬 크롤링 저장 위치(테스트용)
 pipelines/themes/data/*
 
+.claude/
 AGENTS.md
 CLAUDE.md

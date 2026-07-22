@@ -2,7 +2,6 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
-
 SEOUL_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 

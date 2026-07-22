@@ -6,15 +6,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 from string import Template
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import httpx
 
-from news.test.utils.text_utils import (
+from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-
 
 MIN_ARTICLE_BODY_CHARS = 40
 NOISE_DOMINATED_BODY_MAX_CHARS = 240
@@ -53,7 +52,7 @@ VERIFIED_NON_PRICE_EVENT_PATTERN = re.compile(
     r"final\s+(?:order|ruling|approval)|completed\s+(?:the\s+)?acquisition)",
     re.IGNORECASE,
 )
-MATERIAL_RELATION_SCHEMA: Dict[str, Dict[str, Tuple[str, ...]]] = {
+MATERIAL_RELATION_SCHEMA: dict[str, dict[str, tuple[str, ...]]] = {
     "인수하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY",)},
     "설립하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY",)},
     "합병하다": {"subject": ("COMPANY",), "object": ("COMPANY",)},
@@ -62,51 +61,129 @@ MATERIAL_RELATION_SCHEMA: Dict[str, Dict[str, Tuple[str, ...]]] = {
     "계약하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY", "GOVERNMENT")},
     "분할하다": {"subject": ("COMPANY",), "object": ("COMPANY",)},
     "제휴하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY", "GOVERNMENT")},
-    "수주하다": {"subject": ("COMPANY",), "object": ("COMPANY", "GOVERNMENT", "PRODUCT", "COMMODITY")},
+    "수주하다": {
+        "subject": ("COMPANY",),
+        "object": ("COMPANY", "GOVERNMENT", "PRODUCT", "COMMODITY"),
+    },
     "선정하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY",)},
     "취득하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY",)},
     "매입하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY",)},
     "분사하다": {"subject": ("COMPANY",), "object": ("COMPANY",)},
-    "협력하다": {"subject": ("COMPANY", "GOVERNMENT", "COUNTRY"), "object": ("COMPANY", "GOVERNMENT", "COUNTRY")},
+    "협력하다": {
+        "subject": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+        "object": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+    },
     "유치하다": {"subject": ("COMPANY", "GOVERNMENT", "COUNTRY"), "object": ("COMPANY",)},
-    "체결하다": {"subject": ("COMPANY", "GOVERNMENT", "COUNTRY"), "object": ("COMPANY", "GOVERNMENT", "COUNTRY")},
+    "체결하다": {
+        "subject": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+        "object": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+    },
     "낙찰받다": {"subject": ("COMPANY",), "object": ("COMPANY", "GOVERNMENT")},
     "입찰하다": {"subject": ("COMPANY",), "object": ("COMPANY", "GOVERNMENT")},
-    "공급하다": {"subject": ("COMPANY",), "object": ("COMPANY", "GOVERNMENT", "COUNTRY", "COMMODITY", "PRODUCT")},
-    "공급받다": {"subject": ("COMPANY", "GOVERNMENT", "COUNTRY"), "object": ("COMPANY", "COMMODITY", "PRODUCT")},
-    "납품하다": {"subject": ("COMPANY",), "object": ("COMPANY", "GOVERNMENT", "COUNTRY", "COMMODITY", "PRODUCT")},
-    "제공하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY", "GOVERNMENT", "COMMODITY", "PRODUCT")},
-    "판매하다": {"subject": ("COMPANY",), "object": ("COMPANY", "GOVERNMENT", "COUNTRY", "COMMODITY", "PRODUCT")},
-    "구매하다": {"subject": ("COMPANY", "GOVERNMENT", "COUNTRY"), "object": ("COMPANY", "COMMODITY", "PRODUCT")},
-    "조달하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY", "COMMODITY", "PRODUCT")},
-    "위탁하다": {"subject": ("COMPANY", "GOVERNMENT"), "object": ("COMPANY", "COMMODITY", "PRODUCT")},
+    "공급하다": {
+        "subject": ("COMPANY",),
+        "object": ("COMPANY", "GOVERNMENT", "COUNTRY", "COMMODITY", "PRODUCT"),
+    },
+    "공급받다": {
+        "subject": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+        "object": ("COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "납품하다": {
+        "subject": ("COMPANY",),
+        "object": ("COMPANY", "GOVERNMENT", "COUNTRY", "COMMODITY", "PRODUCT"),
+    },
+    "제공하다": {
+        "subject": ("COMPANY", "GOVERNMENT"),
+        "object": ("COMPANY", "GOVERNMENT", "COMMODITY", "PRODUCT"),
+    },
+    "판매하다": {
+        "subject": ("COMPANY",),
+        "object": ("COMPANY", "GOVERNMENT", "COUNTRY", "COMMODITY", "PRODUCT"),
+    },
+    "구매하다": {
+        "subject": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+        "object": ("COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "조달하다": {
+        "subject": ("COMPANY", "GOVERNMENT"),
+        "object": ("COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "위탁하다": {
+        "subject": ("COMPANY", "GOVERNMENT"),
+        "object": ("COMPANY", "COMMODITY", "PRODUCT"),
+    },
     "유통하다": {"subject": ("COMPANY",), "object": ("COMPANY", "COMMODITY", "PRODUCT")},
-    "의존하다": {"subject": ("COMPANY", "GOVERNMENT", "COUNTRY"), "object": ("COMPANY", "COUNTRY", "COMMODITY", "PRODUCT")},
-    "수출하다": {"subject": ("COMPANY", "COUNTRY"), "object": ("COMPANY", "COUNTRY", "COMMODITY", "PRODUCT")},
-    "수입하다": {"subject": ("COMPANY", "COUNTRY"), "object": ("COMPANY", "COUNTRY", "COMMODITY", "PRODUCT")},
+    "의존하다": {
+        "subject": ("COMPANY", "GOVERNMENT", "COUNTRY"),
+        "object": ("COMPANY", "COUNTRY", "COMMODITY", "PRODUCT"),
+    },
+    "수출하다": {
+        "subject": ("COMPANY", "COUNTRY"),
+        "object": ("COMPANY", "COUNTRY", "COMMODITY", "PRODUCT"),
+    },
+    "수입하다": {
+        "subject": ("COMPANY", "COUNTRY"),
+        "object": ("COMPANY", "COUNTRY", "COMMODITY", "PRODUCT"),
+    },
     "생산하다": {"subject": ("COMPANY", "COUNTRY"), "object": ("COMMODITY", "PRODUCT")},
     "증산하다": {"subject": ("COMPANY", "COUNTRY"), "object": ("COMMODITY", "PRODUCT")},
     "감산하다": {"subject": ("COMPANY", "COUNTRY"), "object": ("COMMODITY", "PRODUCT")},
     "채굴하다": {"subject": ("COMPANY", "COUNTRY"), "object": ("COMMODITY",)},
-    "제재하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT", "COMPANY")},
-    "규제하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT")},
+    "제재하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "GOVERNMENT", "COMPANY"),
+    },
+    "규제하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
     "승인하다": {"subject": ("GOVERNMENT",), "object": ("COMPANY", "PRODUCT")},
-    "금지하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT")},
-    "제한하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT")},
-    "관세를 부과하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "COMMODITY", "PRODUCT")},
-    "수출을 금지하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT")},
-    "수입을 금지하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT")},
+    "금지하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "제한하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "관세를 부과하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "COMMODITY", "PRODUCT"),
+    },
+    "수출을 금지하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "수입을 금지하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
     "협정을 체결하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT")},
     "협정을 파기하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT")},
     "국교를 단절하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT")},
     "동맹하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT")},
-    "공격하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT", "COMPANY")},
+    "공격하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "GOVERNMENT", "COMPANY"),
+    },
     "침공하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT")},
-    "봉쇄하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT", "COMPANY", "COMMODITY", "PRODUCT")},
+    "봉쇄하다": {
+        "subject": ("COUNTRY", "GOVERNMENT"),
+        "object": ("COUNTRY", "GOVERNMENT", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
     "휴전하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COUNTRY", "GOVERNMENT")},
-    "지원하다": {"subject": ("COUNTRY", "GOVERNMENT", "COMPANY"), "object": ("COUNTRY", "GOVERNMENT", "COMPANY", "COMMODITY", "PRODUCT")},
-    "대출하다": {"subject": ("GOVERNMENT", "COMPANY"), "object": ("COUNTRY", "GOVERNMENT", "COMPANY")},
-    "소송하다": {"subject": ("COUNTRY", "GOVERNMENT", "COMPANY"), "object": ("COUNTRY", "GOVERNMENT", "COMPANY")},
+    "지원하다": {
+        "subject": ("COUNTRY", "GOVERNMENT", "COMPANY"),
+        "object": ("COUNTRY", "GOVERNMENT", "COMPANY", "COMMODITY", "PRODUCT"),
+    },
+    "대출하다": {
+        "subject": ("GOVERNMENT", "COMPANY"),
+        "object": ("COUNTRY", "GOVERNMENT", "COMPANY"),
+    },
+    "소송하다": {
+        "subject": ("COUNTRY", "GOVERNMENT", "COMPANY"),
+        "object": ("COUNTRY", "GOVERNMENT", "COMPANY"),
+    },
     "판결하다": {"subject": ("GOVERNMENT",), "object": ("COUNTRY", "GOVERNMENT", "COMPANY")},
     "국유화하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COMPANY", "COMMODITY")},
 }
@@ -142,9 +219,9 @@ MATERIAL_RELATION_SURFACE_PATTERN = re.compile(
 )
 
 
-def get_material_event_filter_config() -> Dict[str, Any]:
+def get_material_event_filter_config() -> dict[str, Any]:
     try:
-        from news import config
+        from pipelines.news import config
 
         return {
             "enable_llm": True,
@@ -193,7 +270,7 @@ def get_material_event_filter_config() -> Dict[str, Any]:
         }
 
 
-def extract_json_from_text(text: str) -> Dict[str, Any]:
+def extract_json_from_text(text: str) -> dict[str, Any]:
     if not text:
         return {}
 
@@ -205,13 +282,13 @@ def extract_json_from_text(text: str) -> Dict[str, Any]:
         return {}
 
     try:
-        return json.loads(text[start:end + 1])
+        return json.loads(text[start : end + 1])
     except json.JSONDecodeError:
         logging.warning(f"시장 영향 이벤트 판정 JSON 파싱 실패: {text}")
         return {}
 
 
-def parse_keep_from_text(text: str) -> Dict[str, Any]:
+def parse_keep_from_text(text: str) -> dict[str, Any]:
 
     if not text:
         return {}
@@ -226,15 +303,12 @@ def parse_keep_from_text(text: str) -> Dict[str, Any]:
         return parsed
 
     keep_match = re.search(
-        r'["\']?keep["\']?\s*[:=]\s*["\']?(true|false|yes|no|keep|drop)["\']?',
-        lowered
+        r'["\']?keep["\']?\s*[:=]\s*["\']?(true|false|yes|no|keep|drop)["\']?', lowered
     )
 
     if keep_match:
         value = keep_match.group(1)
-        return {
-            "keep": value in ["true", "yes", "keep"]
-        }
+        return {"keep": value in ["true", "yes", "keep"]}
 
     stripped = lowered.strip()
 
@@ -252,9 +326,7 @@ def parse_keep_from_text(text: str) -> Dict[str, Any]:
 
     if leading_decision_match:
         decision = leading_decision_match.group(1).lower()
-        return {
-            "keep": decision in ["keep", "true", "yes"]
-        }
+        return {"keep": decision in ["keep", "true", "yes"]}
 
     if re.search(r"\bdrop\b|\bremove\b|삭제|제거|버림|불필요", lowered):
         return {"keep": False}
@@ -268,7 +340,7 @@ def parse_keep_from_text(text: str) -> Dict[str, Any]:
 def parse_batch_keep_from_text(
     text: str,
     expected_count: int,
-) -> Dict[int, Dict[str, Any]]:
+) -> dict[int, dict[str, Any]]:
     """
     batch 응답을 파싱한다.
 
@@ -322,10 +394,7 @@ def parse_batch_keep_from_text(
     return results
 
 
-def build_material_event_source_text(
-    item: Dict[str, Any],
-    body_limit: int = 12000
-) -> str:
+def build_material_event_source_text(item: dict[str, Any], body_limit: int = 12000) -> str:
     body_text = clean_article_body_for_storage(
         get_printable_text(item.get("_body_text", "")),
         article_title=get_printable_text(item.get("title", "")),
@@ -356,9 +425,9 @@ def count_removed_noise_chars(entries: Any) -> int:
 
 
 def analyze_material_event_body_quality(
-    item: Dict[str, Any],
+    item: dict[str, Any],
     body_limit: int = 12000,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
 
     raw_body = get_printable_text(item.get("_body_text", ""))
     removed_during_check = []
@@ -374,16 +443,10 @@ def analyze_material_event_body_quality(
 
     raw_chars = len(re.sub(r"\s+", "", raw_body))
     current_removed_chars = max(raw_chars - full_cleaned_chars, 0)
-    recorded_removed_chars = count_removed_noise_chars(
-        item.get("_body_noise_removed", [])
-    )
+    recorded_removed_chars = count_removed_noise_chars(item.get("_body_noise_removed", []))
     removed_chars = current_removed_chars + recorded_removed_chars
     total_observed_chars = full_cleaned_chars + removed_chars
-    noise_ratio = (
-        removed_chars / total_observed_chars
-        if total_observed_chars > 0
-        else 1.0
-    )
+    noise_ratio = removed_chars / total_observed_chars if total_observed_chars > 0 else 1.0
 
     reason = ""
 
@@ -392,8 +455,7 @@ def analyze_material_event_body_quality(
     elif full_cleaned_chars < MIN_ARTICLE_BODY_CHARS:
         reason = "뉴스 사건을 판정하기에 지나치게 짧음"
     elif (
-        noise_ratio >= NOISE_DOMINATED_RATIO
-        and full_cleaned_chars < NOISE_DOMINATED_BODY_MAX_CHARS
+        noise_ratio >= NOISE_DOMINATED_RATIO and full_cleaned_chars < NOISE_DOMINATED_BODY_MAX_CHARS
     ):
         reason = "대부분이 광고/저작권/매체 소개 등 비기사 문구"
 
@@ -404,20 +466,22 @@ def analyze_material_event_body_quality(
         "body_chars": full_cleaned_chars,
         "removed_noise_chars": removed_chars,
         "noise_ratio": round(noise_ratio, 4),
-        "removed_noise_reasons": sorted({
-            reason_name
-            for entry in removed_during_check
-            if isinstance(entry, dict)
-            for reason_name in entry.get("reasons", [])
-            if isinstance(reason_name, str)
-        }),
+        "removed_noise_reasons": sorted(
+            {
+                reason_name
+                for entry in removed_during_check
+                if isinstance(entry, dict)
+                for reason_name in entry.get("reasons", [])
+                if isinstance(reason_name, str)
+            }
+        ),
     }
 
 
 def build_deterministic_body_quality_result(
-    item: Dict[str, Any],
+    item: dict[str, Any],
     body_limit: int = 12000,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     quality = analyze_material_event_body_quality(
         item=item,
         body_limit=body_limit,
@@ -438,23 +502,16 @@ def build_deterministic_body_quality_result(
     }
 
 
-def analyze_simple_market_wrap(item: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_simple_market_wrap(item: dict[str, Any]) -> dict[str, Any]:
 
     body_text = build_material_event_source_text(item=item, body_limit=12000)
     has_index = bool(MARKET_INDEX_PATTERN.search(body_text))
     has_movement = bool(MARKET_MOVEMENT_PATTERN.search(body_text))
     observation_count = len(MARKET_OBSERVATION_PATTERN.findall(body_text))
-    has_verified_event = bool(
-        VERIFIED_NON_PRICE_EVENT_PATTERN.search(body_text)
-    )
-    has_relation_event_signal = bool(
-        MATERIAL_RELATION_SURFACE_PATTERN.search(body_text)
-    )
+    has_verified_event = bool(VERIFIED_NON_PRICE_EVENT_PATTERN.search(body_text))
+    has_relation_event_signal = bool(MATERIAL_RELATION_SURFACE_PATTERN.search(body_text))
     is_simple_market_wrap = (
-        has_index
-        and has_movement
-        and not has_verified_event
-        and not has_relation_event_signal
+        has_index and has_movement and not has_verified_event and not has_relation_event_signal
     )
 
     return {
@@ -473,8 +530,8 @@ def analyze_simple_market_wrap(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_deterministic_market_wrap_result(
-    item: Dict[str, Any],
-) -> Dict[str, Any] | None:
+    item: dict[str, Any],
+) -> dict[str, Any] | None:
     market_wrap = analyze_simple_market_wrap(item)
 
     if not market_wrap["drop"]:
@@ -485,35 +542,30 @@ def build_deterministic_market_wrap_result(
         "provider": "deterministic_market_wrap",
         "reason": market_wrap["reason"],
         "market_wrap": {
-            key: value
-            for key, value in market_wrap.items()
-            if key not in {"drop", "reason"}
+            key: value for key, value in market_wrap.items() if key not in {"drop", "reason"}
         },
     }
 
 
 def build_deterministic_material_event_result(
-    item: Dict[str, Any],
+    item: dict[str, Any],
     body_limit: int = 12000,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
 
-    return (
-        build_deterministic_body_quality_result(item, body_limit)
-        or build_deterministic_market_wrap_result(item)
-    )
+    return build_deterministic_body_quality_result(
+        item, body_limit
+    ) or build_deterministic_market_wrap_result(item)
 
 
 def build_material_relation_schema_text() -> str:
 
     return "\n".join(
-        f"{predicate}:"
-        f"{'/'.join(entity_types['subject'])}>"
-        f"{'/'.join(entity_types['object'])}"
+        f"{predicate}:{'/'.join(entity_types['subject'])}>{'/'.join(entity_types['object'])}"
         for predicate, entity_types in MATERIAL_RELATION_SCHEMA.items()
     )
 
 
-def build_material_event_context(pipeline_input: Dict[str, Any] | None) -> str:
+def build_material_event_context(pipeline_input: dict[str, Any] | None) -> str:
     if not pipeline_input:
         return load_material_event_prompt_text("material_event_default_context.txt")
 
@@ -554,9 +606,7 @@ def build_material_event_policy_text() -> str:
 
 
 def build_llm_material_event_prompt(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
-    body_limit: int = 12000
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, body_limit: int = 12000
 ) -> str:
     source_text = build_material_event_source_text(item, body_limit)
     context_text = build_material_event_context(pipeline_input)
@@ -578,9 +628,7 @@ def build_llm_material_event_prompt(
 
 
 def build_batch_llm_material_event_prompt(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
-    body_limit: int = 12000
+    items: list[dict[str, Any]], pipeline_input: dict[str, Any] | None, body_limit: int = 12000
 ) -> str:
     context_text = build_material_event_context(pipeline_input)
     policy_text = build_material_event_policy_text()
@@ -607,6 +655,7 @@ def build_batch_llm_material_event_prompt(
         articles_text="\n".join(articles_text),
     )
 
+
 def normalize_llm_boolean(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ["true", "yes", "1", "keep"]
@@ -615,8 +664,8 @@ def normalize_llm_boolean(value: Any) -> bool:
 
 
 def normalize_llm_material_event_result(
-    parsed: Dict[str, Any],
-) -> Dict[str, Any]:
+    parsed: dict[str, Any],
+) -> dict[str, Any]:
     keep = parsed.get("keep")
 
     if keep is None:
@@ -626,10 +675,7 @@ def normalize_llm_material_event_result(
     gate_keys = ("has_relation", "is_material", "is_confirmed")
 
     if any(key in parsed for key in gate_keys):
-        keep = keep and all(
-            normalize_llm_boolean(parsed.get(key, False))
-            for key in gate_keys
-        )
+        keep = keep and all(normalize_llm_boolean(parsed.get(key, False)) for key in gate_keys)
 
     return {
         "keep": keep,
@@ -638,9 +684,9 @@ def normalize_llm_material_event_result(
 
 
 def normalize_batch_llm_material_event_results(
-    parsed: Dict[str, Any],
+    parsed: dict[str, Any],
     expected_count: int,
-) -> Dict[int, Dict[str, Any]]:
+) -> dict[int, dict[str, Any]]:
     results = parsed.get("results", [])
 
     if not isinstance(results, list):
@@ -669,7 +715,7 @@ def normalize_batch_llm_material_event_results(
     return normalized_results
 
 
-def build_safe_keep_result(provider: str = "llm_error") -> Dict[str, Any]:
+def build_safe_keep_result(provider: str = "llm_error") -> dict[str, Any]:
     return {
         "keep": True,
         "provider": provider,
@@ -679,7 +725,7 @@ def build_safe_keep_result(provider: str = "llm_error") -> Dict[str, Any]:
 def build_llm_failure_result(
     provider: str,
     fail_open: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
 
     return {
         "keep": bool(fail_open),
@@ -693,10 +739,8 @@ def build_llm_failure_result(
 
 
 def build_vllm_chat_completion_request(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Tuple[str, Dict[str, str], Dict[str, Any], int]:
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+) -> tuple[str, dict[str, str], dict[str, Any], int]:
     base_url = str(filter_config.get("vllm_base_url") or "").rstrip("/")
     model = str(filter_config.get("vllm_model") or "")
 
@@ -714,9 +758,7 @@ def build_vllm_chat_completion_request(
             "messages": [
                 {
                     "role": "system",
-                    "content": load_material_event_prompt_text(
-                        "material_event_single_system.txt"
-                    ),
+                    "content": load_material_event_prompt_text("material_event_single_system.txt"),
                 },
                 {
                     "role": "user",
@@ -725,7 +767,7 @@ def build_vllm_chat_completion_request(
                         pipeline_input=pipeline_input,
                         body_limit=int(filter_config.get("body_limit") or 12000),
                     ),
-                }
+                },
             ],
             "temperature": 0.0,
             "max_tokens": int(filter_config.get("max_tokens") or 80),
@@ -739,8 +781,8 @@ def build_vllm_chat_completion_request(
 
 
 def parse_vllm_material_event_response(
-    response_data: Dict[str, Any],
-) -> Dict[str, Any]:
+    response_data: dict[str, Any],
+) -> dict[str, Any]:
     choices = response_data.get("choices", [])
 
     if not choices:
@@ -757,10 +799,8 @@ def parse_vllm_material_event_response(
 
 
 def judge_material_event_with_vllm(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Dict[str, Any]:
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+) -> dict[str, Any]:
     import requests
 
     url, headers, payload, timeout = build_vllm_chat_completion_request(
@@ -780,11 +820,11 @@ def judge_material_event_with_vllm(
 
 
 async def judge_material_event_with_vllm_async(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any],
+    item: dict[str, Any],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any],
     client: httpx.AsyncClient,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     url, headers, payload, timeout = build_vllm_chat_completion_request(
         item=item,
         pipeline_input=pipeline_input,
@@ -802,10 +842,8 @@ async def judge_material_event_with_vllm_async(
 
 
 def judge_material_event_with_cloud(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Dict[str, Any]:
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+) -> dict[str, Any]:
     """OpenAI 호환 Chat Completions API를 사용하는 클라우드 LLM 판정."""
 
     import requests
@@ -828,9 +866,7 @@ def judge_material_event_with_cloud(
             "messages": [
                 {
                     "role": "system",
-                    "content": load_material_event_prompt_text(
-                        "material_event_single_system.txt"
-                    ),
+                    "content": load_material_event_prompt_text("material_event_single_system.txt"),
                 },
                 {
                     "role": "user",
@@ -858,19 +894,15 @@ def judge_material_event_with_cloud(
     parsed = parse_keep_from_text(raw_response)
 
     if not parsed:
-        logging.warning(
-            f"클라우드 LLM 이벤트 필터 응답 파싱 실패: {raw_response[:500]}"
-        )
+        logging.warning(f"클라우드 LLM 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
         raise RuntimeError("클라우드 LLM 이벤트 필터 JSON 파싱 실패")
 
     return normalize_llm_material_event_result(parsed)
 
 
 def judge_material_event_with_ollama(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Dict[str, Any]:
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+) -> dict[str, Any]:
     import requests
 
     base_url = str(filter_config.get("ollama_base_url", "")).rstrip("/")
@@ -909,10 +941,10 @@ def judge_material_event_with_ollama(
 
 
 def judge_material_event_with_llm(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None = None,
-    filter_config: Dict[str, Any] | None = None
-) -> Dict[str, Any]:
+    item: dict[str, Any],
+    pipeline_input: dict[str, Any] | None = None,
+    filter_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     filter_config = filter_config or get_material_event_filter_config()
     provider = str(filter_config.get("provider") or "vllm").lower()
 
@@ -938,10 +970,10 @@ def judge_material_event_with_llm(
 
 
 def judge_material_events_batch_with_vllm(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Dict[int, Dict[str, Any]]:
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
     import requests
 
     base_url = str(filter_config.get("vllm_base_url", "")).rstrip("/")
@@ -961,9 +993,7 @@ def judge_material_events_batch_with_vllm(
             "messages": [
                 {
                     "role": "system",
-                    "content": load_material_event_prompt_text(
-                        "material_event_batch_system.txt"
-                    ),
+                    "content": load_material_event_prompt_text("material_event_batch_system.txt"),
                 },
                 {
                     "role": "user",
@@ -972,7 +1002,7 @@ def judge_material_events_batch_with_vllm(
                         pipeline_input=pipeline_input,
                         body_limit=int(filter_config.get("body_limit") or 12000),
                     ),
-                }
+                },
             ],
             "temperature": 0.0,
             "max_tokens": int(filter_config.get("max_tokens") or 80) * max(len(items), 1),
@@ -1004,10 +1034,10 @@ def judge_material_events_batch_with_vllm(
 
 
 def judge_material_events_batch_with_cloud(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Dict[int, Dict[str, Any]]:
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
     """OpenAI 호환 Chat Completions API로 기사 묶음을 판정한다."""
 
     import requests
@@ -1030,9 +1060,7 @@ def judge_material_events_batch_with_cloud(
             "messages": [
                 {
                     "role": "system",
-                    "content": load_material_event_prompt_text(
-                        "material_event_batch_system.txt"
-                    ),
+                    "content": load_material_event_prompt_text("material_event_batch_system.txt"),
                 },
                 {
                     "role": "user",
@@ -1044,9 +1072,7 @@ def judge_material_events_batch_with_cloud(
                 },
             ],
             "temperature": 0.0,
-            "max_tokens": (
-                int(filter_config.get("max_tokens") or 80) * max(len(items), 1)
-            ),
+            "max_tokens": (int(filter_config.get("max_tokens") or 80) * max(len(items), 1)),
             "stream": False,
         },
         timeout=int(filter_config.get("cloud_timeout") or 300),
@@ -1065,19 +1091,17 @@ def judge_material_events_batch_with_cloud(
     )
 
     if not parsed:
-        logging.warning(
-            f"클라우드 LLM batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}"
-        )
+        logging.warning(f"클라우드 LLM batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
         raise RuntimeError("클라우드 LLM batch 이벤트 필터 JSON 파싱 실패")
 
     return parsed
 
 
 def judge_material_events_batch_with_ollama(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any]
-) -> Dict[int, Dict[str, Any]]:
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
     import requests
 
     base_url = str(filter_config.get("ollama_base_url", "")).rstrip("/")
@@ -1119,10 +1143,10 @@ def judge_material_events_batch_with_ollama(
 
 
 def judge_material_events_batch_with_llm(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
-    filter_config: Dict[str, Any] | None = None
-) -> Dict[int, Dict[str, Any]]:
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any] | None = None,
+) -> dict[int, dict[str, Any]]:
     filter_config = filter_config or get_material_event_filter_config()
     provider = str(filter_config.get("provider") or "vllm").lower()
 
@@ -1148,11 +1172,11 @@ def judge_material_events_batch_with_llm(
 
 
 def build_material_event_analysis_for_item(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
+    item: dict[str, Any],
+    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
-    filter_config: Dict[str, Any] | None
-) -> Dict[str, Any]:
+    filter_config: dict[str, Any] | None,
+) -> dict[str, Any]:
     body_limit = int((filter_config or {}).get("body_limit") or 12000)
     deterministic_result = build_deterministic_material_event_result(
         item=item,
@@ -1185,11 +1209,11 @@ def build_material_event_analysis_for_item(
 
 
 def build_material_event_analyses_sequential(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
-    filter_config: Dict[str, Any] | None
-) -> Dict[int, Dict[str, Any]]:
+    filter_config: dict[str, Any] | None,
+) -> dict[int, dict[str, Any]]:
     return {
         index: build_material_event_analysis_for_item(
             item=item,
@@ -1202,13 +1226,13 @@ def build_material_event_analyses_sequential(
 
 
 async def build_material_event_analysis_for_item_async(
-    item: Dict[str, Any],
-    pipeline_input: Dict[str, Any] | None,
+    item: dict[str, Any],
+    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
-    filter_config: Dict[str, Any] | None,
+    filter_config: dict[str, Any] | None,
     client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     body_limit = int((filter_config or {}).get("body_limit") or 12000)
     deterministic_result = build_deterministic_material_event_result(
         item=item,
@@ -1243,12 +1267,12 @@ async def build_material_event_analysis_for_item_async(
 
 
 async def build_material_event_analyses_async(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
-    filter_config: Dict[str, Any] | None,
+    filter_config: dict[str, Any] | None,
     max_concurrency: int,
-) -> Dict[int, Dict[str, Any]]:
+) -> dict[int, dict[str, Any]]:
     max_concurrency = max(int(max_concurrency or 1), 1)
     semaphore = asyncio.Semaphore(max_concurrency)
     limits = httpx.Limits(
@@ -1270,19 +1294,16 @@ async def build_material_event_analyses_async(
         ]
         results = await asyncio.gather(*tasks)
 
-    return {
-        index: analysis
-        for index, analysis in enumerate(results)
-    }
+    return {index: analysis for index, analysis in enumerate(results)}
 
 
 def build_material_event_analyses_threaded(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
-    filter_config: Dict[str, Any] | None,
-    max_workers: int
-) -> Dict[int, Dict[str, Any]]:
+    filter_config: dict[str, Any] | None,
+    max_workers: int,
+) -> dict[int, dict[str, Any]]:
     analyses = {}
     max_workers = max(int(max_workers or 1), 1)
 
@@ -1306,12 +1327,12 @@ def build_material_event_analyses_threaded(
 
 
 def build_material_event_analyses_batch(
-    items: List[Dict[str, Any]],
-    pipeline_input: Dict[str, Any] | None,
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
-    filter_config: Dict[str, Any] | None,
-    batch_size: int
-) -> Dict[int, Dict[str, Any]]:
+    filter_config: dict[str, Any] | None,
+    batch_size: int,
+) -> dict[int, dict[str, Any]]:
     if not use_llm:
         return build_material_event_analyses_sequential(
             items=items,
@@ -1324,7 +1345,7 @@ def build_material_event_analyses_batch(
     batch_size = max(int(batch_size or 1), 1)
 
     for batch_start in range(0, len(items), batch_size):
-        batch_items = items[batch_start:batch_start + batch_size]
+        batch_items = items[batch_start : batch_start + batch_size]
         llm_items = []
         llm_local_indexes = []
 
@@ -1357,10 +1378,13 @@ def build_material_event_analyses_batch(
             )
             batch_results = {}
 
-        for llm_index, (local_index, item) in enumerate(zip(
-            llm_local_indexes,
-            llm_items,
-        )):
+        for llm_index, (local_index, item) in enumerate(
+            zip(
+                llm_local_indexes,
+                llm_items,
+                strict=True,
+            )
+        ):
             global_index = batch_start + local_index
             analysis = batch_results.get(llm_index)
 
@@ -1381,9 +1405,8 @@ def build_material_event_analyses_batch(
 
 
 def split_items_by_material_event_result(
-    items: List[Dict[str, Any]],
-    analyses: Dict[int, Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    items: list[dict[str, Any]], analyses: dict[int, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     passed_items = []
     removed_items = []
 
@@ -1411,16 +1434,16 @@ def split_items_by_material_event_result(
 
 
 def filter_material_event_news(
-    items: List[Dict[str, Any]],
+    items: list[dict[str, Any]],
     min_score: int = 0,
-    pipeline_input: Dict[str, Any] | None = None,
+    pipeline_input: dict[str, Any] | None = None,
     use_llm: bool | None = None,
     min_confidence: float | None = None,
     mode: str = "sequential",
     max_workers: int | None = None,
     max_concurrency: int | None = None,
-    batch_size: int | None = None
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    batch_size: int | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
     filter_config = get_material_event_filter_config()
 
