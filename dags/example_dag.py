@@ -26,4 +26,3 @@ if dag and task:
         ping()
 
     example_etl_healthcheck()
-

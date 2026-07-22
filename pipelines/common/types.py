@@ -25,4 +25,3 @@ class MinuteCandle:
     low: Decimal
     close: Decimal
     volume: int
-

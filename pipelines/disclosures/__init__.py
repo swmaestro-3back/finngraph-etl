@@ -1,2 +1,1 @@
 """Disclosure ETL pipeline."""
-

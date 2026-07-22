@@ -1,11 +1,6 @@
 services:
   db:
-    build:
-      context: ./docker/db
-      args:
-        BASE_IMAGE: timescale/timescaledb:latest-pg16
-        PGVECTOR_VERSION: v0.8.4
-    image: etl-timescaledb-pgvector:pg16
+    image: timescale/timescaledb:latest-pg16
     environment:
       POSTGRES_USER: etl
       POSTGRES_PASSWORD: etl

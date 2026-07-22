@@ -15,4 +15,3 @@ class KisClient:
     def fetch_intraday_1m(self, symbol: str) -> list[MinuteCandle]:
         self.rate_limiter.wait()
         raise NotImplementedError("KIS 1m candle extraction is not implemented yet.")
-

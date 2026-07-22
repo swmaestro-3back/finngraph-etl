@@ -29,4 +29,3 @@ if dag and task:
         collect_intraday_1m()
 
     stocks_intraday_1m()
-
