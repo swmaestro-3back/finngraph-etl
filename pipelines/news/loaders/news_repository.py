@@ -463,6 +463,125 @@ def fetch_recent_news_items(limit: int = 50) -> List[Dict[str, Any]]:
         conn.close()
 
 
+def fetch_unchecked_news_items(limit: int = 300) -> List[Dict[str, Any]]:
+
+    query = """
+        SELECT
+            id,
+            title,
+            description,
+            summary,
+            body_text,
+            link,
+            originallink,
+            published_at
+        FROM news
+        WHERE material_checked_at IS NULL
+          AND body_text IS NOT NULL
+          AND BTRIM(body_text) <> ''
+        ORDER BY id ASC
+        LIMIT %s;
+    """
+
+    conn = get_connection()
+
+    try:
+        with conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (limit,))
+                rows = cursor.fetchall()
+
+                items = []
+
+                for row in rows:
+                    (
+                        news_id,
+                        title,
+                        description,
+                        summary,
+                        body_text,
+                        link,
+                        originallink,
+                        published_at
+                    ) = row
+
+                    items.append(
+                        {
+                            "_news_id": news_id,
+                            "title": title or "",
+                            "description": description or summary or "",
+                            "_body_text": body_text or "",
+                            "link": link or "",
+                            "originallink": originallink or "",
+                            "pubDate": (
+                                published_at.strftime("%a, %d %b %Y %H:%M:%S %z")
+                                if published_at
+                                else ""
+                            )
+                        }
+                    )
+
+                return items
+
+    finally:
+        conn.close()
+
+
+def mark_news_material_checked(
+    kept_ids: List[int],
+    dropped_ids: List[int]
+) -> Dict[str, int]:
+
+    unique_kept = sorted({int(news_id) for news_id in kept_ids if news_id})
+    unique_dropped = sorted({int(news_id) for news_id in dropped_ids if news_id})
+
+    if not unique_kept and not unique_dropped:
+        logging.info("판정 결과 기록 대상이 없습니다.")
+        return {"kept_count": 0, "dropped_count": 0}
+
+    conn = get_connection()
+
+    try:
+        with conn:
+            with conn.cursor() as cursor:
+                if unique_kept:
+                    cursor.execute(
+                        """
+                        UPDATE news
+                        SET material_checked_at = now(),
+                            is_material = TRUE
+                        WHERE id = ANY(%s);
+                        """,
+                        (unique_kept,)
+                    )
+
+                if unique_dropped:
+                    cursor.execute(
+                        """
+                        UPDATE news
+                        SET material_checked_at = now(),
+                            is_material = FALSE
+                        WHERE id = ANY(%s);
+                        """,
+                        (unique_dropped,)
+                    )
+
+        result = {
+            "kept_count": len(unique_kept),
+            "dropped_count": len(unique_dropped)
+        }
+
+        logging.info(
+            f"material 판정 기록 완료: 유지 {result['kept_count']}개, "
+            f"소프트삭제 {result['dropped_count']}개"
+        )
+
+        return result
+
+    finally:
+        conn.close()
+
+
 def find_existing_links(links: List[str]) -> Set[str]:
 
     filtered_links = [
