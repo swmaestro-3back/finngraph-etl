@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-import psycopg2
+import psycopg
 
 from pipelines.news.config import (
     DB_HOST,
@@ -23,7 +23,7 @@ from pipelines.news.utils.text_utils import (
 
 def get_connection():
 
-    return psycopg2.connect(
+    return psycopg.connect(
         host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD
     )
 
