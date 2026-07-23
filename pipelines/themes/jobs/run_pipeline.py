@@ -10,7 +10,6 @@ from pipelines.themes.jobs.steps import (
     validate_themes,
 )
 
-
 async def _run_async() -> None:
     """
     steps의 실행 단위를 CLI에서 순차로 조합한다.
@@ -18,7 +17,9 @@ async def _run_async() -> None:
     """
     await reset()
 
-    nested = [await extract_source(source_name) for source_name in SOURCES]
+    nested = await asyncio.gather(
+        *(extract_source(source_name) for source_name in SOURCES)
+    )
 
     validated = await validate_themes(nested)
     await load_themes(validated)
