@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 try:
     import pendulum
@@ -22,12 +23,27 @@ if dag and task:
         tags=["news", "filter", "material-event"],
     )
     def news_filter_meaningless():
+
         @task(retries=1, retry_delay=timedelta(minutes=10))
-        def filter_meaningless() -> None:
-            from pipelines.news.jobs.filter_meaningless_news import run
+        def judge() -> dict[str, Any]:
+            from pipelines.news.jobs.filter_meaningless_news import judge_unchecked_news
 
-            run(apply=True)
+            result = judge_unchecked_news()
 
-        filter_meaningless()
+            return {
+                "kept_ids": result["kept_ids"],
+                "dropped_ids": result["dropped_ids"],
+                "fetched": result["fetched"],
+                "kept": result["kept"],
+                "dropped": result["dropped"],
+            }
+
+        @task(retries=3, retry_delay=timedelta(minutes=2))
+        def mark(judged: dict[str, Any]) -> None:
+            from pipelines.news.jobs.filter_meaningless_news import mark_material_results
+
+            mark_material_results(judged["kept_ids"], judged["dropped_ids"])
+
+        mark(judge())
 
     news_filter_meaningless()
