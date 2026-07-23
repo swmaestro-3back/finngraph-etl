@@ -73,4 +73,3 @@ DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
 docker compose up -d db
 pytest -m integration
 ```
-
