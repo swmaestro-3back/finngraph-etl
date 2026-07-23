@@ -33,7 +33,6 @@ airflow = [
 ]
 
 news = [
-  "psycopg2-binary>=2.9",
   "beautifulsoup4>=4.12",
 ]
 

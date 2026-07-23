@@ -12,8 +12,7 @@ from pipelines.news.transformers.material_event_filter import filter_material_ev
 DEFAULT_MAX_ITEMS_PER_RUN = 300
 
 
-def run(
-    apply: bool = True,
+def judge_unchecked_news(
     limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
     mode: str = "sequential",
     max_workers: int | None = None,
@@ -36,21 +35,56 @@ def run(
     kept_ids = [item.get("_news_id") for item in passed_items if item.get("_news_id")]
     dropped_ids = extract_news_ids_from_removed_items(removed_items)
 
-    summary: dict[str, Any] = {
+    return {
+        "kept_ids": kept_ids,
+        "dropped_ids": dropped_ids,
         "fetched": len(source_news),
         "kept": len(passed_items),
         "dropped": len(removed_items),
-        "applied": False,
-        "marked_kept": 0,
-        "marked_dropped": 0,
         "removed_items": removed_items,
     }
 
+
+def mark_material_results(
+    kept_ids: list[int],
+    dropped_ids: list[int],
+) -> dict[str, int]:
+
+    return mark_news_material_checked(kept_ids=kept_ids, dropped_ids=dropped_ids)
+
+
+def run(
+    apply: bool = True,
+    limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
+    mode: str = "sequential",
+    max_workers: int | None = None,
+    max_concurrency: int | None = None,
+    batch_size: int | None = None,
+) -> dict[str, Any]:
+
+    judged = judge_unchecked_news(
+        limit=limit,
+        mode=mode,
+        max_workers=max_workers,
+        max_concurrency=max_concurrency,
+        batch_size=batch_size,
+    )
+
+    kept_ids = judged["kept_ids"]
+    dropped_ids = judged["dropped_ids"]
+
+    summary: dict[str, Any] = {
+        "fetched": judged["fetched"],
+        "kept": judged["kept"],
+        "dropped": judged["dropped"],
+        "applied": False,
+        "marked_kept": 0,
+        "marked_dropped": 0,
+        "removed_items": judged["removed_items"],
+    }
+
     if apply and (kept_ids or dropped_ids):
-        mark_result = mark_news_material_checked(
-            kept_ids=kept_ids,
-            dropped_ids=dropped_ids,
-        )
+        mark_result = mark_material_results(kept_ids, dropped_ids)
         summary["applied"] = True
         summary["marked_kept"] = mark_result["kept_count"]
         summary["marked_dropped"] = mark_result["dropped_count"]
