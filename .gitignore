@@ -25,5 +25,6 @@ logs/
 pipelines/themes/data/*
 
 .claude/
+.bkit/
 AGENTS.md
 CLAUDE.md
