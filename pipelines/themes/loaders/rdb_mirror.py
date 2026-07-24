@@ -2,34 +2,38 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import text
+
+from pipelines.common.database import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.news.loaders.news_repository import get_connection
 
 logger = get_logger(__name__)
 
 MIN_THEMES_SAFETY = 1
 
 
-def _upsert_theme(cursor, name: str, description: str, source: str | None) -> int:
+def _upsert_theme(session, name: str, description: str, source: str | None) -> int:
 
-    cursor.execute(
-        """
-        INSERT INTO themes (name, description, source, updated_at, last_seen_at)
-        VALUES (%s, %s, %s, now(), now())
-        ON CONFLICT (name) DO UPDATE
-        SET description = EXCLUDED.description,
-            source = EXCLUDED.source,
-            updated_at = now(),
-            last_seen_at = now()
-        RETURNING id;
-        """,
-        (name, description, source),
-    )
+    row = session.execute(
+        text(
+            """
+            INSERT INTO themes (name, description, source, updated_at, last_seen_at)
+            VALUES (:name, :description, :source, now(), now())
+            ON CONFLICT (name) DO UPDATE
+            SET description = EXCLUDED.description,
+                source = EXCLUDED.source,
+                updated_at = now(),
+                last_seen_at = now()
+            RETURNING id;
+            """
+        ),
+        {"name": name, "description": description, "source": source},
+    ).fetchone()
 
-    return cursor.fetchone()[0]
+    return row[0]
 
 
-def _reconcile_theme_stocks(cursor, theme_id: int, stocks: list[dict[str, Any]]) -> int:
+def _reconcile_theme_stocks(session, theme_id: int, stocks: list[dict[str, Any]]) -> int:
 
     seen_codes: list[str] = []
 
@@ -41,20 +45,25 @@ def _reconcile_theme_stocks(cursor, theme_id: int, stocks: list[dict[str, Any]])
 
         seen_codes.append(ticker)
 
-        cursor.execute(
-            """
-            INSERT INTO theme_stocks (theme_id, stock_code, reason, added_at)
-            VALUES (%s, %s, %s, now())
-            ON CONFLICT (theme_id, stock_code) DO UPDATE
-            SET reason = EXCLUDED.reason;
-            """,
-            (theme_id, ticker, stock.get("reason")),
+        session.execute(
+            text(
+                """
+                INSERT INTO theme_stocks (theme_id, stock_code, reason, added_at)
+                VALUES (:theme_id, :stock_code, :reason, now())
+                ON CONFLICT (theme_id, stock_code) DO UPDATE
+                SET reason = EXCLUDED.reason;
+                """
+            ),
+            {"theme_id": theme_id, "stock_code": ticker, "reason": stock.get("reason")},
         )
 
     if seen_codes:
-        cursor.execute(
-            "DELETE FROM theme_stocks WHERE theme_id = %s AND NOT (stock_code = ANY(%s));",
-            (theme_id, seen_codes),
+        session.execute(
+            text(
+                "DELETE FROM theme_stocks "
+                "WHERE theme_id = :theme_id AND NOT (stock_code = ANY(:codes));"
+            ),
+            {"theme_id": theme_id, "codes": seen_codes},
         )
     else:
         # 빈 스냅샷은 "테마에 종목이 없어짐"과 "이번 크롤에서 종목을 못 읽음"(부분 실행/라벨 누락)을
@@ -71,59 +80,42 @@ def mirror_themes_to_rdb(themes: list[dict[str, Any]]) -> dict[str, Any]:
     """Neo4j에서 읽은 테마 스냅샷을 RDB themes/theme_stocks에 반영한다.
 
     themes 항목 형식: {"name", "description", "source", "stocks": [{"ticker", "reason"}]}.
-    테마마다 SAVEPOINT로 격리해 개별 실패가 전체를 깨지 않게 한다.
+    테마마다 SAVEPOINT(begin_nested)로 격리해 개별 실패가 전체를 깨지 않게 한다.
     """
 
     if len(themes) < MIN_THEMES_SAFETY:
         logger.error("테마 스냅샷이 비어 있어 미러링을 중단합니다(정상 데이터 덮어쓰기 방지).")
         return {"themes": 0, "theme_stocks": 0, "failed": 0, "skipped": True}
 
-    conn = get_connection()
     theme_count = 0
     stock_count = 0
     failed_count = 0
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                for theme in themes:
-                    name = (theme.get("name") or "").strip()
+    with session_scope() as session:
+        for theme in themes:
+            name = (theme.get("name") or "").strip()
 
-                    if not name:
-                        continue
+            if not name:
+                continue
 
-                    try:
-                        cursor.execute("SAVEPOINT mirror_theme;")
+            try:
+                with session.begin_nested():
+                    theme_id = _upsert_theme(
+                        session,
+                        name=name,
+                        description=theme.get("description", "") or "",
+                        source=theme.get("source"),
+                    )
+                    linked = _reconcile_theme_stocks(
+                        session, theme_id, theme.get("stocks", []) or []
+                    )
 
-                        theme_id = _upsert_theme(
-                            cursor,
-                            name=name,
-                            description=theme.get("description", "") or "",
-                            source=theme.get("source"),
-                        )
-                        linked = _reconcile_theme_stocks(
-                            cursor, theme_id, theme.get("stocks", []) or []
-                        )
+                theme_count += 1
+                stock_count += linked
 
-                        cursor.execute("RELEASE SAVEPOINT mirror_theme;")
-
-                        theme_count += 1
-                        stock_count += linked
-
-                    except Exception as e:
-                        try:
-                            cursor.execute("ROLLBACK TO SAVEPOINT mirror_theme;")
-                            cursor.execute("RELEASE SAVEPOINT mirror_theme;")
-                        except Exception:
-                            conn.rollback()
-
-                        failed_count += 1
-                        logger.error(
-                            "테마 미러 실패: name=%s, error=%s: %s", name, type(e).__name__, e
-                        )
-
-    finally:
-        conn.close()
+            except Exception as e:
+                failed_count += 1
+                logger.error("테마 미러 실패: name=%s, error=%s: %s", name, type(e).__name__, e)
 
     result = {
         "themes": theme_count,
