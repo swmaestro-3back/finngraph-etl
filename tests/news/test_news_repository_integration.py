@@ -15,6 +15,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import text
+
+from pipelines.common.database import session_scope
 
 pytestmark = pytest.mark.integration
 
@@ -46,60 +49,58 @@ def repo():
     return news_repository
 
 
-def _delete_test_rows(repo) -> None:
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute("DELETE FROM news WHERE link LIKE %s", (TEST_LINK_PREFIX + "%",))
-    finally:
-        conn.close()
+def _delete_test_rows() -> None:
+    with session_scope() as session:
+        session.execute(
+            text("DELETE FROM news WHERE link LIKE :prefix"),
+            {"prefix": TEST_LINK_PREFIX + "%"},
+        )
 
 
 @pytest.fixture()
-def news_table(repo):
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(_MINIMAL_NEWS_DDL)
-    finally:
-        conn.close()
+def news_table():
+    with session_scope() as session:
+        session.execute(text(_MINIMAL_NEWS_DDL))
 
-    _delete_test_rows(repo)
+    _delete_test_rows()
     yield
-    _delete_test_rows(repo)
+    _delete_test_rows()
 
 
-def _insert(repo, *, suffix, body_text, checked_at=None, is_material=None) -> int:
+def _insert(*, suffix, body_text, checked_at=None, is_material=None) -> int:
     link = TEST_LINK_PREFIX + suffix
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
+    with session_scope() as session:
+        row = session.execute(
+            text(
                 """
                 INSERT INTO news
                     (title, description, body_text, link, originallink,
                      material_checked_at, is_material)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (:title, :description, :body_text, :link, :originallink,
+                        :checked_at, :is_material)
                 RETURNING id;
-                """,
-                ("제목 " + suffix, "설명", body_text, link, link, checked_at, is_material),
-            )
-            return cursor.fetchone()[0]
-    finally:
-        conn.close()
+                """
+            ),
+            {
+                "title": "제목 " + suffix,
+                "description": "설명",
+                "body_text": body_text,
+                "link": link,
+                "originallink": link,
+                "checked_at": checked_at,
+                "is_material": is_material,
+            },
+        ).fetchone()
+        return row[0]
 
 
-def _state(repo, ids):
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, material_checked_at, is_material FROM news WHERE id = ANY(%s)",
-                (list(ids),),
-            )
-            return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
-    finally:
-        conn.close()
+def _state(ids):
+    with session_scope() as session:
+        rows = session.execute(
+            text("SELECT id, material_checked_at, is_material FROM news WHERE id = ANY(:ids)"),
+            {"ids": list(ids)},
+        ).fetchall()
+        return {row[0]: (row[1], row[2]) for row in rows}
 
 
 def _unchecked_test_ids(repo):
@@ -108,12 +109,11 @@ def _unchecked_test_ids(repo):
 
 
 def test_fetch_unchecked_returns_only_unjudged_with_body(news_table, repo):
-    keep = _insert(repo, suffix="a-unchecked", body_text="텍스트 A")
-    drop = _insert(repo, suffix="b-unchecked", body_text="텍스트 B")
-    _insert(repo, suffix="c-null-body", body_text=None)
-    _insert(repo, suffix="d-blank-body", body_text="   ")
+    keep = _insert(suffix="a-unchecked", body_text="텍스트 A")
+    drop = _insert(suffix="b-unchecked", body_text="텍스트 B")
+    _insert(suffix="c-null-body", body_text=None)
+    _insert(suffix="d-blank-body", body_text="   ")
     _insert(
-        repo,
         suffix="e-already-checked",
         body_text="E",
         checked_at=datetime.now(UTC),
@@ -131,7 +131,7 @@ def test_fetch_unchecked_returns_only_unjudged_with_body(news_table, repo):
     assert _unchecked_test_ids(repo) == set()
 
     # 실제 저장 상태 확인.
-    state = _state(repo, [keep, drop])
+    state = _state([keep, drop])
     kept_checked_at, kept_is_material = state[keep]
     dropped_checked_at, dropped_is_material = state[drop]
     assert kept_checked_at is not None and kept_is_material is True
