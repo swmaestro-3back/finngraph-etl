@@ -244,6 +244,7 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "cloud_model": getattr(config, "CLOUD_LLM_CHAT_MODEL", ""),
             "cloud_api_key": getattr(config, "CLOUD_LLM_API_KEY", ""),
             "cloud_timeout": getattr(config, "CLOUD_LLM_REQUEST_TIMEOUT", 300),
+            "cloud_version": getattr(config, "CLOUD_LLM_VERSION", ""),
             "ollama_base_url": getattr(config, "OLLAMA_BASE_URL", ""),
             "ollama_model": getattr(config, "OLLAMA_CHAT_MODEL", ""),
         }
@@ -265,6 +266,7 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "cloud_model": "",
             "cloud_api_key": "",
             "cloud_timeout": 300,
+            "cloud_version": "",
             "ollama_base_url": "",
             "ollama_model": "",
         }
@@ -841,33 +843,42 @@ async def judge_material_event_with_vllm_async(
     return parse_vllm_material_event_response(response.json())
 
 
+def extract_anthropic_text_content(response_data: dict[str, Any]) -> str:
+
+    content = response_data.get("content", [])
+
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            return block.get("text", "")
+
+    return ""
+
+
 def judge_material_event_with_cloud(
     item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
 ) -> dict[str, Any]:
-    """OpenAI 호환 Chat Completions API를 사용하는 클라우드 LLM 판정."""
 
     import requests
 
     base_url = str(filter_config.get("cloud_base_url", "")).rstrip("/")
     model = str(filter_config.get("cloud_model", ""))
     api_key = str(filter_config.get("cloud_api_key", ""))
+    anthropic_version = str(filter_config.get("cloud_version"))
 
     if not base_url or not model or not api_key:
         raise RuntimeError("클라우드 LLM 이벤트 필터 설정이 비어있음")
 
     response = requests.post(
-        f"{base_url}/chat/completions",
+        f"{base_url}/v1/messages",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "x-api-key": api_key,
+            "anthropic-version": anthropic_version,
         },
         json={
             "model": model,
+            "system": load_material_event_prompt_text("material_event_single_system.txt"),
             "messages": [
-                {
-                    "role": "system",
-                    "content": load_material_event_prompt_text("material_event_single_system.txt"),
-                },
                 {
                     "role": "user",
                     "content": build_llm_material_event_prompt(
@@ -877,20 +888,17 @@ def judge_material_event_with_cloud(
                     ),
                 },
             ],
-            "temperature": 0.0,
             "max_tokens": int(filter_config.get("max_tokens") or 80),
-            "stream": False,
         },
         timeout=int(filter_config.get("cloud_timeout") or 300),
     )
     response.raise_for_status()
 
-    choices = response.json().get("choices", [])
+    raw_response = extract_anthropic_text_content(response.json())
 
-    if not choices:
-        raise RuntimeError("클라우드 LLM 이벤트 필터 choices가 비어있음")
+    if not raw_response:
+        raise RuntimeError("클라우드 LLM 이벤트 필터 content가 비어있음")
 
-    raw_response = choices[0].get("message", {}).get("content", "")
     parsed = parse_keep_from_text(raw_response)
 
     if not parsed:
@@ -1038,30 +1046,28 @@ def judge_material_events_batch_with_cloud(
     pipeline_input: dict[str, Any] | None,
     filter_config: dict[str, Any],
 ) -> dict[int, dict[str, Any]]:
-    """OpenAI 호환 Chat Completions API로 기사 묶음을 판정한다."""
 
     import requests
 
     base_url = str(filter_config.get("cloud_base_url", "")).rstrip("/")
     model = str(filter_config.get("cloud_model", ""))
     api_key = str(filter_config.get("cloud_api_key", ""))
+    anthropic_version = str(filter_config.get("cloud_version") or "2023-06-01")
 
     if not base_url or not model or not api_key:
         raise RuntimeError("클라우드 LLM batch 이벤트 필터 설정이 비어있음")
 
     response = requests.post(
-        f"{base_url}/chat/completions",
+        f"{base_url}/v1/messages",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "x-api-key": api_key,
+            "anthropic-version": anthropic_version,
         },
         json={
             "model": model,
+            "system": load_material_event_prompt_text("material_event_batch_system.txt"),
             "messages": [
-                {
-                    "role": "system",
-                    "content": load_material_event_prompt_text("material_event_batch_system.txt"),
-                },
                 {
                     "role": "user",
                     "content": build_batch_llm_material_event_prompt(
@@ -1071,20 +1077,17 @@ def judge_material_events_batch_with_cloud(
                     ),
                 },
             ],
-            "temperature": 0.0,
             "max_tokens": (int(filter_config.get("max_tokens") or 80) * max(len(items), 1)),
-            "stream": False,
         },
         timeout=int(filter_config.get("cloud_timeout") or 300),
     )
     response.raise_for_status()
 
-    choices = response.json().get("choices", [])
+    raw_response = extract_anthropic_text_content(response.json())
 
-    if not choices:
-        raise RuntimeError("클라우드 LLM batch 이벤트 필터 choices가 비어있음")
+    if not raw_response:
+        raise RuntimeError("클라우드 LLM batch 이벤트 필터 content가 비어있음")
 
-    raw_response = choices[0].get("message", {}).get("content", "")
     parsed = parse_batch_keep_from_text(
         text=raw_response,
         expected_count=len(items),

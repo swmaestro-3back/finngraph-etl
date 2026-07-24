@@ -1,7 +1,9 @@
 import logging
 from typing import Any
 
-from pipelines.news.loaders.news_repository import get_connection
+from sqlalchemy import text
+
+from pipelines.common.database import session_scope
 
 
 def fetch_active_search_keywords(limit: int = 50) -> list[dict[str, Any]]:
@@ -13,27 +15,21 @@ def fetch_active_search_keywords(limit: int = 50) -> list[dict[str, Any]]:
           AND keyword IS NOT NULL
           AND BTRIM(keyword) <> ''
         ORDER BY last_searched_at ASC NULLS FIRST, id ASC
-        LIMIT %s;
+        LIMIT :limit;
     """
 
-    conn = get_connection()
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
 
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(query, (limit,))
-
-            return [
-                {
-                    "id": int(row[0]),
-                    "keyword": row[1],
-                    "source_type": row[2],
-                    "source_id": row[3],
-                }
-                for row in cursor.fetchall()
-            ]
-
-    finally:
-        conn.close()
+        return [
+            {
+                "id": int(row[0]),
+                "keyword": row[1],
+                "source_type": row[2],
+                "source_id": row[3],
+            }
+            for row in rows
+        ]
 
 
 def mark_keywords_searched(keyword_ids: list[int]) -> int:
@@ -43,16 +39,11 @@ def mark_keywords_searched(keyword_ids: list[int]) -> int:
     if not unique_ids:
         return 0
 
-    conn = get_connection()
-
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE search_keywords SET last_searched_at = now() WHERE id = ANY(%s);",
-                (unique_ids,),
-            )
-    finally:
-        conn.close()
+    with session_scope() as session:
+        session.execute(
+            text("UPDATE search_keywords SET last_searched_at = now() WHERE id = ANY(:ids);"),
+            {"ids": unique_ids},
+        )
 
     logging.info("검색 키워드 last_searched_at 갱신: %d개", len(unique_ids))
 
@@ -77,26 +68,23 @@ def save_news_search_keyword_links(items: list[dict[str, Any]]) -> dict[str, int
         logging.info("기록할 news_search_keywords 근거가 없습니다.")
         return {"linked_count": 0}
 
-    conn = get_connection()
     linked_count = 0
 
-    try:
-        with conn, conn.cursor() as cursor:
-            for news_id, keyword_id in sorted(pairs):
-                cursor.execute(
+    with session_scope() as session:
+        for news_id, keyword_id in sorted(pairs):
+            result = session.execute(
+                text(
                     """
                     INSERT INTO news_search_keywords (news_id, keyword_id, searched_at)
-                    VALUES (%s, %s, now())
+                    VALUES (:news_id, :keyword_id, now())
                     ON CONFLICT (news_id, keyword_id) DO NOTHING;
-                    """,
-                    (news_id, keyword_id),
-                )
+                    """
+                ),
+                {"news_id": news_id, "keyword_id": keyword_id},
+            )
 
-                if cursor.rowcount > 0:
-                    linked_count += 1
-
-    finally:
-        conn.close()
+            if result.rowcount > 0:
+                linked_count += 1
 
     logging.info("news_search_keywords 근거 기록: 신규 %d건 (총 쌍 %d개)", linked_count, len(pairs))
 
@@ -110,23 +98,19 @@ def mark_news_source_type(news_ids: list[int], source_type: str) -> int:
     if not unique_ids:
         return 0
 
-    conn = get_connection()
-
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
+    with session_scope() as session:
+        result = session.execute(
+            text(
                 """
                 UPDATE news
-                SET source_type = %s
-                WHERE id = ANY(%s)
+                SET source_type = :source_type
+                WHERE id = ANY(:ids)
                   AND (source_type IS NULL OR BTRIM(source_type) = '');
-                """,
-                (source_type, unique_ids),
-            )
-            updated_count = cursor.rowcount
-
-    finally:
-        conn.close()
+                """
+            ),
+            {"source_type": source_type, "ids": unique_ids},
+        )
+        updated_count = result.rowcount
 
     logging.info("news.source_type='%s' 기록: %d개", source_type, updated_count)
 
@@ -135,11 +119,9 @@ def mark_news_source_type(news_ids: list[int], source_type: str) -> int:
 
 def generate_theme_search_keywords() -> int:
 
-    conn = get_connection()
-
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
+    with session_scope() as session:
+        result = session.execute(
+            text(
                 """
                 INSERT INTO search_keywords (keyword, source_type, source_id, status)
                 SELECT t.name, 'theme', t.id, 'active'
@@ -151,9 +133,8 @@ def generate_theme_search_keywords() -> int:
                 WHERE search_keywords.source_type = 'theme';
                 """
             )
-            affected_count = cursor.rowcount
-    finally:
-        conn.close()
+        )
+        affected_count = result.rowcount
 
     logging.info("themes → search_keywords 생성/갱신: %d개", affected_count)
 
@@ -188,26 +169,23 @@ def save_news_theme_links(
         logging.info("기록할 news_themes 연결이 없습니다.")
         return {"linked_count": 0}
 
-    conn = get_connection()
     linked_count = 0
 
-    try:
-        with conn, conn.cursor() as cursor:
-            for news_id, theme_id in sorted(pairs):
-                cursor.execute(
+    with session_scope() as session:
+        for news_id, theme_id in sorted(pairs):
+            result = session.execute(
+                text(
                     """
                     INSERT INTO news_themes (news_id, theme_id, link_source, created_at)
-                    VALUES (%s, %s, %s, now())
+                    VALUES (:news_id, :theme_id, :link_source, now())
                     ON CONFLICT (news_id, theme_id) DO NOTHING;
-                    """,
-                    (news_id, theme_id, link_source),
-                )
+                    """
+                ),
+                {"news_id": news_id, "theme_id": theme_id, "link_source": link_source},
+            )
 
-                if cursor.rowcount > 0:
-                    linked_count += 1
-
-    finally:
-        conn.close()
+            if result.rowcount > 0:
+                linked_count += 1
 
     logging.info("news_themes 연결 기록: 신규 %d건 (총 쌍 %d개)", linked_count, len(pairs))
 
