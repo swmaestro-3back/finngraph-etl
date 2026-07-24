@@ -47,7 +47,9 @@ def main() -> int:
         )
         return 1
 
-    dag_bag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
+    # Airflow 3.x에서 include_examples 인자가 제거됨 — 예제 제외는 위의
+    # AIRFLOW__CORE__LOAD_EXAMPLES 환경변수가 담당한다.
+    dag_bag = DagBag(dag_folder=str(DAGS_DIR))
 
     if dag_bag.import_errors:
         print(f"DAG import 에러 {len(dag_bag.import_errors)}건 발견:", file=sys.stderr)

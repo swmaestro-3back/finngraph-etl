@@ -5,7 +5,7 @@ from typing import Any
 
 try:
     import pendulum
-    from airflow.decorators import dag, task
+    from airflow.sdk import dag, task
 except ImportError:
     pendulum = None
     dag = None
