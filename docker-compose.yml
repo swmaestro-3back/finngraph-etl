@@ -27,6 +27,8 @@ x-airflow-common: &airflow-common
     DATABASE_URL: postgresql+psycopg://etl:etl@db:5432/etl
     DB_HOST: db
     DB_PORT: "5432"
+    # vLLM 서버는 호스트에서 실행되므로 컨테이너에서는 localhost가 아니라 host.docker.internal로 접속한다.
+    VLLM_BASE_URL: http://host.docker.internal:8000/v1
   volumes:
     - ./dags:/opt/airflow/dags
     - ./pipelines:/opt/airflow/pipelines
