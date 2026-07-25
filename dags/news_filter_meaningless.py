@@ -28,7 +28,8 @@ if dag and task:
         def judge() -> dict[str, Any]:
             from pipelines.news.jobs.filter_meaningless_news import judge_unchecked_news
 
-            result = judge_unchecked_news()
+            # async 모드는 vLLM 전용 (httpx + asyncio.Semaphore 동시 4요청)
+            result = judge_unchecked_news(mode="async", max_concurrency=4)
 
             return {
                 "kept_ids": result["kept_ids"],
