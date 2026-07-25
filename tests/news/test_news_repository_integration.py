@@ -12,8 +12,6 @@ SQL이 의도대로 동작하는지 검증한다. `integration` 마커가 붙어
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 from sqlalchemy import text
 
@@ -35,8 +33,7 @@ CREATE TABLE IF NOT EXISTS news (
     link                TEXT UNIQUE,
     originallink        TEXT,
     published_at        TIMESTAMPTZ,
-    material_checked_at TIMESTAMPTZ,
-    is_material         BOOLEAN
+    is_material         BOOLEAN   -- 3-상태: NULL=미판정 / TRUE=유지 / FALSE=소프트삭제
 );
 """
 
@@ -67,17 +64,15 @@ def news_table():
     _delete_test_rows()
 
 
-def _insert(*, suffix, body_text, checked_at=None, is_material=None) -> int:
+def _insert(*, suffix, body_text, is_material=None) -> int:
     link = TEST_LINK_PREFIX + suffix
     with session_scope() as session:
         row = session.execute(
             text(
                 """
                 INSERT INTO news
-                    (title, description, body_text, link, originallink,
-                     material_checked_at, is_material)
-                VALUES (:title, :description, :body_text, :link, :originallink,
-                        :checked_at, :is_material)
+                    (title, description, body_text, link, originallink, is_material)
+                VALUES (:title, :description, :body_text, :link, :originallink, :is_material)
                 RETURNING id;
                 """
             ),
@@ -87,7 +82,6 @@ def _insert(*, suffix, body_text, checked_at=None, is_material=None) -> int:
                 "body_text": body_text,
                 "link": link,
                 "originallink": link,
-                "checked_at": checked_at,
                 "is_material": is_material,
             },
         ).fetchone()
@@ -97,10 +91,10 @@ def _insert(*, suffix, body_text, checked_at=None, is_material=None) -> int:
 def _state(ids):
     with session_scope() as session:
         rows = session.execute(
-            text("SELECT id, material_checked_at, is_material FROM news WHERE id = ANY(:ids)"),
+            text("SELECT id, is_material FROM news WHERE id = ANY(:ids)"),
             {"ids": list(ids)},
         ).fetchall()
-        return {row[0]: (row[1], row[2]) for row in rows}
+        return {row[0]: row[1] for row in rows}
 
 
 def _unchecked_test_ids(repo):
@@ -113,12 +107,7 @@ def test_fetch_unchecked_returns_only_unjudged_with_body(news_table, repo):
     drop = _insert(suffix="b-unchecked", body_text="텍스트 B")
     _insert(suffix="c-null-body", body_text=None)
     _insert(suffix="d-blank-body", body_text="   ")
-    _insert(
-        suffix="e-already-checked",
-        body_text="E",
-        checked_at=datetime.now(UTC),
-        is_material=True,
-    )
+    _insert(suffix="e-already-checked", body_text="E", is_material=True)
 
     # 미판정 + 텍스트 있음 인 a, b 만 조회되어야 한다.
     assert _unchecked_test_ids(repo) == {keep, drop}
@@ -130,12 +119,10 @@ def test_fetch_unchecked_returns_only_unjudged_with_body(news_table, repo):
     # 기록 후에는 우리 테스트 행이 더 이상 미판정으로 조회되지 않는다.
     assert _unchecked_test_ids(repo) == set()
 
-    # 실제 저장 상태 확인.
+    # 실제 저장 상태 확인 (is_material 3-상태: 판정됨 = NOT NULL).
     state = _state([keep, drop])
-    kept_checked_at, kept_is_material = state[keep]
-    dropped_checked_at, dropped_is_material = state[drop]
-    assert kept_checked_at is not None and kept_is_material is True
-    assert dropped_checked_at is not None and dropped_is_material is False
+    assert state[keep] is True
+    assert state[drop] is False
 
 
 def test_mark_with_empty_inputs_is_noop(news_table, repo):
