@@ -50,47 +50,6 @@ def mark_keywords_searched(keyword_ids: list[int]) -> int:
     return len(unique_ids)
 
 
-def save_news_search_keyword_links(items: list[dict[str, Any]]) -> dict[str, int]:
-
-    pairs: set[tuple[int, int]] = set()
-
-    for item in items:
-        news_id = item.get("_news_id")
-
-        if not news_id:
-            continue
-
-        for keyword_id in item.get("_search_keyword_ids", []) or []:
-            if keyword_id:
-                pairs.add((int(news_id), int(keyword_id)))
-
-    if not pairs:
-        logging.info("기록할 news_search_keywords 근거가 없습니다.")
-        return {"linked_count": 0}
-
-    linked_count = 0
-
-    with session_scope() as session:
-        for news_id, keyword_id in sorted(pairs):
-            result = session.execute(
-                text(
-                    """
-                    INSERT INTO news_search_keywords (news_id, keyword_id, searched_at)
-                    VALUES (:news_id, :keyword_id, now())
-                    ON CONFLICT (news_id, keyword_id) DO NOTHING;
-                    """
-                ),
-                {"news_id": news_id, "keyword_id": keyword_id},
-            )
-
-            if result.rowcount > 0:
-                linked_count += 1
-
-    logging.info("news_search_keywords 근거 기록: 신규 %d건 (총 쌍 %d개)", linked_count, len(pairs))
-
-    return {"linked_count": linked_count}
-
-
 def mark_news_source_type(news_ids: list[int], source_type: str) -> int:
 
     unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
@@ -137,6 +96,35 @@ def generate_theme_search_keywords() -> int:
         affected_count = result.rowcount
 
     logging.info("themes → search_keywords 생성/갱신: %d개", affected_count)
+
+    return affected_count
+
+
+def generate_company_search_keywords() -> int:
+    """companies 마스터의 종목명에서 검색 키워드를 파생 생성한다(source_type='company').
+
+    테마 키워드와 함께 검색어의 2축(theme + company)을 구성한다.
+    이미 다른 source_type(예: theme)으로 존재하는 키워드는 건드리지 않는다.
+    """
+
+    with session_scope() as session:
+        result = session.execute(
+            text(
+                """
+                INSERT INTO search_keywords (keyword, source_type, source_id, status)
+                SELECT c.name, 'company', c.id, 'active'
+                FROM companies AS c
+                WHERE c.name IS NOT NULL
+                  AND BTRIM(c.name) <> ''
+                ON CONFLICT (keyword) DO UPDATE
+                SET source_id = EXCLUDED.source_id
+                WHERE search_keywords.source_type = 'company';
+                """
+            )
+        )
+        affected_count = result.rowcount
+
+    logging.info("companies → search_keywords 생성/갱신: %d개", affected_count)
 
     return affected_count
 

@@ -22,7 +22,6 @@ WITH t, collect(
 ) AS raw_stocks
 RETURN t.name AS name,
        coalesce(t.description, '') AS description,
-       coalesce(t.source, '') AS source,
        [s IN raw_stocks WHERE s IS NOT NULL] AS stocks
 """
 
@@ -43,7 +42,6 @@ async def _fetch_themes_from_neo4j() -> list[dict[str, Any]]:
             {
                 "name": record["name"],
                 "description": record["description"],
-                "source": record["source"],
                 "stocks": stocks,
             }
         )

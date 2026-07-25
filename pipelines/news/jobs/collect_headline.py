@@ -16,6 +16,7 @@ from pipelines.news.loaders.news_repository import (
     has_article_body,
     save_news_items,
 )
+from pipelines.news.loaders.search_keyword_repository import mark_news_source_type
 from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
     remove_duplicate_by_title,
@@ -132,6 +133,10 @@ def run() -> None:
     body_failed_count = len(selected_news) - body_success_count
 
     save_result = save_news_items(items=storable_news, save_summary=False, skip_existing=True)
+
+    # 수집 경로 태깅 (키워드 검색 job과 동일 패턴 — 기존 값은 보존)
+    saved_news_ids = [item["_news_id"] for item in storable_news if item.get("_news_id")]
+    mark_news_source_type(saved_news_ids, "headline")
 
     print("\n" + "=" * 70)
     print("카테고리별 수집 결과")

@@ -389,7 +389,7 @@ def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
             originallink,
             published_at
         FROM news
-        WHERE material_checked_at IS NULL
+        WHERE is_material IS NULL
           AND body_text IS NOT NULL
           AND BTRIM(body_text) <> ''
         ORDER BY id ASC
@@ -445,8 +445,7 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
                 text(
                     """
                     UPDATE news
-                    SET material_checked_at = now(),
-                        is_material = TRUE
+                    SET is_material = TRUE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -458,8 +457,7 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
                 text(
                     """
                     UPDATE news
-                    SET material_checked_at = now(),
-                        is_material = FALSE
+                    SET is_material = FALSE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -633,25 +631,15 @@ def filter_new_news_by_db(
 
 
 def delete_news_by_ids(news_ids: list[int]) -> dict[str, int]:
+    """뉴스 하드 삭제. 자식 테이블(news_relations, news_themes 등)은 FK CASCADE로 함께 정리된다."""
 
     unique_news_ids = sorted({int(news_id) for news_id in news_ids if news_id})
 
     if not unique_news_ids:
         logging.info("삭제할 뉴스 id가 없습니다.")
-        return {"requested_count": 0, "deleted_embedding_count": 0, "deleted_news_count": 0}
+        return {"requested_count": 0, "deleted_news_count": 0}
 
     with session_scope() as session:
-        deleted_embeddings = session.execute(
-            text(
-                """
-                DELETE FROM news_embeddings
-                WHERE news_id = ANY(:ids)
-                RETURNING news_id;
-                """
-            ),
-            {"ids": unique_news_ids},
-        ).fetchall()
-
         deleted_news = session.execute(
             text(
                 """
@@ -665,13 +653,11 @@ def delete_news_by_ids(news_ids: list[int]) -> dict[str, int]:
 
     result = {
         "requested_count": len(unique_news_ids),
-        "deleted_embedding_count": len(deleted_embeddings),
         "deleted_news_count": len(deleted_news),
     }
 
     logging.info(
         f"뉴스 삭제 완료: 요청={result['requested_count']}개, "
-        f"임베딩삭제={result['deleted_embedding_count']}개, "
         f"뉴스삭제={result['deleted_news_count']}개"
     )
 

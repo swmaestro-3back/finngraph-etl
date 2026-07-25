@@ -897,12 +897,16 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+news = [
+    { name = "beautifulsoup4" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.2" },
-    { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=2.9" },
+    { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=3.3" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
+    { name = "beautifulsoup4", marker = "extra == 'news'", specifier = ">=4.12" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "neo4j", specifier = ">=6.2.0" },
@@ -917,7 +921,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "tenacity", specifier = ">=8.3" },
 ]
-provides-extras = ["dev", "airflow"]
+provides-extras = ["dev", "airflow", "news"]
 
 [[package]]
 name = "fastapi"

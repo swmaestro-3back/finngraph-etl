@@ -12,28 +12,27 @@ logger = get_logger(__name__)
 MIN_THEMES_SAFETY = 1
 
 
-def _upsert_theme(session, name: str, description: str, source: str | None) -> int:
+def _upsert_theme(session, name: str, description: str) -> int:
 
     row = session.execute(
         text(
             """
-            INSERT INTO themes (name, description, source, updated_at, last_seen_at)
-            VALUES (:name, :description, :source, now(), now())
+            INSERT INTO themes (name, description, updated_at, last_seen_at)
+            VALUES (:name, :description, now(), now())
             ON CONFLICT (name) DO UPDATE
             SET description = EXCLUDED.description,
-                source = EXCLUDED.source,
                 updated_at = now(),
                 last_seen_at = now()
             RETURNING id;
             """
         ),
-        {"name": name, "description": description, "source": source},
+        {"name": name, "description": description},
     ).fetchone()
 
     return row[0]
 
 
-def _reconcile_theme_stocks(session, theme_id: int, stocks: list[dict[str, Any]]) -> int:
+def _reconcile_theme_companies(session, theme_id: int, stocks: list[dict[str, Any]]) -> int:
 
     seen_codes: list[str] = []
 
@@ -48,7 +47,7 @@ def _reconcile_theme_stocks(session, theme_id: int, stocks: list[dict[str, Any]]
         session.execute(
             text(
                 """
-                INSERT INTO theme_stocks (theme_id, stock_code, reason, added_at)
+                INSERT INTO theme_companies (theme_id, stock_code, reason, added_at)
                 VALUES (:theme_id, :stock_code, :reason, now())
                 ON CONFLICT (theme_id, stock_code) DO UPDATE
                 SET reason = EXCLUDED.reason;
@@ -60,7 +59,7 @@ def _reconcile_theme_stocks(session, theme_id: int, stocks: list[dict[str, Any]]
     if seen_codes:
         session.execute(
             text(
-                "DELETE FROM theme_stocks "
+                "DELETE FROM theme_companies "
                 "WHERE theme_id = :theme_id AND NOT (stock_code = ANY(:codes));"
             ),
             {"theme_id": theme_id, "codes": seen_codes},
@@ -77,15 +76,15 @@ def _reconcile_theme_stocks(session, theme_id: int, stocks: list[dict[str, Any]]
 
 
 def mirror_themes_to_rdb(themes: list[dict[str, Any]]) -> dict[str, Any]:
-    """Neo4j에서 읽은 테마 스냅샷을 RDB themes/theme_stocks에 반영한다.
+    """Neo4j에서 읽은 테마 스냅샷을 RDB themes/theme_companies에 반영한다.
 
-    themes 항목 형식: {"name", "description", "source", "stocks": [{"ticker", "reason"}]}.
+    themes 항목 형식: {"name", "description", "stocks": [{"ticker", "reason"}]}.
     테마마다 SAVEPOINT(begin_nested)로 격리해 개별 실패가 전체를 깨지 않게 한다.
     """
 
     if len(themes) < MIN_THEMES_SAFETY:
         logger.error("테마 스냅샷이 비어 있어 미러링을 중단합니다(정상 데이터 덮어쓰기 방지).")
-        return {"themes": 0, "theme_stocks": 0, "failed": 0, "skipped": True}
+        return {"themes": 0, "theme_companies": 0, "failed": 0, "skipped": True}
 
     theme_count = 0
     stock_count = 0
@@ -104,9 +103,8 @@ def mirror_themes_to_rdb(themes: list[dict[str, Any]]) -> dict[str, Any]:
                         session,
                         name=name,
                         description=theme.get("description", "") or "",
-                        source=theme.get("source"),
                     )
-                    linked = _reconcile_theme_stocks(
+                    linked = _reconcile_theme_companies(
                         session, theme_id, theme.get("stocks", []) or []
                     )
 
@@ -119,7 +117,7 @@ def mirror_themes_to_rdb(themes: list[dict[str, Any]]) -> dict[str, Any]:
 
     result = {
         "themes": theme_count,
-        "theme_stocks": stock_count,
+        "theme_companies": stock_count,
         "failed": failed_count,
         "skipped": False,
     }
