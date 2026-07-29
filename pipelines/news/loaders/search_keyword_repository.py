@@ -7,15 +7,28 @@ from pipelines.common.database import session_scope
 
 
 def fetch_active_search_keywords(limit: int = 50) -> list[dict[str, Any]]:
-
+    # is_pinned=true 키워드(예: '특징주')는 로테이션 배치와 무관하게 항상 포함한다.
+    # 나머지 active 키워드는 기존대로 오래 안 돌린 순으로 limit개만 뽑아 로테이션한다.
+    # UNION으로 합쳐 고정 키워드가 배치 슬롯을 잠식하지 않게 한다.
     query = """
         SELECT id, keyword, source_type, source_id
         FROM search_keywords
         WHERE status = 'active'
           AND keyword IS NOT NULL
           AND BTRIM(keyword) <> ''
-        ORDER BY last_searched_at ASC NULLS FIRST, id ASC
-        LIMIT :limit;
+          AND is_pinned = true
+        UNION
+        SELECT id, keyword, source_type, source_id
+        FROM (
+            SELECT id, keyword, source_type, source_id
+            FROM search_keywords
+            WHERE status = 'active'
+              AND keyword IS NOT NULL
+              AND BTRIM(keyword) <> ''
+              AND is_pinned = false
+            ORDER BY last_searched_at ASC NULLS FIRST, id ASC
+            LIMIT :limit
+        ) AS rotation;
     """
 
     with session_scope() as session:

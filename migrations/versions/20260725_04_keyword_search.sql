@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS search_keywords (
     source_type      VARCHAR(20),        -- theme (themes 파생) / company (companies 파생)
     source_id        BIGINT,             -- 폴리모픽 참조(source_type에 따른 원본 id), FK 없음
     status           VARCHAR(20) NOT NULL DEFAULT 'active',   -- active / paused
+    is_pinned        BOOLEAN NOT NULL DEFAULT false,  -- 고정 키워드: 로테이션/배치와 무관하게 항상 검색, 삭제/일시정지 보호
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_searched_at TIMESTAMPTZ         -- 재검색 로테이션 (NULLS FIRST 정렬로 오래 안 돌린 것 우선)
 );
