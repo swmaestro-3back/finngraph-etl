@@ -479,7 +479,8 @@ def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any
     Triplet ETL에서 사용
     삼중항관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
 
-    필터링되어 유효한 뉴스라고 판별난 is_material=True + 삼중항추출 안된 것 relation_extracted IS NULL
+    필터링되어 유효한 뉴스라고 판별난 is_material=True
+    + 삼중항추출 안된 것 relation_extracted IS NULL
     """
 
     query = """
@@ -498,10 +499,7 @@ def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any
     with session_scope() as session:
         rows = session.execute(text(query), {"limit": limit}).fetchall()
 
-        return [
-            {"news_id": int(news_id), "body_text": body_text}
-            for news_id, body_text in rows
-        ]
+        return [{"news_id": int(news_id), "body_text": body_text} for news_id, body_text in rows]
 
 
 def mark_news_relation_extracted(

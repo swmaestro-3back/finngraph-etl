@@ -18,7 +18,7 @@ from pipelines.triplets.crud import upsert_triplets
 from pipelines.triplets.graph.workflow import GraphRunner
 from pipelines.triplets.scripts.seed_db import seed
 
-TEXT="""
+TEXT = """
 삼성전자 SK하이닉스 삼성디스플레이 LG디스플레이는 세계 반도체·디스플레이를 주도하고 있다.
 하지만 이를 만들기 위한 소재·부품·장비(소부장)는 해외의존도가 높다. 지난 10여년 줄곧 지적했던 문제다. 일본 수출규제는 한국 기업의 약점을 부각했다.
 ‘친환경’이 글로벌 이슈로 대두되면서 전기차 생태계가 빠르게 확장하고 있다.
@@ -59,7 +59,6 @@ TEXT="""
 
 한편 코스모신소재는 한국채택국제회계기준(K-IFRS) 별도기준 2021년 1분기 매출액 792억원, 영업이익 58억원을 기록했다고 밝혔다. 매출은 전기대비 6.6% 전년동기대비 83.3% 늘었다. 영업이익은 전기대비 7.3% 전년동기대비 279.5% 상승했다.
 """
-
 
 
 async def main() -> None:

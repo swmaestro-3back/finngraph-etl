@@ -1,14 +1,20 @@
 from flashtext import KeywordProcessor
 
 from pipelines.triplets.graph.models import Entity, EntityLabel
-from pipelines.triplets.graph.ontology.gazetteers import COUNTRY_DICT, COMMODITY_DICT, PRODUCT_DICT, COMPANY_DICT
+from pipelines.triplets.graph.ontology.gazetteers import (
+    COMMODITY_DICT,
+    COMPANY_DICT,
+    COUNTRY_DICT,
+    PRODUCT_DICT,
+)
 
 GAZETTEERS: dict[EntityLabel, dict[str, list[str]]] = {
     "COMPANY": COMPANY_DICT,
     "COUNTRY": COUNTRY_DICT,
     "PRODUCT": PRODUCT_DICT,
-    "COMMODITY": COMMODITY_DICT
+    "COMMODITY": COMMODITY_DICT,
 }
+
 
 class EntityExtractor:
     def __init__(self):

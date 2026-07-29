@@ -2,11 +2,12 @@ import asyncio
 
 from langgraph.graph import END, StateGraph
 
-from pipelines.triplets.graph.state import GraphState
 from pipelines.triplets.graph.models import Entity
+from pipelines.triplets.graph.nodes.entity_extractor import EntityExtractor
 from pipelines.triplets.graph.nodes.relation_extractor import RelationExtractor
 from pipelines.triplets.graph.nodes.triplet_builder import TripletBuilder
-from pipelines.triplets.graph.nodes.entity_extractor import EntityExtractor
+from pipelines.triplets.graph.state import GraphState
+
 
 class GraphRunner:
     def __init__(self):
@@ -25,12 +26,14 @@ class GraphRunner:
         relation_extractor: RelationExtractor,
         triplet_builder: TripletBuilder,
     ):
-        
+
         async def normalize_article(state: GraphState) -> dict:
             """
             gazetteer를 토대로 등록된 엔티티 명칭 표준화
             """
-            normalized_article = await asyncio.to_thread(entity_extractor.normalize, state["article"])
+            normalized_article = await asyncio.to_thread(
+                entity_extractor.normalize, state["article"]
+            )
             return {"article": normalized_article}
 
         async def extract_entities(state: GraphState) -> dict:
@@ -57,7 +60,10 @@ class GraphRunner:
 
         async def build_triplets(state: GraphState) -> dict:
             relations = state["relations"]
-            return {"triplets": triplet_builder.filter(relations), "triplet_stats": triplet_builder.stats(relations)}
+            return {
+                "triplets": triplet_builder.filter(relations),
+                "triplet_stats": triplet_builder.stats(relations),
+            }
 
         workflow = StateGraph(GraphState)
 

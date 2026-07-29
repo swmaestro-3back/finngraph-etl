@@ -27,9 +27,7 @@ class RelationExtractor:
     def __init__(self):
 
         self._model = ChatGoogleGenerativeAI(
-            model=settings.gemini_model,
-            temperature=0,
-            google_api_key=settings.google_api_key
+            model=settings.gemini_model, temperature=0, google_api_key=settings.google_api_key
         )
 
         self._chain = PROMPT | self._model.with_structured_output(
@@ -42,9 +40,7 @@ class RelationExtractor:
         text: str,
         entities: list[Entity],
     ) -> list[RelationFrame]:
-        entity_lines = [
-            f"- {e.text} ({e.label})" for e in entities
-        ]
+        entity_lines = [f"- {e.text} ({e.label})" for e in entities]
         entities_str = "\n".join(entity_lines) if entity_lines else "없음"
 
         # 그라운딩 검증용 조회 테이블: 이후 subject/object/item 텍스트가 실제 NER 결과에
@@ -64,7 +60,8 @@ class RelationExtractor:
 
         frames: list[RelationFrame] = []
         for raw_frame in result.frames:
-            # 술어 사전 미등록 술어는 즉시 제외 (LLM이 프롬프트 지시를 어기고 새 술어를 지어냈을 가능성에 대한 가드레일)
+            # 술어 사전 미등록 술어는 즉시 제외
+            # (LLM이 프롬프트 지시를 어기고 새 술어를 지어냈을 가능성에 대한 가드레일)
             if raw_frame.predicate not in _REGISTERED_PREDICATES:
                 continue
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from pipelines.common.logging import get_logger
 from pipelines.common.http import http_client
+from pipelines.common.logging import get_logger
 from pipelines.common.neo4j import neo4j_database
 from pipelines.themes.crud import delete_all_themes
 from pipelines.themes.extractors.factory import ExtractorFactory

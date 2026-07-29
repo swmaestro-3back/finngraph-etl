@@ -6,6 +6,7 @@ from pipelines.triplets.graph.models import (
     Triplet,
 )
 
+
 class GraphState(TypedDict, total=False):
     news_id: str
     article: str

@@ -15,6 +15,7 @@ from pipelines.common.config import get_settings
 # The routing behaviour works in tandem with Neo4j's Causal Clustering feature by
 # directing read and write behaviour to appropriate cluster members.
 
+
 class Neo4jDatabase:
     # constructor
     def __init__(self) -> None:

@@ -3,11 +3,13 @@ from typing import get_args
 from pipelines.triplets.graph.models import RelationFrame, TenseLabel, Triplet
 from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
 
+
 def _normalize_label(label: str | None) -> str | None:
     """LLM이 None 대신 문자열 "null"/"none"을 반환하는 경우를 정규화한다."""
     if label is None or label.lower() in ("null", "none", ""):
         return None
     return label
+
 
 class TripletBuilder:
     def __init__(self):
@@ -55,9 +57,14 @@ class TripletBuilder:
         if agent_types and subject_label is not None and subject_label not in agent_types:
             return None
 
-        # 조건 4: object(피행위자) 개체명 타입이 술어의 object argument 타입 목록에 없으면 제거 (위와 동일한 규칙)
+        # 조건 4: object(피행위자) 개체명 타입이 술어의 object argument 타입 목록에 없으면 제거
+        # (위와 동일한 규칙)
         counterparty_types = entry["arguments"][counterparty_key]["types"]
-        if counterparty_types and object_label is not None and object_label not in counterparty_types:
+        if (
+            counterparty_types
+            and object_label is not None
+            and object_label not in counterparty_types
+        ):
             return None
 
         # item은 optional argument이므로, 술어에 item argument가 없거나 타입이 맞지 않으면

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, List
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 EntityLabel = Literal[
-    "COMPANY", "COUNTRY",
-    "COMMODITY", "PRODUCT",
+    "COMPANY",
+    "COUNTRY",
+    "COMMODITY",
+    "PRODUCT",
 ]
 
 # 확정된 사실만 최종 트리플로 남기기 위한 시제·양태 분류.
@@ -18,6 +21,7 @@ TenseLabel = Literal[
     "modal_possibility",
 ]
 
+
 # NER
 class Entity(BaseModel):
     text: str = Field(description="개체명 표면형")
@@ -29,8 +33,9 @@ class Entity(BaseModel):
 # 추후 Label 매핑해서 반환
 class RawRelation(BaseModel):
     # source_sentence/clause를 predicate보다 먼저 선언: structured output은 필드 선언
-    # 순서대로 채워지므로, "근거 문장을 먼저 찾고 → 절로 재구성하고 → 그 다음에 술어를 고르는" 순서가 프레임마다 강제된다.
-    # 기존 전역 clauses 필드의 CoT 역할을 프레임 단위로 옮긴 것. source_sentence는 이후 로직에서 원문 대조로 검증한다.
+    # 순서대로 채워지므로, "근거 문장을 먼저 찾고 → 절로 재구성하고 → 그 다음에 술어를 고르는"
+    # 순서가 프레임마다 강제된다. 기존 전역 clauses 필드의 CoT 역할을 프레임 단위로 옮긴 것.
+    # source_sentence는 이후 로직에서 원문 대조로 검증한다.
     source_sentence: str = Field(
         description=(
             "The sentence from the original text that expresses this relationship, "
@@ -47,33 +52,49 @@ class RawRelation(BaseModel):
             "and keep only the single relationship this frame expresses."
         )
     )
-    predicate: str = Field(description="Must be strictly selected from the registered_predicates list.")
-    is_negated: bool = Field(description="True if the relationship involves a negative expression, otherwise False.")
+    predicate: str = Field(
+        description="Must be strictly selected from the registered_predicates list."
+    )
+    is_negated: bool = Field(
+        description="True if the relationship involves a negative expression, otherwise False."
+    )
     tense: TenseLabel = Field(
-        description="Temporal/modal status of the relationship: past_or_present_fact, future_or_planned, or modal_possibility."
+        description=(
+            "Temporal/modal status of the relationship: "
+            "past_or_present_fact, future_or_planned, or modal_possibility."
+        )
     )
     subject: str = Field(description="Must exactly match an entity from the provided NER results.")
     object: str = Field(description="Must exactly match an entity from the provided NER results.")
-    item: Optional[str] = Field(
+    item: str | None = Field(
         default=None,
         description=(
             "Must exactly match an entity from the provided NER results."
-            "Leave null if the predicate has no item argument, or if the text does not name a specific item and the item argument is marked [optional]."
+            "Leave null if the predicate has no item argument, or if the text does not name "
+            "a specific item and the item argument is marked [optional]."
         ),
     )
 
+
 class RawRelationList(BaseModel):
-    frames: List[RawRelation] = Field(
+    frames: list[RawRelation] = Field(
         description=(
-            "List of extracted frames, each containing source_sentence, clause, subject, predicate, object, and (if applicable) item. "
-            "One frame per relationship; a single sentence may yield multiple frames, each repeating the same source_sentence."
+            "List of extracted frames, each containing source_sentence, clause, subject, "
+            "predicate, object, and (if applicable) item. "
+            "One frame per relationship; a single sentence may yield multiple frames, "
+            "each repeating the same source_sentence."
         )
     )
 
+
 # Relation (관계 후보 프레임)
 class RelationFrame(BaseModel):
-    subject: Entity = Field(description="Must exactly match an entity from the provided NER results.")
-    object: Entity = Field(description="Must exactly match an entity from the provided NER results.")
+    subject: Entity = Field(
+        description="Must exactly match an entity from the provided NER results."
+    )
+    object: Entity = Field(
+        description="Must exactly match an entity from the provided NER results."
+    )
     # PREDICATE_DICT_NARY에서 3번째 argument(item)를 등록한 술어(공급하다 등)에만 채워지는
     # 선택적 필드. 해당 술어라도 본문에 품목이 명시되지 않으면 None으로 남는다.
     item: Entity | None = Field(
@@ -87,14 +108,21 @@ class RelationFrame(BaseModel):
         description="True if the relationship involves a negative expression, otherwise False."
     )
     tense: TenseLabel = Field(
-        description="Temporal/modal status of the relationship: past_or_present_fact, future_or_planned, or modal_possibility."
+        description=(
+            "Temporal/modal status of the relationship: "
+            "past_or_present_fact, future_or_planned, or modal_possibility."
+        )
     )
     # 이 프레임의 근거가 된 원문 문장 (provenance). LLM이 원문에 없는 문장을 근거로 지어낸
     # 경우(공백 정규화 후 substring 검증 실패) None으로 남는다 — 프레임 자체는 유지한다.
     source_sentence: str | None = Field(
         default=None,
-        description="The verbatim sentence from the source text that expresses this relationship, if verified.",
+        description=(
+            "The verbatim sentence from the source text that expresses this relationship, "
+            "if verified."
+        ),
     )
+
 
 # Triplet (확정 삼중항)
 class Triplet(BaseModel):
