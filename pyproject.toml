@@ -48,6 +48,11 @@ target-version = "py311"
 # 검증(scripts/validate_dags.py)과 겹치지 않고 보완한다.
 select = ["E", "F", "I", "UP", "B", "AIR"]
 
+[tool.ruff.lint.isort]
+# prompts/ontology는 gitignore로 비공개라 CI 체크아웃에 파일이 없다. 파일 존재 여부로
+# first-party를 추론하면 CI에서 서드파티로 오분류되므로 명시적으로 고정한다.
+known-first-party = ["pipelines", "tests", "dags"]
+
 [tool.ruff.lint.per-file-ignores]
 # 테스트에 하드코딩된 기사 원문 등 긴 문자열 데이터는 줄길이 제한에서 제외한다.
 "tests/**" = ["E501"]
