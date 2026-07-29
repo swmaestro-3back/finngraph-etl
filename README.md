@@ -10,10 +10,12 @@ FastAPI는 포함하지 않습니다. ETL 실행, 스케줄, 재시도, 로그 �
 etl/
 ├── dags/                 # Airflow DAG 정의
 ├── pipelines/            # 도메인별 ETL 구현
-│   ├── common/           # 설정, DB, 로깅, 재시도, 레이트리밋 공통 코드
+│   ├── common/           # 설정, DB(Postgres/Neo4j), 로깅, 재시도, 레이트리밋 공통 코드
 │   ├── stocks/           # 국내 주식 OHLCV 수집
 │   ├── disclosures/      # 공시 수집
-│   └── news/             # 뉴스/이벤트 수집
+│   ├── news/             # 뉴스/이벤트 수집
+│   ├── themes/           # 테마-종목 매핑 수집
+│   └── triplets/         # 뉴스 → 지식그래프 트리플 추출 (LangGraph 워크플로우)
 ├── migrations/           # DB migration
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
@@ -73,6 +75,19 @@ DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
 docker compose up -d db
 pytest -m integration
 ```
+
+## Running Neo4j locally
+
+```bash
+docker compose up -d neo4j
+```
+
+- hardened image인 `dhi.io/neo4j:5-debian-dev`는 공격 표면 최소화 정책으로 웹 UI 제거하여 DHI 이미지엔 Neo4j Browser UI가 아예 없다.
+- 따라서, Neo4j Desktop의 Remote Connections를 통해 접속하여 확인한다.
+- 접속 정보는 `.env`의 `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`를 사용한다.
+- 데이터는 named volume `etl_neo4j_data`에 보존된다. `docker compose down` 후 다시 `up` 해도 유지되며,
+  초기화하려면 `docker compose down -v`를 실행한다.
+- 초기 비밀번호(`NEO4J_AUTH`)는 볼륨 최초 생성 시에만 적용된다. 비밀번호 변경이 반영되지 않으면 볼륨을 초기화한다.
 
 ## Running Airflow locally
 
