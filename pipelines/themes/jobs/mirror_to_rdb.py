@@ -50,12 +50,8 @@ async def _fetch_themes_from_neo4j() -> list[dict[str, Any]]:
 
 
 async def _run_async() -> list[dict[str, Any]]:
-    neo4j_database.init_driver()
-
-    try:
+    async with neo4j_database:
         return await _fetch_themes_from_neo4j()
-    finally:
-        await neo4j_database.close()
 
 
 def run() -> None:
