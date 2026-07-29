@@ -7,12 +7,9 @@ from pipelines.themes.extractors import AntWinnerExtractor
 
 
 async def main() -> None:
-    http_client.start()
-    try:
+    async with http_client:
         extractor = AntWinnerExtractor()
         await extractor.run()
-    finally:
-        await http_client.stop()
 
 
 if __name__ == "__main__":
