@@ -12,6 +12,24 @@ import pytest
 
 from pipelines.news.transformers import summarizer
 
+# ── 프롬프트 파일 스텁 ────────────────────────────────────────────────────
+# prompts/ 디렉토리는 .gitignore 대상이라 CI에는 실제 파일이 없다.
+# 실제 템플릿과 같은 $title/$triplets/$source_text 플레이스홀더 구조를 유지한다.
+
+_FAKE_PROMPT_TEXTS = {
+    "summary_single.txt": (
+        "[Title]\n$title\n\n[Entity relations]\n$triplets\n\n[Body]\n$source_text\n\n[Summary]"
+    ),
+    "summary_single_system.txt": "You are a financial news summarizer.",
+}
+
+
+def _stub_prompt_loading(monkeypatch):
+    monkeypatch.setattr(
+        summarizer, "load_summary_prompt_text", lambda filename: _FAKE_PROMPT_TEXTS[filename]
+    )
+
+
 # ── format_triplets_for_prompt ────────────────────────────────────────────
 
 
@@ -62,7 +80,8 @@ def test_parse_summary_empty_content_returns_empty_string():
 # ── build_summary_prompt (Template.safe_substitute) ───────────────────────
 
 
-def test_build_summary_prompt_injects_fields_and_survives_dollar_in_body():
+def test_build_summary_prompt_injects_fields_and_survives_dollar_in_body(monkeypatch):
+    _stub_prompt_loading(monkeypatch)
     item = {
         "title": "삼성전자 실적 발표",
         "_body_text": "삼성전자가 3분기 영업이익 $10B를 기록했다.",  # 본문의 $가 렌더를 깨면 안 됨
@@ -108,6 +127,7 @@ class _FakeAsyncClient:
 
 
 def _run_summaries(items, monkeypatch):
+    _stub_prompt_loading(monkeypatch)
     monkeypatch.setattr(summarizer.httpx, "AsyncClient", _FakeAsyncClient)
     config = {
         "vllm_base_url": "http://vllm.local",
