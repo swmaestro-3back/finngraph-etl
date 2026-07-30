@@ -474,6 +474,76 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
     return result
 
 
+def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any]]:
+    """
+    Triplet ETL에서 사용
+    삼중항관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
+
+    필터링되어 유효한 뉴스라고 판별난 is_material=True
+    + 삼중항추출 안된 것 relation_extracted IS NULL
+    """
+
+    query = """
+        SELECT
+            id,
+            body_text
+        FROM news
+        WHERE relation_extracted IS NULL
+          AND is_material = TRUE
+          AND body_text IS NOT NULL
+          AND BTRIM(body_text) <> ''
+        ORDER BY id ASC
+        LIMIT :limit;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
+
+        return [{"news_id": int(news_id), "body_text": body_text} for news_id, body_text in rows]
+
+
+def mark_news_relation_extracted(
+    has_triplets_ids: list[int], no_triplets_ids: list[int]
+) -> dict[str, int]:
+    """
+    Triplet ETL에서 호출
+    삼중항관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
+    """
+
+    unique_true = sorted({int(news_id) for news_id in has_triplets_ids if news_id})
+    unique_false = sorted({int(news_id) for news_id in no_triplets_ids if news_id})
+
+    if not unique_true and not unique_false:
+        return {"true_count": 0, "false_count": 0}
+
+    with session_scope() as session:
+        if unique_true:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET relation_extracted = TRUE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_true},
+            )
+
+        if unique_false:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET relation_extracted = FALSE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_false},
+            )
+
+    return {"true_count": len(unique_true), "false_count": len(unique_false)}
+
+
 def find_existing_links(links: list[str]) -> set[str]:
 
     filtered_links = [

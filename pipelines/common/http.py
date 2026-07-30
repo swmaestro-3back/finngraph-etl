@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import aiohttp
 
 
@@ -32,6 +34,15 @@ class AsyncHTTPClient:
         if self._session is None:
             raise RuntimeError("HTTP Client가 시작되지 않았습니다. start()를 먼저 호출하세요.")
         return self._session
+
+    # Airflow에서는 태스크마다 별개 프로세스라 세션을 태스크 단위로 만들고 닫아야 한다.
+    # 실행 단위 진입점에서 `async with http_client:`로 감싸 수명을 관리한다.
+    async def __aenter__(self) -> AsyncHTTPClient:
+        self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.stop()
 
 
 # 전역적으로 하나의 객체만 사용
