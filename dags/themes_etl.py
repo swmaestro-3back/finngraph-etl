@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 try:
-    from airflow.decorators import dag, task
+    from airflow.sdk import dag, task
 except ImportError:
     dag = None
     task = None

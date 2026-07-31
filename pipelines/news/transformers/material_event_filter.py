@@ -240,10 +240,6 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "vllm_model": getattr(config, "VLLM_CHAT_MODEL", ""),
             "vllm_api_key": getattr(config, "VLLM_API_KEY", "EMPTY"),
             "vllm_timeout": getattr(config, "VLLM_REQUEST_TIMEOUT", 300),
-            "cloud_base_url": getattr(config, "CLOUD_LLM_BASE_URL", ""),
-            "cloud_model": getattr(config, "CLOUD_LLM_CHAT_MODEL", ""),
-            "cloud_api_key": getattr(config, "CLOUD_LLM_API_KEY", ""),
-            "cloud_timeout": getattr(config, "CLOUD_LLM_REQUEST_TIMEOUT", 300),
             "ollama_base_url": getattr(config, "OLLAMA_BASE_URL", ""),
             "ollama_model": getattr(config, "OLLAMA_CHAT_MODEL", ""),
         }
@@ -261,10 +257,6 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "vllm_model": "",
             "vllm_api_key": "EMPTY",
             "vllm_timeout": 300,
-            "cloud_base_url": "",
-            "cloud_model": "",
-            "cloud_api_key": "",
-            "cloud_timeout": 300,
             "ollama_base_url": "",
             "ollama_model": "",
         }
@@ -841,65 +833,6 @@ async def judge_material_event_with_vllm_async(
     return parse_vllm_material_event_response(response.json())
 
 
-def judge_material_event_with_cloud(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
-) -> dict[str, Any]:
-    """OpenAI 호환 Chat Completions API를 사용하는 클라우드 LLM 판정."""
-
-    import requests
-
-    base_url = str(filter_config.get("cloud_base_url", "")).rstrip("/")
-    model = str(filter_config.get("cloud_model", ""))
-    api_key = str(filter_config.get("cloud_api_key", ""))
-
-    if not base_url or not model or not api_key:
-        raise RuntimeError("클라우드 LLM 이벤트 필터 설정이 비어있음")
-
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": load_material_event_prompt_text("material_event_single_system.txt"),
-                },
-                {
-                    "role": "user",
-                    "content": build_llm_material_event_prompt(
-                        item=item,
-                        pipeline_input=pipeline_input,
-                        body_limit=int(filter_config.get("body_limit") or 12000),
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": int(filter_config.get("max_tokens") or 80),
-            "stream": False,
-        },
-        timeout=int(filter_config.get("cloud_timeout") or 300),
-    )
-    response.raise_for_status()
-
-    choices = response.json().get("choices", [])
-
-    if not choices:
-        raise RuntimeError("클라우드 LLM 이벤트 필터 choices가 비어있음")
-
-    raw_response = choices[0].get("message", {}).get("content", "")
-    parsed = parse_keep_from_text(raw_response)
-
-    if not parsed:
-        logging.warning(f"클라우드 LLM 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("클라우드 LLM 이벤트 필터 JSON 파싱 실패")
-
-    return normalize_llm_material_event_result(parsed)
-
-
 def judge_material_event_with_ollama(
     item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
 ) -> dict[str, Any]:
@@ -947,13 +880,6 @@ def judge_material_event_with_llm(
 ) -> dict[str, Any]:
     filter_config = filter_config or get_material_event_filter_config()
     provider = str(filter_config.get("provider") or "vllm").lower()
-
-    if provider in {"cloud", "openai", "openai_compatible"}:
-        return judge_material_event_with_cloud(
-            item=item,
-            pipeline_input=pipeline_input,
-            filter_config=filter_config,
-        )
 
     if provider == "ollama":
         return judge_material_event_with_ollama(
@@ -1033,70 +959,6 @@ def judge_material_events_batch_with_vllm(
     return parsed
 
 
-def judge_material_events_batch_with_cloud(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    filter_config: dict[str, Any],
-) -> dict[int, dict[str, Any]]:
-    """OpenAI 호환 Chat Completions API로 기사 묶음을 판정한다."""
-
-    import requests
-
-    base_url = str(filter_config.get("cloud_base_url", "")).rstrip("/")
-    model = str(filter_config.get("cloud_model", ""))
-    api_key = str(filter_config.get("cloud_api_key", ""))
-
-    if not base_url or not model or not api_key:
-        raise RuntimeError("클라우드 LLM batch 이벤트 필터 설정이 비어있음")
-
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": load_material_event_prompt_text("material_event_batch_system.txt"),
-                },
-                {
-                    "role": "user",
-                    "content": build_batch_llm_material_event_prompt(
-                        items=items,
-                        pipeline_input=pipeline_input,
-                        body_limit=int(filter_config.get("body_limit") or 12000),
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": (int(filter_config.get("max_tokens") or 80) * max(len(items), 1)),
-            "stream": False,
-        },
-        timeout=int(filter_config.get("cloud_timeout") or 300),
-    )
-    response.raise_for_status()
-
-    choices = response.json().get("choices", [])
-
-    if not choices:
-        raise RuntimeError("클라우드 LLM batch 이벤트 필터 choices가 비어있음")
-
-    raw_response = choices[0].get("message", {}).get("content", "")
-    parsed = parse_batch_keep_from_text(
-        text=raw_response,
-        expected_count=len(items),
-    )
-
-    if not parsed:
-        logging.warning(f"클라우드 LLM batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("클라우드 LLM batch 이벤트 필터 JSON 파싱 실패")
-
-    return parsed
-
-
 def judge_material_events_batch_with_ollama(
     items: list[dict[str, Any]],
     pipeline_input: dict[str, Any] | None,
@@ -1149,13 +1011,6 @@ def judge_material_events_batch_with_llm(
 ) -> dict[int, dict[str, Any]]:
     filter_config = filter_config or get_material_event_filter_config()
     provider = str(filter_config.get("provider") or "vllm").lower()
-
-    if provider in {"cloud", "openai", "openai_compatible"}:
-        return judge_material_events_batch_with_cloud(
-            items=items,
-            pipeline_input=pipeline_input,
-            filter_config=filter_config,
-        )
 
     if provider == "ollama":
         return judge_material_events_batch_with_ollama(
@@ -1461,12 +1316,7 @@ def filter_material_event_news(
 
     mode = (mode or "sequential").lower()
     provider = str(filter_config.get("provider") or "vllm").lower()
-    is_vllm_provider = provider not in {
-        "cloud",
-        "openai",
-        "openai_compatible",
-        "ollama",
-    }
+    is_vllm_provider = provider != "ollama"
 
     if mode == "async":
         if not is_vllm_provider:

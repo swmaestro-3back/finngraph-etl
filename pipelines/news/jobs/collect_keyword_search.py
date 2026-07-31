@@ -21,7 +21,7 @@ from pipelines.news.loaders.search_keyword_repository import (
     fetch_active_search_keywords,
     mark_keywords_searched,
     mark_news_source_type,
-    save_news_search_keyword_links,
+    save_news_theme_links,
 )
 from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
@@ -122,8 +122,14 @@ def run() -> None:
     mark_news_source_type(saved_news_ids, SOURCE_TYPE_KEYWORD_SEARCH)
 
     existing_matched_items = [existing["removed_item"] for existing in existing_items]
-    provenance_items = storable_news + existing_matched_items
-    link_result = save_news_search_keyword_links(provenance_items)
+    theme_link_items = storable_news + existing_matched_items
+
+    keyword_theme_map = {
+        keyword["id"]: keyword["source_id"]
+        for keyword in keywords
+        if keyword.get("source_type") in ("theme", "theme_company") and keyword.get("source_id")
+    }
+    theme_link_result = save_news_theme_links(theme_link_items, keyword_theme_map)
 
     searched_count = mark_keywords_searched([keyword["id"] for keyword in keywords])
 
@@ -140,7 +146,7 @@ def run() -> None:
         f"성공 {body_success_count} / 실패 {body_failed_count}"
     )
     print(f"- 저장 결과 {save_result}")
-    print(f"- 근거 기록 {link_result}, 키워드 마킹 {searched_count}개")
+    print(f"- 테마 연결 {theme_link_result}, 키워드 마킹 {searched_count}개")
     print("작업 완료")
     print("=" * 70)
 

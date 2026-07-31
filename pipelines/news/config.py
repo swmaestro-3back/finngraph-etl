@@ -52,22 +52,14 @@ MORE_API_PATH_LATEST = os.getenv("MORE_API_PATH_LATEST")
 PARENT_SECTION_ID = os.getenv("PARENT_SECTION_ID")
 HEADLINE_SELECTOR = os.getenv("HEADLINE_SELECTOR")
 
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT"))
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL")
 OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL")
 
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL")
 VLLM_CHAT_MODEL = os.getenv("VLLM_CHAT_MODEL")
-CLOUD_LLM_BASE_URL = os.getenv("CLOUD_LLM_BASE_URL", "").rstrip("/")
-CLOUD_LLM_CHAT_MODEL = os.getenv("CLOUD_LLM_CHAT_MODEL", "")
-CLOUD_LLM_API_KEY = os.getenv("CLOUD_LLM_API_KEY", "")
-CLOUD_LLM_REQUEST_TIMEOUT = int(os.getenv("CLOUD_LLM_REQUEST_TIMEOUT", "300"))
+VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
+VLLM_REQUEST_TIMEOUT = int(os.getenv("VLLM_REQUEST_TIMEOUT", "300"))
 
 MAX_TOTAL_COLLECTED_ITEMS = int(os.getenv("MAX_TOTAL_COLLECTED_ITEMS"))
 OFFICIAL_SOURCE_THRESHOLD = int(os.getenv("OFFICIAL_SOURCE_THRESHOLD"))
@@ -89,6 +81,11 @@ MATERIAL_EVENT_FILTER_BATCH_SIZE = int(os.getenv("MATERIAL_EVENT_FILTER_BATCH_SI
 MATERIAL_EVENT_FILTER_FAIL_OPEN = os.getenv(
     "MATERIAL_EVENT_FILTER_FAIL_OPEN", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
+
+## 요약 관련 상수 (기본값 있음 — 미설정이어도 import 안전)
+NEWS_SUMMARY_BODY_LIMIT = int(os.getenv("NEWS_SUMMARY_BODY_LIMIT", "12000"))
+NEWS_SUMMARY_MAX_TOKENS = int(os.getenv("NEWS_SUMMARY_MAX_TOKENS", "512"))
+NEWS_SUMMARY_MAX_CONCURRENCY = int(os.getenv("NEWS_SUMMARY_MAX_CONCURRENCY", "4"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 

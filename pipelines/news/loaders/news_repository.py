@@ -1,15 +1,9 @@
 import logging
 from typing import Any
 
-import psycopg2
+from sqlalchemy import text
 
-from pipelines.news.config import (
-    DB_HOST,
-    DB_NAME,
-    DB_PASSWORD,
-    DB_PORT,
-    DB_USER,
-)
+from pipelines.common.database import session_scope
 from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
     normalize_url_for_duplicate,
@@ -19,13 +13,6 @@ from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-
-
-def get_connection():
-
-    return psycopg2.connect(
-        host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD
-    )
 
 
 def parse_anchor_pub_date(pub_date: str):
@@ -106,7 +93,7 @@ def has_article_body(item: dict[str, Any]) -> bool:
 
 
 def insert_or_update_news(
-    cursor, item: dict[str, Any], save_summary: bool = True, skip_existing: bool = False
+    session, item: dict[str, Any], save_summary: bool = True, skip_existing: bool = False
 ) -> dict[str, Any]:
 
     title = get_printable_text(item.get("title", ""))
@@ -129,133 +116,136 @@ def insert_or_update_news(
     if not body_text:
         raise ValueError("뉴스가 없음")
 
-    cursor.execute(
-        """
-        SELECT id
-        FROM news
-        WHERE link = %s
-           OR originallink = %s
-           OR RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(%s)
-           OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(%s)
-           OR BTRIM(
-                REGEXP_REPLACE(
-                    REGEXP_REPLACE(LOWER(title), '[^0-9a-z가-힣]+', ' ', 'g'),
-                    '\\s+',
-                    ' ',
-                    'g'
-                )
-           ) = %s
-        LIMIT 1;
-        """,
-        (
-            link,
-            originallink,
-            [url for url in [normalized_link, normalized_originallink] if url],
-            [url for url in [normalized_link, normalized_originallink] if url],
-            normalized_title,
+    existing_row = session.execute(
+        text(
+            """
+            SELECT id
+            FROM news
+            WHERE link = :link
+               OR originallink = :originallink
+               OR RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(:normalized_urls)
+               OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(:normalized_urls)
+               OR BTRIM(
+                    REGEXP_REPLACE(
+                        REGEXP_REPLACE(LOWER(title), '[^0-9a-z가-힣]+', ' ', 'g'),
+                        '\\s+',
+                        ' ',
+                        'g'
+                    )
+               ) = :normalized_title
+            LIMIT 1;
+            """
         ),
-    )
-    existing_row = cursor.fetchone()
+        {
+            "link": link,
+            "originallink": originallink,
+            "normalized_urls": [url for url in [normalized_link, normalized_originallink] if url],
+            "normalized_title": normalized_title,
+        },
+    ).fetchone()
 
     if existing_row and skip_existing:
         return {"id": existing_row[0], "action": "skipped_existing"}
 
     if existing_row:
         existing_news_id = existing_row[0]
-        summary_assignment = "summary = %s," if save_summary else ""
-        update_values = [title, description]
+
+        update_params = {
+            "title": title,
+            "description": description,
+            "body_text": body_text,
+            "link": link,
+            "originallink": originallink,
+            "published_at": published_at,
+            "id": existing_news_id,
+        }
+
+        summary_assignment = ""
 
         if save_summary:
-            update_values.append(summary)
+            summary_assignment = "summary = :summary,"
+            update_params["summary"] = summary
 
-        update_values.extend(
-            [
-                body_text,
-                link,
-                originallink,
-                published_at,
-                existing_news_id,
-            ]
-        )
-
-        cursor.execute(
-            f"""
-            UPDATE news
-            SET
-                title = %s,
-                description = %s,
-                {summary_assignment}
-                body_text = %s,
-                link = %s,
-                originallink = %s,
-                published_at = %s
-            WHERE id = %s
-            RETURNING id;
-            """,
-            tuple(update_values),
-        )
+        updated_row = session.execute(
+            text(
+                f"""
+                UPDATE news
+                SET
+                    title = :title,
+                    description = :description,
+                    {summary_assignment}
+                    body_text = :body_text,
+                    link = :link,
+                    originallink = :originallink,
+                    published_at = :published_at
+                WHERE id = :id
+                RETURNING id;
+                """
+            ),
+            update_params,
+        ).fetchone()
 
         return {
-            "id": cursor.fetchone()[0],
+            "id": updated_row[0],
             "action": "updated",
         }
 
     summary_update_sql = "summary = EXCLUDED.summary," if save_summary else ""
 
-    query = f"""
-        INSERT INTO news (
-            title,
-            description,
-            summary,
-            body_text,
-            link,
-            originallink,
-            published_at
-        )
-        VALUES (
-            %s,
-            %s,
-            %s,
-            %s,
-            %s,
-            %s,
-            %s
-        )
-        ON CONFLICT (link) DO UPDATE
-        SET
-            title = EXCLUDED.title,
-            description = EXCLUDED.description,
-            {summary_update_sql}
-            body_text = EXCLUDED.body_text,
-            originallink = EXCLUDED.originallink,
-            published_at = EXCLUDED.published_at
-        RETURNING id;
-    """
+    inserted_row = session.execute(
+        text(
+            f"""
+            INSERT INTO news (
+                title,
+                description,
+                summary,
+                body_text,
+                link,
+                originallink,
+                published_at
+            )
+            VALUES (
+                :title,
+                :description,
+                :summary,
+                :body_text,
+                :link,
+                :originallink,
+                :published_at
+            )
+            ON CONFLICT (link) DO UPDATE
+            SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                {summary_update_sql}
+                body_text = EXCLUDED.body_text,
+                originallink = EXCLUDED.originallink,
+                published_at = EXCLUDED.published_at
+            RETURNING id;
+            """
+        ),
+        {
+            "title": title,
+            "description": description,
+            "summary": summary,
+            "body_text": body_text,
+            "link": link,
+            "originallink": originallink,
+            "published_at": published_at,
+        },
+    ).fetchone()
 
-    cursor.execute(
-        query, (title, description, summary, body_text, link, originallink, published_at)
-    )
-
-    news_id = cursor.fetchone()[0]
-
-    return {"id": news_id, "action": "inserted"}
+    return {"id": inserted_row[0], "action": "inserted"}
 
 
 def save_single_news_item(
     item: dict[str, Any], save_summary: bool = True, skip_existing: bool = False
 ) -> int:
 
-    conn = get_connection()
-
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                return insert_or_update_news(
-                    cursor=cursor, item=item, save_summary=save_summary, skip_existing=skip_existing
-                )["id"]
-
-    finally:
-        conn.close()
+    with session_scope() as session:
+        return insert_or_update_news(
+            session=session, item=item, save_summary=save_summary, skip_existing=skip_existing
+        )["id"]
 
 
 def save_news_items(
@@ -272,63 +262,49 @@ def save_news_items(
             "failed_count": 0,
         }
 
-    conn = get_connection()
-
     inserted_count = 0
     updated_count = 0
     skipped_existing_count = 0
     skipped_no_body_count = 0
     failed_count = 0
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                for item in items:
-                    title = get_printable_text(item.get("title", ""))
+    with session_scope() as session:
+        for item in items:
+            title = get_printable_text(item.get("title", ""))
 
-                    if not has_article_body(item):
-                        skipped_no_body_count += 1
-                        logging.info(f"저장 스킵: {title}")
-                        continue
+            if not has_article_body(item):
+                skipped_no_body_count += 1
+                logging.info(f"저장 스킵: {title}")
+                continue
 
-                    try:
-                        cursor.execute("SAVEPOINT save_news_item;")
+            try:
+                # 항목마다 SAVEPOINT(begin_nested)로 격리해 개별 실패가 전체를 깨지 않게 한다.
+                with session.begin_nested():
+                    save_result = insert_or_update_news(
+                        session=session,
+                        item=item,
+                        save_summary=save_summary,
+                        skip_existing=skip_existing,
+                    )
 
-                        save_result = insert_or_update_news(
-                            cursor=cursor,
-                            item=item,
-                            save_summary=save_summary,
-                            skip_existing=skip_existing,
-                        )
+                news_id = save_result["id"]
+                action = save_result["action"]
+                item["_news_id"] = int(news_id)
 
-                        cursor.execute("RELEASE SAVEPOINT save_news_item;")
+                if action == "inserted":
+                    inserted_count += 1
+                    logging.info(f"뉴스 신규 저장 완료: id={news_id}, title={title}")
+                elif action == "skipped_existing":
+                    skipped_existing_count += 1
+                    logging.info(f"이미 DB에 있어 저장 스킵: id={news_id}, title={title}")
+                else:
+                    updated_count += 1
+                    logging.info(f"기존 뉴스 업데이트 완료: id={news_id}, title={title}")
 
-                        news_id = save_result["id"]
-                        action = save_result["action"]
-                        item["_news_id"] = int(news_id)
+            except Exception as e:
+                failed_count += 1
 
-                        if action == "inserted":
-                            inserted_count += 1
-                            logging.info(f"뉴스 신규 저장 완료: id={news_id}, title={title}")
-                        elif action == "skipped_existing":
-                            skipped_existing_count += 1
-                            logging.info(f"이미 DB에 있어 저장 스킵: id={news_id}, title={title}")
-                        else:
-                            updated_count += 1
-                            logging.info(f"기존 뉴스 업데이트 완료: id={news_id}, title={title}")
-
-                    except Exception as e:
-                        try:
-                            cursor.execute("ROLLBACK TO SAVEPOINT save_news_item;")
-                            cursor.execute("RELEASE SAVEPOINT save_news_item;")
-                        except Exception:
-                            conn.rollback()
-
-                        failed_count += 1
-
-                        logging.error(
-                            f"뉴스 저장 실패: title={title}, error={type(e).__name__}: {e}"
-                        )
+                logging.error(f"뉴스 저장 실패: title={title}, error={type(e).__name__}: {e}")
 
         logging.info(
             f"뉴스 DB 저장 완료: 신규저장 {inserted_count}개, "
@@ -344,9 +320,6 @@ def save_news_items(
             "skipped_no_body_count": skipped_no_body_count,
             "failed_count": failed_count,
         }
-
-    finally:
-        conn.close()
 
 
 def fetch_recent_news_items(limit: int = 50) -> list[dict[str, Any]]:
@@ -366,51 +339,41 @@ def fetch_recent_news_items(limit: int = 50) -> list[dict[str, Any]]:
         FROM news
         {body_filter_sql}
         ORDER BY id DESC
-        LIMIT %s;
+        LIMIT :limit;
     """
 
-    conn = get_connection()
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, (limit,))
-                rows = cursor.fetchall()
+        items = []
 
-                items = []
+        for row in rows:
+            (
+                news_id,
+                title,
+                description,
+                summary,
+                body_text,
+                link,
+                originallink,
+                published_at,
+            ) = row
 
-                for row in rows:
-                    (
-                        news_id,
-                        title,
-                        description,
-                        summary,
-                        body_text,
-                        link,
-                        originallink,
-                        published_at,
-                    ) = row
+            item = {
+                "_news_id": news_id,
+                "title": title or "",
+                "description": description or summary or "",
+                "_body_text": body_text or "",
+                "link": link or "",
+                "originallink": originallink or "",
+                "pubDate": (
+                    published_at.strftime("%a, %d %b %Y %H:%M:%S %z") if published_at else ""
+                ),
+            }
 
-                    item = {
-                        "_news_id": news_id,
-                        "title": title or "",
-                        "description": description or summary or "",
-                        "_body_text": body_text or "",
-                        "link": link or "",
-                        "originallink": originallink or "",
-                        "pubDate": (
-                            published_at.strftime("%a, %d %b %Y %H:%M:%S %z")
-                            if published_at
-                            else ""
-                        ),
-                    }
+            items.append(item)
 
-                    items.append(item)
-
-                return items
-
-    finally:
-        conn.close()
+        return items
 
 
 def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
@@ -426,55 +389,45 @@ def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
             originallink,
             published_at
         FROM news
-        WHERE material_checked_at IS NULL
+        WHERE is_material IS NULL
           AND body_text IS NOT NULL
           AND BTRIM(body_text) <> ''
         ORDER BY id ASC
-        LIMIT %s;
+        LIMIT :limit;
     """
 
-    conn = get_connection()
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, (limit,))
-                rows = cursor.fetchall()
+        items = []
 
-                items = []
+        for row in rows:
+            (
+                news_id,
+                title,
+                description,
+                summary,
+                body_text,
+                link,
+                originallink,
+                published_at,
+            ) = row
 
-                for row in rows:
-                    (
-                        news_id,
-                        title,
-                        description,
-                        summary,
-                        body_text,
-                        link,
-                        originallink,
-                        published_at,
-                    ) = row
+            items.append(
+                {
+                    "_news_id": news_id,
+                    "title": title or "",
+                    "description": description or summary or "",
+                    "_body_text": body_text or "",
+                    "link": link or "",
+                    "originallink": originallink or "",
+                    "pubDate": (
+                        published_at.strftime("%a, %d %b %Y %H:%M:%S %z") if published_at else ""
+                    ),
+                }
+            )
 
-                    items.append(
-                        {
-                            "_news_id": news_id,
-                            "title": title or "",
-                            "description": description or summary or "",
-                            "_body_text": body_text or "",
-                            "link": link or "",
-                            "originallink": originallink or "",
-                            "pubDate": (
-                                published_at.strftime("%a, %d %b %Y %H:%M:%S %z")
-                                if published_at
-                                else ""
-                            ),
-                        }
-                    )
-
-                return items
-
-    finally:
-        conn.close()
+        return items
 
 
 def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> dict[str, int]:
@@ -486,44 +439,109 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
         logging.info("판정 결과 기록 대상이 없습니다.")
         return {"kept_count": 0, "dropped_count": 0}
 
-    conn = get_connection()
+    with session_scope() as session:
+        if unique_kept:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET is_material = TRUE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_kept},
+            )
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                if unique_kept:
-                    cursor.execute(
-                        """
-                        UPDATE news
-                        SET material_checked_at = now(),
-                            is_material = TRUE
-                        WHERE id = ANY(%s);
-                        """,
-                        (unique_kept,),
-                    )
+        if unique_dropped:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET is_material = FALSE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_dropped},
+            )
 
-                if unique_dropped:
-                    cursor.execute(
-                        """
-                        UPDATE news
-                        SET material_checked_at = now(),
-                            is_material = FALSE
-                        WHERE id = ANY(%s);
-                        """,
-                        (unique_dropped,),
-                    )
+    result = {"kept_count": len(unique_kept), "dropped_count": len(unique_dropped)}
 
-        result = {"kept_count": len(unique_kept), "dropped_count": len(unique_dropped)}
+    logging.info(
+        f"material 판정 기록 완료: 유지 {result['kept_count']}개, "
+        f"소프트삭제 {result['dropped_count']}개"
+    )
 
-        logging.info(
-            f"material 판정 기록 완료: 유지 {result['kept_count']}개, "
-            f"소프트삭제 {result['dropped_count']}개"
-        )
+    return result
 
-        return result
 
-    finally:
-        conn.close()
+def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any]]:
+    """
+    Triplet ETL에서 사용
+    삼중항관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
+
+    필터링되어 유효한 뉴스라고 판별난 is_material=True
+    + 삼중항추출 안된 것 relation_extracted IS NULL
+    """
+
+    query = """
+        SELECT
+            id,
+            body_text
+        FROM news
+        WHERE relation_extracted IS NULL
+          AND is_material = TRUE
+          AND body_text IS NOT NULL
+          AND BTRIM(body_text) <> ''
+        ORDER BY id ASC
+        LIMIT :limit;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
+
+        return [{"news_id": int(news_id), "body_text": body_text} for news_id, body_text in rows]
+
+
+def mark_news_relation_extracted(
+    has_triplets_ids: list[int], no_triplets_ids: list[int]
+) -> dict[str, int]:
+    """
+    Triplet ETL에서 호출
+    삼중항관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
+    """
+
+    unique_true = sorted({int(news_id) for news_id in has_triplets_ids if news_id})
+    unique_false = sorted({int(news_id) for news_id in no_triplets_ids if news_id})
+
+    if not unique_true and not unique_false:
+        return {"true_count": 0, "false_count": 0}
+
+    with session_scope() as session:
+        if unique_true:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET relation_extracted = TRUE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_true},
+            )
+
+        if unique_false:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET relation_extracted = FALSE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_false},
+            )
+
+    return {"true_count": len(unique_true), "false_count": len(unique_false)}
 
 
 def find_existing_links(links: list[str]) -> set[str]:
@@ -538,31 +556,23 @@ def find_existing_links(links: list[str]) -> set[str]:
     query = """
         SELECT link, originallink
         FROM news
-        WHERE RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(%s)
-           OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(%s);
+        WHERE RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(:links)
+           OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(:links);
     """
 
-    conn = get_connection()
+    with session_scope() as session:
+        rows = session.execute(text(query), {"links": filtered_links}).fetchall()
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, (filtered_links, filtered_links))
-                rows = cursor.fetchall()
+        existing_links = set()
 
-                existing_links = set()
+        for link, originallink in rows:
+            if link:
+                existing_links.add(normalize_url_for_duplicate(link))
 
-                for link, originallink in rows:
-                    if link:
-                        existing_links.add(normalize_url_for_duplicate(link))
+            if originallink:
+                existing_links.add(normalize_url_for_duplicate(originallink))
 
-                    if originallink:
-                        existing_links.add(normalize_url_for_duplicate(originallink))
-
-                return existing_links
-
-    finally:
-        conn.close()
+        return existing_links
 
 
 def find_existing_normalized_titles(titles: list[str]) -> set[str]:
@@ -586,21 +596,13 @@ def find_existing_normalized_titles(titles: list[str]) -> set[str]:
                 ' ',
                 'g'
             )
-        ) = ANY(%s);
+        ) = ANY(:titles);
     """
 
-    conn = get_connection()
+    with session_scope() as session:
+        rows = session.execute(text(query), {"titles": normalized_titles}).fetchall()
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(query, (normalized_titles,))
-                rows = cursor.fetchall()
-
-                return {normalize_title_for_duplicate(row[0]) for row in rows if row[0]}
-
-    finally:
-        conn.close()
+        return {normalize_title_for_duplicate(row[0]) for row in rows if row[0]}
 
 
 def filter_new_news_by_db(
@@ -626,8 +628,8 @@ def filter_new_news_by_db(
     query = """
         SELECT id, link, originallink, title
         FROM news
-        WHERE RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(%s)
-           OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(%s)
+        WHERE RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(:links)
+           OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(:links)
            OR BTRIM(
                 REGEXP_REPLACE(
                     REGEXP_REPLACE(LOWER(title), '[^0-9a-z가-힣]+', ' ', 'g'),
@@ -635,41 +637,33 @@ def filter_new_news_by_db(
                     ' ',
                     'g'
                 )
-           ) = ANY(%s);
+           ) = ANY(:titles);
     """
 
     existing_by_url = {}
     existing_by_title = {}
 
     if normalized_links or normalized_titles:
-        conn = get_connection()
+        with session_scope() as session:
+            rows = session.execute(
+                text(query),
+                {
+                    "links": normalized_links,
+                    "titles": normalized_titles,
+                },
+            ).fetchall()
 
-        try:
-            with conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        query,
-                        (
-                            normalized_links,
-                            normalized_links,
-                            normalized_titles,
-                        ),
-                    )
+            for news_id, link, originallink, title in rows:
+                for url in (link, originallink):
+                    normalized_url = normalize_url_for_duplicate(url)
 
-                    for news_id, link, originallink, title in cursor.fetchall():
-                        for url in (link, originallink):
-                            normalized_url = normalize_url_for_duplicate(url)
+                    if normalized_url:
+                        existing_by_url[normalized_url] = int(news_id)
 
-                            if normalized_url:
-                                existing_by_url[normalized_url] = int(news_id)
+                normalized_title = normalize_title_for_duplicate(title)
 
-                        normalized_title = normalize_title_for_duplicate(title)
-
-                        if normalized_title:
-                            existing_by_title[normalized_title] = int(news_id)
-
-        finally:
-            conn.close()
+                if normalized_title:
+                    existing_by_title[normalized_title] = int(news_id)
 
     new_items = []
     existing_items = []
@@ -707,54 +701,37 @@ def filter_new_news_by_db(
 
 
 def delete_news_by_ids(news_ids: list[int]) -> dict[str, int]:
+    """뉴스 하드 삭제. 자식 테이블(news_relations, news_themes 등)은 FK CASCADE로 함께 정리된다."""
 
     unique_news_ids = sorted({int(news_id) for news_id in news_ids if news_id})
 
     if not unique_news_ids:
         logging.info("삭제할 뉴스 id가 없습니다.")
-        return {"requested_count": 0, "deleted_embedding_count": 0, "deleted_news_count": 0}
+        return {"requested_count": 0, "deleted_news_count": 0}
 
-    conn = get_connection()
+    with session_scope() as session:
+        deleted_news = session.execute(
+            text(
+                """
+                DELETE FROM news
+                WHERE id = ANY(:ids)
+                RETURNING id;
+                """
+            ),
+            {"ids": unique_news_ids},
+        ).fetchall()
 
-    try:
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    DELETE FROM news_embeddings
-                    WHERE news_id = ANY(%s)
-                    RETURNING news_id;
-                    """,
-                    (unique_news_ids,),
-                )
-                deleted_embeddings = cursor.fetchall()
+    result = {
+        "requested_count": len(unique_news_ids),
+        "deleted_news_count": len(deleted_news),
+    }
 
-                cursor.execute(
-                    """
-                    DELETE FROM news
-                    WHERE id = ANY(%s)
-                    RETURNING id;
-                    """,
-                    (unique_news_ids,),
-                )
-                deleted_news = cursor.fetchall()
+    logging.info(
+        f"뉴스 삭제 완료: 요청={result['requested_count']}개, "
+        f"뉴스삭제={result['deleted_news_count']}개"
+    )
 
-        result = {
-            "requested_count": len(unique_news_ids),
-            "deleted_embedding_count": len(deleted_embeddings),
-            "deleted_news_count": len(deleted_news),
-        }
-
-        logging.info(
-            f"뉴스 삭제 완료: 요청={result['requested_count']}개, "
-            f"임베딩삭제={result['deleted_embedding_count']}개, "
-            f"뉴스삭제={result['deleted_news_count']}개"
-        )
-
-        return result
-
-    finally:
-        conn.close()
+    return result
 
 
 def extract_news_ids_from_removed_items(removed_items: list[dict[str, Any]]) -> list[int]:
@@ -769,3 +746,105 @@ def extract_news_ids_from_removed_items(removed_items: list[dict[str, Any]]) -> 
             news_ids.append(int(news_id))
 
     return news_ids
+
+
+def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
+
+    query = """
+        SELECT
+            id,
+            title,
+            body_text
+        FROM news
+        WHERE relation_extracted IS NOT NULL
+          AND (summary IS NULL OR BTRIM(summary) = '')
+          AND body_text IS NOT NULL
+          AND BTRIM(body_text) <> ''
+        ORDER BY id ASC
+        LIMIT :limit;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
+
+        items = []
+
+        for row in rows:
+            news_id, title, body_text = row
+
+            items.append(
+                {
+                    "_news_id": news_id,
+                    "title": title or "",
+                    "_body_text": body_text or "",
+                }
+            )
+
+        return items
+
+
+def fetch_triplets_for_news_ids(
+    news_ids: list[int],
+) -> dict[int, list[tuple[str, str, str]]]:
+    """뉴스 id별 삼중항 `(subject_name, relation, object_name)` 목록을 조회한다."""
+
+    unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
+
+    if not unique_ids:
+        return {}
+
+    query = """
+        SELECT news_id, subject_name, relation, object_name
+        FROM news_relations
+        WHERE news_id = ANY(:ids)
+        ORDER BY news_id ASC, id ASC;
+    """
+
+    triplets_by_news: dict[int, list[tuple[str, str, str]]] = {}
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"ids": unique_ids}).fetchall()
+
+    for news_id, subject_name, relation, object_name in rows:
+        triplets_by_news.setdefault(int(news_id), []).append((subject_name, relation, object_name))
+
+    return triplets_by_news
+
+
+def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
+
+    normalized = [
+        (int(news_id), summary)
+        for news_id, summary in rows
+        if news_id and summary and summary.strip()
+    ]
+
+    if not normalized:
+        logging.info("저장할 요약이 없습니다.")
+        return {"saved_count": 0}
+
+    saved_count = 0
+
+    with session_scope() as session:
+        for news_id, summary in normalized:
+            try:
+                with session.begin_nested():
+                    session.execute(
+                        text(
+                            """
+                            UPDATE news
+                            SET summary = :summary
+                            WHERE id = :id;
+                            """
+                        ),
+                        {"summary": summary.strip(), "id": news_id},
+                    )
+                saved_count += 1
+            except Exception as e:
+                logging.warning(
+                    f"요약 저장 실패(건너뜀): news_id={news_id}, error={type(e).__name__}: {e}"
+                )
+
+    logging.info(f"요약 저장 완료: {saved_count}개")
+
+    return {"saved_count": saved_count}

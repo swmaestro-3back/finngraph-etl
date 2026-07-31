@@ -32,10 +32,13 @@ class Settings(BaseSettings):
         validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
     )
 
-    NEO4J_URI: str = Field(default="", validation_alias="NEO4J_URI")
-    NEO4J_USERNAME: str = Field(default="", validation_alias="NEO4J_USERNAME")
-    NEO4J_PASSWORD: str = Field(default="", validation_alias="NEO4J_PASSWORD")
-    NEO4J_DATABASE: str = Field(default="", validation_alias="NEO4J_DATABASE")
+    gemini_model: str = Field(default="", validation_alias="GEMINI_MODEL")
+    google_api_key: str = Field(default="", validation_alias="GOOGLE_API_KEY")
+
+    neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
+    neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
+    neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
+    neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
 
 
 @lru_cache

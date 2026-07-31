@@ -12,9 +12,10 @@ SQL이 의도대로 동작하는지 검증한다. `integration` 마커가 붙어
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
+from sqlalchemy import text
+
+from pipelines.common.database import session_scope
 
 pytestmark = pytest.mark.integration
 
@@ -32,8 +33,7 @@ CREATE TABLE IF NOT EXISTS news (
     link                TEXT UNIQUE,
     originallink        TEXT,
     published_at        TIMESTAMPTZ,
-    material_checked_at TIMESTAMPTZ,
-    is_material         BOOLEAN
+    is_material         BOOLEAN   -- 3-상태: NULL=미판정 / TRUE=유지 / FALSE=소프트삭제
 );
 """
 
@@ -46,60 +46,55 @@ def repo():
     return news_repository
 
 
-def _delete_test_rows(repo) -> None:
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute("DELETE FROM news WHERE link LIKE %s", (TEST_LINK_PREFIX + "%",))
-    finally:
-        conn.close()
+def _delete_test_rows() -> None:
+    with session_scope() as session:
+        session.execute(
+            text("DELETE FROM news WHERE link LIKE :prefix"),
+            {"prefix": TEST_LINK_PREFIX + "%"},
+        )
 
 
 @pytest.fixture()
-def news_table(repo):
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(_MINIMAL_NEWS_DDL)
-    finally:
-        conn.close()
+def news_table():
+    with session_scope() as session:
+        session.execute(text(_MINIMAL_NEWS_DDL))
 
-    _delete_test_rows(repo)
+    _delete_test_rows()
     yield
-    _delete_test_rows(repo)
+    _delete_test_rows()
 
 
-def _insert(repo, *, suffix, body_text, checked_at=None, is_material=None) -> int:
+def _insert(*, suffix, body_text, is_material=None) -> int:
     link = TEST_LINK_PREFIX + suffix
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
+    with session_scope() as session:
+        row = session.execute(
+            text(
                 """
                 INSERT INTO news
-                    (title, description, body_text, link, originallink,
-                     material_checked_at, is_material)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (title, description, body_text, link, originallink, is_material)
+                VALUES (:title, :description, :body_text, :link, :originallink, :is_material)
                 RETURNING id;
-                """,
-                ("제목 " + suffix, "설명", body_text, link, link, checked_at, is_material),
-            )
-            return cursor.fetchone()[0]
-    finally:
-        conn.close()
+                """
+            ),
+            {
+                "title": "제목 " + suffix,
+                "description": "설명",
+                "body_text": body_text,
+                "link": link,
+                "originallink": link,
+                "is_material": is_material,
+            },
+        ).fetchone()
+        return row[0]
 
 
-def _state(repo, ids):
-    conn = repo.get_connection()
-    try:
-        with conn, conn.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, material_checked_at, is_material FROM news WHERE id = ANY(%s)",
-                (list(ids),),
-            )
-            return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
-    finally:
-        conn.close()
+def _state(ids):
+    with session_scope() as session:
+        rows = session.execute(
+            text("SELECT id, is_material FROM news WHERE id = ANY(:ids)"),
+            {"ids": list(ids)},
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
 
 
 def _unchecked_test_ids(repo):
@@ -108,17 +103,11 @@ def _unchecked_test_ids(repo):
 
 
 def test_fetch_unchecked_returns_only_unjudged_with_body(news_table, repo):
-    keep = _insert(repo, suffix="a-unchecked", body_text="텍스트 A")
-    drop = _insert(repo, suffix="b-unchecked", body_text="텍스트 B")
-    _insert(repo, suffix="c-null-body", body_text=None)
-    _insert(repo, suffix="d-blank-body", body_text="   ")
-    _insert(
-        repo,
-        suffix="e-already-checked",
-        body_text="E",
-        checked_at=datetime.now(UTC),
-        is_material=True,
-    )
+    keep = _insert(suffix="a-unchecked", body_text="텍스트 A")
+    drop = _insert(suffix="b-unchecked", body_text="텍스트 B")
+    _insert(suffix="c-null-body", body_text=None)
+    _insert(suffix="d-blank-body", body_text="   ")
+    _insert(suffix="e-already-checked", body_text="E", is_material=True)
 
     # 미판정 + 텍스트 있음 인 a, b 만 조회되어야 한다.
     assert _unchecked_test_ids(repo) == {keep, drop}
@@ -130,12 +119,10 @@ def test_fetch_unchecked_returns_only_unjudged_with_body(news_table, repo):
     # 기록 후에는 우리 테스트 행이 더 이상 미판정으로 조회되지 않는다.
     assert _unchecked_test_ids(repo) == set()
 
-    # 실제 저장 상태 확인.
-    state = _state(repo, [keep, drop])
-    kept_checked_at, kept_is_material = state[keep]
-    dropped_checked_at, dropped_is_material = state[drop]
-    assert kept_checked_at is not None and kept_is_material is True
-    assert dropped_checked_at is not None and dropped_is_material is False
+    # 실제 저장 상태 확인 (is_material 3-상태: 판정됨 = NOT NULL).
+    state = _state([keep, drop])
+    assert state[keep] is True
+    assert state[drop] is False
 
 
 def test_mark_with_empty_inputs_is_noop(news_table, repo):

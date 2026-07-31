@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 try:
-    from airflow.decorators import dag, task
+    from airflow.sdk import dag, task
 except ImportError:
     dag = None
     task = None

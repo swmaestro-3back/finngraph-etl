@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 class JudalExtractor(BaseExtractor):
     source_name = "judal"
-    blacklist = ["코스닥 퇴출기준", "지방코스닥기업", "상장폐지 위험종목", "ETF", "ETN"]
+    blacklist = ["코스닥 퇴출기준", "지방코스닥기업", "상장폐지 위험종목", "ETF", "ETN", "스팩"]
 
     async def fetch_themes(self) -> list[Theme]:
         url = "https://www.judal.co.kr/?view=themeList"

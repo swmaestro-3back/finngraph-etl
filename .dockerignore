@@ -1,0 +1,12 @@
+# 빌드 컨텍스트가 레포 루트이므로 로컬 전용/민감 파일을 반드시 제외한다.
+.git
+.venv
+.env
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache
+.ruff_cache
+etl_platform.egg-info
+uv.lock
+logs/

@@ -1,3 +1,50 @@
+# ETL 데이터 DB(db)는 프로파일 없이 단독 기동 가능: `docker compose up -d db`
+# Airflow 스택 전체 기동: `docker compose --profile airflow up -d` (README "Running Airflow locally")
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: etl-airflow:3.3.0
+  user: "${AIRFLOW_UID:-50000}:0"
+  # 잡 실행에 필요한 env(KIS_*, NEO4J_*, news 변수 등)를 통째로 주입한다.
+  # 컨테이너 네트워크에 맞는 값은 아래 environment가 덮어쓴다(environment > env_file).
+  env_file:
+    - path: .env
+      required: false
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-etl-local-only}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    # stocks/themes DAG는 naive start_date라 cron이 이 타임존으로 해석된다(장중 스케줄 KST 기준).
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # 컨테이너 안에서는 호스트 포트(localhost:15432)가 아니라 compose 네트워크의 db:5432로 접속한다.
+    DATABASE_URL: postgresql+psycopg://etl:etl@db:5432/etl
+    DB_HOST: db
+    DB_PORT: "5432"
+    # vLLM 서버는 호스트에서 실행되므로 컨테이너에서는 localhost가 아니라 host.docker.internal로 접속한다.
+    VLLM_BASE_URL: http://host.docker.internal:8000/v1
+    # 컨테이너 안에서는 호스트 포트(localhost:7687)가 아니라 compose 네트워크의 neo4j:7687로 접속한다.
+    NEO4J_URI: bolt://neo4j:7687
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./pipelines:/opt/airflow/pipelines
+    - ./scripts:/opt/airflow/scripts
+    - etl_airflow_logs:/opt/airflow/logs
+  profiles: ["airflow"]
+  depends_on: &airflow-common-depends-on
+    airflow-db:
+      condition: service_healthy
+    db:
+      condition: service_healthy
+    neo4j:
+      condition: service_healthy
+
 services:
   db:
     image: timescale/timescaledb:latest-pg16
@@ -16,5 +63,108 @@ services:
       timeout: 5s
       retries: 10
 
+  # 테마 파이프라인용 그래프 DB. db와 마찬가지로 프로파일 없이 단독 기동 가능: `docker compose up -d neo4j`
+  neo4j:
+    build:
+      context: .
+      dockerfile: docker/neo4j/Dockerfile
+    image: etl-neo4j:5
+    environment:
+      # 볼륨 최초 생성 시에만 초기 비밀번호로 적용된다(docker/neo4j/README.md 참고).
+      NEO4J_AUTH: "${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-etlneo4j}"
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - etl_neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-etlneo4j} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  # Airflow 메타데이터 전용 DB. ETL 데이터(db, timescale)와 수명주기/백업 정책을 분리한다.
+  airflow-db:
+    image: postgres:16
+    profiles: ["airflow"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - etl_airflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 공식 entrypoint가 _AIRFLOW_* 값을 보고 DB migrate + admin 계정 생성을 수행한다.
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    restart: unless-stopped
+    ports:
+      - "${AIRFLOW_WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # LocalExecutor라 태스크는 scheduler 컨테이너 안에서 실행되고, Execution API(apiserver)로
+  # 상태를 보고한다 → apiserver가 떠 있어야 태스크가 돈다.
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-apiserver:
+        condition: service_healthy
+
+  # Airflow 3에서 DAG 파싱은 scheduler가 아니라 전용 dag-processor가 담당한다.
+  # deferrable operator를 도입하면 official compose처럼 airflow-triggerer 서비스를 추가한다.
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
 volumes:
   etl_pgdata:
+  etl_neo4j_data:
+  etl_airflow_pgdata:
+  etl_airflow_logs:

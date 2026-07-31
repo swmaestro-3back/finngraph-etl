@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 _ENV_DEFAULTS = {
-    # DB 접속 (news 로더는 psycopg2로 직접 연결)
+    # DB 접속 (news 로더는 psycopg(3)로 직접 연결)
     "DB_HOST": "localhost",
     "DB_PORT": "15432",
     "DB_NAME": "etl",
