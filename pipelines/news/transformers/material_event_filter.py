@@ -225,7 +225,7 @@ def get_material_event_filter_config() -> dict[str, Any]:
 
         return {
             "enable_llm": True,
-            "provider": getattr(config, "MATERIAL_EVENT_FILTER_PROVIDER", "vllm"),
+            "provider": getattr(config, "MATERIAL_EVENT_FILTER_PROVIDER", "bedrock"),
             "body_limit": getattr(config, "MATERIAL_EVENT_FILTER_BODY_LIMIT", 12000),
             "max_tokens": getattr(config, "MATERIAL_EVENT_FILTER_MAX_TOKENS", 80),
             "max_workers": getattr(config, "MATERIAL_EVENT_FILTER_MAX_WORKERS", 3),
@@ -242,11 +242,14 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "vllm_timeout": getattr(config, "VLLM_REQUEST_TIMEOUT", 300),
             "ollama_base_url": getattr(config, "OLLAMA_BASE_URL", ""),
             "ollama_model": getattr(config, "OLLAMA_CHAT_MODEL", ""),
+            "bedrock_region": getattr(config, "BEDROCK_REGION", ""),
+            "bedrock_model": getattr(config, "BEDROCK_CHAT_MODEL", ""),
+            "bedrock_timeout": getattr(config, "BEDROCK_REQUEST_TIMEOUT", 300),
         }
     except Exception:
         return {
             "enable_llm": False,
-            "provider": "vllm",
+            "provider": "bedrock",
             "body_limit": 12000,
             "max_tokens": 80,
             "max_workers": 3,
@@ -259,6 +262,9 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "vllm_timeout": 300,
             "ollama_base_url": "",
             "ollama_model": "",
+            "bedrock_region": "",
+            "bedrock_model": "",
+            "bedrock_timeout": 300,
         }
 
 
@@ -833,6 +839,151 @@ async def judge_material_event_with_vllm_async(
     return parse_vllm_material_event_response(response.json())
 
 
+@lru_cache
+def _get_bedrock_client(region: str, timeout: int) -> Any:
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "bedrock-runtime",
+        region_name=region or None,
+        config=Config(
+            read_timeout=timeout,
+            connect_timeout=timeout,
+            retries={"max_attempts": 2, "mode": "standard"},
+        ),
+    )
+
+
+def extract_bedrock_text(response_data: dict[str, Any]) -> str:
+    content = response_data.get("output", {}).get("message", {}).get("content", [])
+
+    for block in content:
+        if isinstance(block, dict) and "text" in block:
+            return block["text"]
+
+    return ""
+
+
+def build_bedrock_converse_request(
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+) -> tuple[str, str, str, dict[str, Any]]:
+    model_id = str(filter_config.get("bedrock_model") or "")
+
+    if not model_id:
+        raise RuntimeError("Bedrock 이벤트 필터 설정이 비어있음(모델 ID 필요)")
+
+    return (
+        model_id,
+        load_material_event_prompt_text("material_event_single_system.txt"),
+        build_llm_material_event_prompt(
+            item=item,
+            pipeline_input=pipeline_input,
+            body_limit=int(filter_config.get("body_limit") or 12000),
+        ),
+        {
+            "temperature": 0.0,
+            "maxTokens": int(filter_config.get("max_tokens") or 80),
+        },
+    )
+
+
+def parse_bedrock_material_event_response(
+    response_data: dict[str, Any],
+) -> dict[str, Any]:
+    raw_response = extract_bedrock_text(response_data)
+    parsed = parse_keep_from_text(raw_response)
+
+    if not parsed:
+        logging.warning(f"Bedrock 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
+        raise RuntimeError("Bedrock 이벤트 필터 JSON 파싱 실패")
+
+    return normalize_llm_material_event_result(parsed)
+
+
+def judge_material_event_with_bedrock(
+    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+) -> dict[str, Any]:
+    model_id, system_text, user_text, inference_config = build_bedrock_converse_request(
+        item=item,
+        pipeline_input=pipeline_input,
+        filter_config=filter_config,
+    )
+    client = _get_bedrock_client(
+        str(filter_config.get("bedrock_region") or ""),
+        int(filter_config.get("bedrock_timeout") or 300),
+    )
+    response = client.converse(
+        modelId=model_id,
+        system=[{"text": system_text}],
+        messages=[{"role": "user", "content": [{"text": user_text}]}],
+        inferenceConfig=inference_config,
+    )
+
+    return parse_bedrock_material_event_response(response)
+
+
+async def judge_material_event_with_bedrock_async(
+    item: dict[str, Any],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any],
+) -> dict[str, Any]:
+    # boto3는 동기 클라이언트라 to_thread로 감싸 asyncio.Semaphore 동시성만 활용한다.
+    return await asyncio.to_thread(
+        judge_material_event_with_bedrock,
+        item,
+        pipeline_input,
+        filter_config,
+    )
+
+
+def judge_material_events_batch_with_bedrock(
+    items: list[dict[str, Any]],
+    pipeline_input: dict[str, Any] | None,
+    filter_config: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
+    model_id = str(filter_config.get("bedrock_model") or "")
+    region = str(filter_config.get("bedrock_region") or "")
+
+    if not model_id:
+        raise RuntimeError("Bedrock batch 이벤트 필터 설정이 비어있음(모델 ID 필요)")
+
+    client = _get_bedrock_client(region, int(filter_config.get("bedrock_timeout") or 300))
+    response = client.converse(
+        modelId=model_id,
+        system=[{"text": load_material_event_prompt_text("material_event_batch_system.txt")}],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": build_batch_llm_material_event_prompt(
+                            items=items,
+                            pipeline_input=pipeline_input,
+                            body_limit=int(filter_config.get("body_limit") or 12000),
+                        )
+                    }
+                ],
+            }
+        ],
+        inferenceConfig={
+            "temperature": 0.0,
+            "maxTokens": int(filter_config.get("max_tokens") or 80) * max(len(items), 1),
+        },
+    )
+    raw_response = extract_bedrock_text(response)
+    parsed = parse_batch_keep_from_text(
+        text=raw_response,
+        expected_count=len(items),
+    )
+
+    if not parsed:
+        logging.warning(f"Bedrock batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
+        raise RuntimeError("Bedrock batch 이벤트 필터 JSON 파싱 실패")
+
+    return parsed
+
+
 def judge_material_event_with_ollama(
     item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
 ) -> dict[str, Any]:
@@ -879,7 +1030,7 @@ def judge_material_event_with_llm(
     filter_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     filter_config = filter_config or get_material_event_filter_config()
-    provider = str(filter_config.get("provider") or "vllm").lower()
+    provider = str(filter_config.get("provider") or "bedrock").lower()
 
     if provider == "ollama":
         return judge_material_event_with_ollama(
@@ -888,7 +1039,14 @@ def judge_material_event_with_llm(
             filter_config=filter_config,
         )
 
-    return judge_material_event_with_vllm(
+    if provider == "vllm":
+        return judge_material_event_with_vllm(
+            item=item,
+            pipeline_input=pipeline_input,
+            filter_config=filter_config,
+        )
+
+    return judge_material_event_with_bedrock(
         item=item,
         pipeline_input=pipeline_input,
         filter_config=filter_config,
@@ -1010,7 +1168,7 @@ def judge_material_events_batch_with_llm(
     filter_config: dict[str, Any] | None = None,
 ) -> dict[int, dict[str, Any]]:
     filter_config = filter_config or get_material_event_filter_config()
-    provider = str(filter_config.get("provider") or "vllm").lower()
+    provider = str(filter_config.get("provider") or "bedrock").lower()
 
     if provider == "ollama":
         return judge_material_events_batch_with_ollama(
@@ -1019,7 +1177,14 @@ def judge_material_events_batch_with_llm(
             filter_config=filter_config,
         )
 
-    return judge_material_events_batch_with_vllm(
+    if provider == "vllm":
+        return judge_material_events_batch_with_vllm(
+            items=items,
+            pipeline_input=pipeline_input,
+            filter_config=filter_config,
+        )
+
+    return judge_material_events_batch_with_bedrock(
         items=items,
         pipeline_input=pipeline_input,
         filter_config=filter_config,
@@ -1100,19 +1265,28 @@ async def build_material_event_analysis_for_item_async(
     if not use_llm:
         return build_safe_keep_result(provider="llm_disabled")
 
+    provider = str((filter_config or {}).get("provider") or "bedrock").lower()
+
     try:
         async with semaphore:
-            return await judge_material_event_with_vllm_async(
+            if provider == "vllm":
+                return await judge_material_event_with_vllm_async(
+                    item=item,
+                    pipeline_input=pipeline_input,
+                    filter_config=filter_config or {},
+                    client=client,
+                )
+
+            return await judge_material_event_with_bedrock_async(
                 item=item,
                 pipeline_input=pipeline_input,
                 filter_config=filter_config or {},
-                client=client,
             )
     except Exception as e:
         title = get_printable_text(item.get("title", ""))
         fail_open = bool((filter_config or {}).get("fail_open", False))
         logging.warning(
-            f"vLLM 비동기 이벤트 필터 실패: fail_open={fail_open}, "
+            f"{provider} 비동기 이벤트 필터 실패: fail_open={fail_open}, "
             f"title={title}, error={type(e).__name__}: {e}"
         )
         return build_llm_failure_result(
@@ -1315,12 +1489,12 @@ def filter_material_event_news(
         batch_size = int(filter_config.get("batch_size", 3))
 
     mode = (mode or "sequential").lower()
-    provider = str(filter_config.get("provider") or "vllm").lower()
-    is_vllm_provider = provider != "ollama"
+    provider = str(filter_config.get("provider") or "bedrock").lower()
+    supports_async = provider in {"vllm", "bedrock"}
 
     if mode == "async":
-        if not is_vllm_provider:
-            raise ValueError("async mode는 vLLM provider에서만 지원합니다.")
+        if not supports_async:
+            raise ValueError("async mode는 vLLM/Bedrock provider에서만 지원합니다.")
 
         analyses = asyncio.run(
             build_material_event_analyses_async(
