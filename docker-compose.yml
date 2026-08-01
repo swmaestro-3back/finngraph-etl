@@ -29,6 +29,11 @@ x-airflow-common: &airflow-common
     DB_PORT: "5432"
     # vLLM 서버는 호스트에서 실행되므로 컨테이너에서는 localhost가 아니라 host.docker.internal로 접속한다.
     VLLM_BASE_URL: http://host.docker.internal:8000/v1
+    # material_event_filter 기본 provider는 bedrock. 아래 값은 샘플이며 실제 리전/모델ID·자격증명은
+    # .env(env_file)로 주입한다. 자격증명은 boto3 기본 체인(AWS_ACCESS_KEY_ID/SECRET/AWS_PROFILE/IAM 역할).
+    MATERIAL_EVENT_FILTER_PROVIDER: ${MATERIAL_EVENT_FILTER_PROVIDER:-bedrock}
+    BEDROCK_REGION: ${BEDROCK_REGION:-}
+    BEDROCK_CHAT_MODEL: ${BEDROCK_CHAT_MODEL:-}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./pipelines:/opt/airflow/pipelines
