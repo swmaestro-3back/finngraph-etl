@@ -83,12 +83,12 @@ class RelationExtractor:
                 if item_label is not None:
                     item_entity = Entity(text=raw_frame.item.strip(), label=item_label)
 
-            # 근거 문장 검증: 공백 정규화 후 원문에 substring으로 존재해야 통과. 실패해도
-            # 프레임 전체를 버리지 않고 source_sentence만 None으로 남긴다 (subject/object
-            # 그라운딩이 통과한 관계 자체는 여전히 유효하기 때문 — item 처리와 같은 정책).
-            source_sentence: str | None = raw_frame.source_sentence.strip()
+            # 근거 문장 검증: 공백 정규화 후 원문에 substring으로 존재해야 통과.
+            # source_sentence는 필수이므로 검증에 실패한 프레임은 근거 없는 관계로
+            # 간주하고 전체를 버린다 (subject/object 그라운딩 실패와 같은 정책).
+            source_sentence = raw_frame.source_sentence.strip()
             if not source_sentence or _normalize_for_match(source_sentence) not in normalized_text:
-                source_sentence = None
+                continue
 
             frames.append(
                 RelationFrame(

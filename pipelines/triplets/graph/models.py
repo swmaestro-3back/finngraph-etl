@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 EntityLabel = Literal[
     "COMPANY",
+    "GOVERNMENT",
     "COUNTRY",
     "COMMODITY",
     "PRODUCT",
@@ -113,26 +114,19 @@ class RelationFrame(BaseModel):
             "past_or_present_fact, future_or_planned, or modal_possibility."
         )
     )
-    # 이 프레임의 근거가 된 원문 문장 (provenance). LLM이 원문에 없는 문장을 근거로 지어낸
-    # 경우(공백 정규화 후 substring 검증 실패) None으로 남는다 — 프레임 자체는 유지한다.
-    source_sentence: str | None = Field(
-        default=None,
-        description=(
-            "The verbatim sentence from the source text that expresses this relationship, "
-            "if verified."
-        ),
+    # 이 프레임의 근거가 된 원문 문장 (provenance). 원문 대조 검증(공백 정규화 후
+    # substring 매칭)을 통과한 프레임만 생성되므로 항상 채워진다.
+    source_sentence: str = Field(
+        description="The verbatim sentence from the source text that expresses this relationship.",
     )
 
 
 # Triplet (확정 삼중항)
 class Triplet(BaseModel):
-    subject: str = Field(description="주체")
-    subject_type: str = Field(description="주체 개체명 타입")
+    subject: Entity = Field(description="주체")
     predicate: str = Field(description="술어 원형")
-    object: str = Field(description="객체")
-    object_type: str = Field(description="객체 개체명 타입")
-    item: str | None = Field(default=None, description="품목 (3-argument 술어에서만 채워짐)")
-    item_type: str | None = Field(default=None, description="품목 개체명 타입")
-    source_sentence: str | None = Field(
-        default=None, description="관계의 근거가 된 원문 문장 (provenance)"
+    object: Entity = Field(description="객체")
+    item: Entity | None = Field(
+        default=None, description="품목 (3rd Argument가 필수적인 술어에서만 채워짐)"
     )
+    source_sentence: str = Field(description="관계의 근거가 된 원문 문장 (provenance)")

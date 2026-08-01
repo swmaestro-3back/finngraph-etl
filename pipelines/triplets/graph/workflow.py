@@ -11,11 +11,11 @@ from pipelines.triplets.graph.state import GraphState
 
 class GraphRunner:
     def __init__(self):
-        self._entity_extractor = EntityExtractor()
+        self.entity_extractor = EntityExtractor()
         self._relation_extractor = RelationExtractor()
         self._triplet_builder = TripletBuilder()
         self._graph = self._compile_graph(
-            self._entity_extractor,
+            self.entity_extractor,
             self._relation_extractor,
             self._triplet_builder,
         )
