@@ -30,7 +30,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: "true"
           claude_args: |
-            --max-turns 12
+            --max-turns 40
             --allowedTools Read,Grep,Glob,Bash,mcp__github_inline_comment__create_inline_comment
           prompt: |
             PR을 리뷰하고 결과를 **한국어**로 남겨주세요. PR: ${{ github.event.pull_request.html_url }}
