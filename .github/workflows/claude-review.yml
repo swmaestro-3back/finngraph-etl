@@ -1,0 +1,56 @@
+# PR이 열리거나 리뷰 준비되면 Claude가 자동으로 코드 리뷰를 단다.
+# 인증: Claude Max 구독 OAuth 토큰 (Settings → Secrets → Actions → CLAUDE_CODE_OAUTH_TOKEN)
+# 커밋마다 재리뷰하지 않는다(구독 한도 절약) — 재리뷰가 필요하면 PR에 `@claude 다시 리뷰해줘` 코멘트.
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: "true"
+          claude_args: |
+            --max-turns 40
+            --allowedTools Read,Grep,Glob,Bash,mcp__github_inline_comment__create_inline_comment
+          prompt: |
+            PR을 리뷰하고 결과를 **한국어**로 남겨주세요. PR: ${{ github.event.pull_request.html_url }}
+
+            ## 이 리포에 대해
+            Airflow 기반 ETL 플랫폼입니다. 컨벤션(README.md 참고):
+            - `dags/`에는 DAG 정의만, 실제 로직은 `pipelines/{domain}/jobs/`에 둔다
+            - 외부 조회는 `extractors/`, 변환은 `transformers/`, 저장은 `loaders/` 담당
+            - 공용 코드는 `pipelines/common/`
+
+            ## 중점 리뷰 관점 (ETL 특성)
+            - **멱등성/재실행 안전성**: 잡이 재시도·백필될 때 중복 적재나 부분 실패 상태가 남지 않는가 (upsert/ON CONFLICT, 트랜잭션 경계)
+            - **Airflow**: 스케줄 타임존(KST 기준), catchup 동작, 태스크 간 의존성, DAG 파싱 시점에 무거운 코드 실행 여부
+            - **외부 API/LLM 호출**: 타임아웃·재시도·rate limit 처리, 실패 시 fail-open/fail-closed 판단의 타당성
+            - **DB**: N+1/불필요한 풀스캔, 커넥션 누수, 스키마 변경 시 기존 데이터 호환
+            - **시크릿**: 하드코딩된 자격 증명, .env 값 노출, 로그에 민감 정보 출력
+            - **정확성**: 경계 조건, 빈 입력, 인코딩(한국어 텍스트 처리) 관련 버그
+
+            ## 리포트 방식
+            - 발견한 문제는 확신이 낮거나 사소해 보여도 **모두 보고**하세요. 중요도 필터링은 리뷰어가 합니다.
+            - 각 지적에 심각도를 붙이세요: 🔴 버그/데이터 손상 가능 · 🟡 잠재 위험/개선 필요 · 🟢 제안
+            - 라인 단위 지적은 인라인 코멘트로, 전체 총평(변경 요약 + 심각도별 개수)은 일반 코멘트 하나로 남기세요.
+            - 스타일 지적은 ruff가 잡지 못하는 것만. 칭찬은 총평에 한 줄이면 충분합니다.

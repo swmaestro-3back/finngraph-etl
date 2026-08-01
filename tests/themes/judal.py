@@ -7,12 +7,9 @@ from pipelines.themes.extractors import JudalExtractor
 
 
 async def main() -> None:
-    http_client.start()
-    try:
+    async with http_client:
         extractor = JudalExtractor()
         await extractor.run()
-    finally:
-        await http_client.stop()
 
 
 if __name__ == "__main__":

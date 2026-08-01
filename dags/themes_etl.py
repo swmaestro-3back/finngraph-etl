@@ -52,14 +52,12 @@ if dag and task:
 
         reset = reset_themes()
 
-        # SOURCE별 task를 생성하고 SOURCES 순서대로 순차 의존성으로 연결
+        # SOURCE별 task를 생성하고 reset 이후 병렬 실행되도록 fan-out
+        # extracted 리스트는 SOURCES 순서를 유지하므로 XCom 집계 순서도 보장됨
         extracted = [
             extract_themes.override(task_id=f"extract_{source}")(source) for source in SOURCES
         ]
-        chain = reset
-        for step in extracted:
-            chain >> step
-            chain = step
+        reset >> extracted
 
         load_themes(validate_themes(extracted))
 

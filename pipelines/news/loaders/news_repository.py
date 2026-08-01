@@ -474,6 +474,76 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
     return result
 
 
+def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any]]:
+    """
+    Triplet ETL에서 사용
+    삼중항관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
+
+    필터링되어 유효한 뉴스라고 판별난 is_material=True
+    + 삼중항추출 안된 것 relation_extracted IS NULL
+    """
+
+    query = """
+        SELECT
+            id,
+            body_text
+        FROM news
+        WHERE relation_extracted IS NULL
+          AND is_material = TRUE
+          AND body_text IS NOT NULL
+          AND BTRIM(body_text) <> ''
+        ORDER BY id ASC
+        LIMIT :limit;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
+
+        return [{"news_id": int(news_id), "body_text": body_text} for news_id, body_text in rows]
+
+
+def mark_news_relation_extracted(
+    has_triplets_ids: list[int], no_triplets_ids: list[int]
+) -> dict[str, int]:
+    """
+    Triplet ETL에서 호출
+    삼중항관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
+    """
+
+    unique_true = sorted({int(news_id) for news_id in has_triplets_ids if news_id})
+    unique_false = sorted({int(news_id) for news_id in no_triplets_ids if news_id})
+
+    if not unique_true and not unique_false:
+        return {"true_count": 0, "false_count": 0}
+
+    with session_scope() as session:
+        if unique_true:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET relation_extracted = TRUE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_true},
+            )
+
+        if unique_false:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET relation_extracted = FALSE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_false},
+            )
+
+    return {"true_count": len(unique_true), "false_count": len(unique_false)}
+
+
 def find_existing_links(links: list[str]) -> set[str]:
 
     filtered_links = [
@@ -676,3 +746,105 @@ def extract_news_ids_from_removed_items(removed_items: list[dict[str, Any]]) -> 
             news_ids.append(int(news_id))
 
     return news_ids
+
+
+def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
+
+    query = """
+        SELECT
+            id,
+            title,
+            body_text
+        FROM news
+        WHERE relation_extracted IS NOT NULL
+          AND (summary IS NULL OR BTRIM(summary) = '')
+          AND body_text IS NOT NULL
+          AND BTRIM(body_text) <> ''
+        ORDER BY id ASC
+        LIMIT :limit;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
+
+        items = []
+
+        for row in rows:
+            news_id, title, body_text = row
+
+            items.append(
+                {
+                    "_news_id": news_id,
+                    "title": title or "",
+                    "_body_text": body_text or "",
+                }
+            )
+
+        return items
+
+
+def fetch_triplets_for_news_ids(
+    news_ids: list[int],
+) -> dict[int, list[tuple[str, str, str]]]:
+    """뉴스 id별 삼중항 `(subject_name, relation, object_name)` 목록을 조회한다."""
+
+    unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
+
+    if not unique_ids:
+        return {}
+
+    query = """
+        SELECT news_id, subject_name, relation, object_name
+        FROM news_relations
+        WHERE news_id = ANY(:ids)
+        ORDER BY news_id ASC, id ASC;
+    """
+
+    triplets_by_news: dict[int, list[tuple[str, str, str]]] = {}
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"ids": unique_ids}).fetchall()
+
+    for news_id, subject_name, relation, object_name in rows:
+        triplets_by_news.setdefault(int(news_id), []).append((subject_name, relation, object_name))
+
+    return triplets_by_news
+
+
+def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
+
+    normalized = [
+        (int(news_id), summary)
+        for news_id, summary in rows
+        if news_id and summary and summary.strip()
+    ]
+
+    if not normalized:
+        logging.info("저장할 요약이 없습니다.")
+        return {"saved_count": 0}
+
+    saved_count = 0
+
+    with session_scope() as session:
+        for news_id, summary in normalized:
+            try:
+                with session.begin_nested():
+                    session.execute(
+                        text(
+                            """
+                            UPDATE news
+                            SET summary = :summary
+                            WHERE id = :id;
+                            """
+                        ),
+                        {"summary": summary.strip(), "id": news_id},
+                    )
+                saved_count += 1
+            except Exception as e:
+                logging.warning(
+                    f"요약 저장 실패(건너뜀): news_id={news_id}, error={type(e).__name__}: {e}"
+                )
+
+    logging.info(f"요약 저장 완료: {saved_count}개")
+
+    return {"saved_count": saved_count}

@@ -29,6 +29,8 @@ x-airflow-common: &airflow-common
     DB_PORT: "5432"
     # vLLM 서버는 호스트에서 실행되므로 컨테이너에서는 localhost가 아니라 host.docker.internal로 접속한다.
     VLLM_BASE_URL: http://host.docker.internal:8000/v1
+    # 컨테이너 안에서는 호스트 포트(localhost:7687)가 아니라 compose 네트워크의 neo4j:7687로 접속한다.
+    NEO4J_URI: bolt://neo4j:7687
     # material_event_filter 기본 provider는 bedrock. 아래 값은 샘플이며 실제 리전/모델ID·자격증명은
     # .env(env_file)로 주입한다. 자격증명은 boto3 기본 체인(AWS_ACCESS_KEY_ID/SECRET/AWS_PROFILE/IAM 역할).
     MATERIAL_EVENT_FILTER_PROVIDER: ${MATERIAL_EVENT_FILTER_PROVIDER:-bedrock}
@@ -44,6 +46,8 @@ x-airflow-common: &airflow-common
     airflow-db:
       condition: service_healthy
     db:
+      condition: service_healthy
+    neo4j:
       condition: service_healthy
 
 services:
@@ -63,6 +67,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # 테마 파이프라인용 그래프 DB. db와 마찬가지로 프로파일 없이 단독 기동 가능: `docker compose up -d neo4j`
+  neo4j:
+    build:
+      context: .
+      dockerfile: docker/neo4j/Dockerfile
+    image: etl-neo4j:5
+    environment:
+      # 볼륨 최초 생성 시에만 초기 비밀번호로 적용된다(docker/neo4j/README.md 참고).
+      NEO4J_AUTH: "${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-etlneo4j}"
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - etl_neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-etlneo4j} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
 
   # Airflow 메타데이터 전용 DB. ETL 데이터(db, timescale)와 수명주기/백업 정책을 분리한다.
   airflow-db:
@@ -146,5 +170,6 @@ services:
 
 volumes:
   etl_pgdata:
+  etl_neo4j_data:
   etl_airflow_pgdata:
   etl_airflow_logs:

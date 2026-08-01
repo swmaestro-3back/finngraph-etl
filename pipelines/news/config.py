@@ -58,6 +58,8 @@ OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL")
 
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL")
 VLLM_CHAT_MODEL = os.getenv("VLLM_CHAT_MODEL")
+VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
+VLLM_REQUEST_TIMEOUT = int(os.getenv("VLLM_REQUEST_TIMEOUT", "300"))
 
 # AWS Bedrock
 BEDROCK_REGION = os.getenv("BEDROCK_REGION")
@@ -84,6 +86,11 @@ MATERIAL_EVENT_FILTER_BATCH_SIZE = int(os.getenv("MATERIAL_EVENT_FILTER_BATCH_SI
 MATERIAL_EVENT_FILTER_FAIL_OPEN = os.getenv(
     "MATERIAL_EVENT_FILTER_FAIL_OPEN", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
+
+## 요약 관련 상수 (기본값 있음 — 미설정이어도 import 안전)
+NEWS_SUMMARY_BODY_LIMIT = int(os.getenv("NEWS_SUMMARY_BODY_LIMIT", "12000"))
+NEWS_SUMMARY_MAX_TOKENS = int(os.getenv("NEWS_SUMMARY_MAX_TOKENS", "512"))
+NEWS_SUMMARY_MAX_CONCURRENCY = int(os.getenv("NEWS_SUMMARY_MAX_CONCURRENCY", "4"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
