@@ -28,7 +28,8 @@ if dag and task:
         def summarize() -> dict[str, Any]:
             from pipelines.news.jobs.summarize_news import summarize_unsummarized_news
 
-            # async 모드는 vLLM 전용 (httpx + asyncio.Semaphore 동시 4요청)
+            # provider는 NEWS_SUMMARY_PROVIDER로 선택 (기본 bedrock, vllm 선택 가능).
+            # async 모드: vLLM은 httpx, Bedrock은 boto3+to_thread — 모두 Semaphore 동시 4요청.
             result = summarize_unsummarized_news(mode="async", max_concurrency=4)
 
             return {

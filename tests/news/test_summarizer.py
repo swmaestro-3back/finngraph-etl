@@ -1,6 +1,6 @@
-"""summarizer 순수 함수 + vLLM async 골격(모킹) 단위 테스트.
+"""summarizer 순수 함수 + vLLM/Bedrock async 골격(모킹) 단위 테스트.
 
-외부 LLM/DB에 의존하지 않도록 httpx.AsyncClient를 가짜로 대체한다.
+외부 LLM/DB에 의존하지 않도록 httpx.AsyncClient·Bedrock 클라이언트를 가짜로 대체한다.
 pytest-asyncio 의존을 피하기 위해 async 경로는 asyncio.run으로 감싸 동기 테스트로 실행한다.
 """
 
@@ -130,6 +130,7 @@ def _run_summaries(items, monkeypatch):
     _stub_prompt_loading(monkeypatch)
     monkeypatch.setattr(summarizer.httpx, "AsyncClient", _FakeAsyncClient)
     config = {
+        "provider": "vllm",
         "vllm_base_url": "http://vllm.local",
         "vllm_model": "test-model",
         "vllm_api_key": "EMPTY",
@@ -162,3 +163,82 @@ def test_build_summaries_drops_failures(monkeypatch):
 
 def test_build_summaries_empty_input(monkeypatch):
     assert _run_summaries([], monkeypatch) == []
+
+
+# ── Bedrock 경로 (boto3 클라이언트 모킹) ──────────────────────────────────
+
+
+class _FakeBedrockClient:
+    """user 텍스트에 'FAIL'이 있으면 예외, 아니면 고정 요약을 반환하는 가짜 클라이언트."""
+
+    def converse(self, modelId=None, system=None, messages=None, inferenceConfig=None):
+        user_text = messages[0]["content"][0]["text"]
+        if "FAIL" in user_text:
+            raise RuntimeError("모킹된 Bedrock 실패")
+        return {"output": {"message": {"content": [{"text": "Bedrock 요약 문장."}]}}}
+
+
+def _run_bedrock_summaries(items, monkeypatch):
+    _stub_prompt_loading(monkeypatch)
+    monkeypatch.setattr(
+        summarizer, "_get_bedrock_client", lambda region, timeout: _FakeBedrockClient()
+    )
+    config = {
+        "provider": "bedrock",
+        "bedrock_region": "us-east-1",
+        "bedrock_model": "test-bedrock-model",
+        "bedrock_timeout": 10,
+        "body_limit": 12000,
+        "max_tokens": 512,
+    }
+    return asyncio.run(
+        summarizer.build_summaries_async(items=items, config=config, max_concurrency=2)
+    )
+
+
+def test_bedrock_summaries_returns_id_summary_pairs(monkeypatch):
+    items = [
+        {"_news_id": 1, "title": "OK 뉴스", "_body_text": "본문 내용", "_triplets": []},
+        {"_news_id": 2, "title": "다른 OK 뉴스", "_body_text": "본문", "_triplets": []},
+    ]
+    results = _run_bedrock_summaries(items, monkeypatch)
+    assert sorted(results) == [(1, "Bedrock 요약 문장."), (2, "Bedrock 요약 문장.")]
+
+
+def test_bedrock_summaries_drops_failures(monkeypatch):
+    items = [
+        {"_news_id": 1, "title": "OK 뉴스", "_body_text": "본문", "_triplets": []},
+        {"_news_id": 2, "title": "FAIL 뉴스", "_body_text": "본문", "_triplets": []},
+    ]
+    results = _run_bedrock_summaries(items, monkeypatch)
+    assert results == [(1, "Bedrock 요약 문장.")]
+
+
+def test_build_bedrock_summary_request_requires_model(monkeypatch):
+    _stub_prompt_loading(monkeypatch)
+    with pytest.raises(RuntimeError):
+        summarizer.build_bedrock_summary_request(
+            item={"title": "t", "_body_text": "b"}, config={"bedrock_model": ""}
+        )
+
+
+def test_parse_bedrock_summary_response_strips_think_and_fences():
+    payload = {
+        "output": {"message": {"content": [{"text": "<think>추론</think>```삼성전자 요약.```"}]}}
+    }
+    assert summarizer.parse_bedrock_summary_response(payload) == "삼성전자 요약."
+
+
+def test_parse_bedrock_summary_response_empty_raises():
+    with pytest.raises(RuntimeError):
+        summarizer.parse_bedrock_summary_response({"output": {"message": {"content": []}}})
+
+
+def test_unknown_provider_item_is_dropped(monkeypatch):
+    _stub_prompt_loading(monkeypatch)
+    items = [{"_news_id": 1, "title": "뉴스", "_body_text": "본문", "_triplets": []}]
+    config = {"provider": "ollama", "body_limit": 12000, "max_tokens": 512}
+    results = asyncio.run(
+        summarizer.build_summaries_async(items=items, config=config, max_concurrency=1)
+    )
+    assert results == []
