@@ -21,9 +21,19 @@ class StockSymbol:
         preferred_stock (bool): 우선주 여부.
         etp (bool): ETP/ETF/ETN 등 상품성 종목 여부.
         spac (bool): SPAC 여부.
+        listed_shares (int | None): 상장주식수. **주 단위로 정규화한 값**.
+            master 원본은 천주 단위이므로 파싱 단계에서 1000을 곱한다.
+            시가총액·EPS·BPS 계산의 분모라 단위를 틀리면 결과가 1000배 어긋난다.
+        par_value (int | None): 액면가(원).
+        capital (int | None): 자본금(원). 액면가 × 발행주식수인 명목 금액으로,
+            자산 − 부채인 자기자본과는 다르다. ROE 분모로 쓰면 안 된다.
         source (str): 종목 정보를 가져온 원천.
         synced_at (datetime | None): 원천 master에서 동기화한 시각.
         inactive_at (datetime | None): 최신 master에서 사라져 비활성 처리한 시각.
+        raw_attributes (dict | None): master 파일의 전체 필드를 KIS 공식 이름 키로 보존한 값.
+            **이력 보존용이 아니다.** 매 동기화마다 통째로 덮어쓰므로 최신 스냅샷만 남는다.
+            필드 탐색(무엇을 컬럼으로 승격할지 실제 값을 보고 판단)과 파싱 검증
+            (오프셋이 밀리면 값이 눈에 띄게 이상해진다)을 위한 것이다.
     """
 
     symbol: str
@@ -38,9 +48,13 @@ class StockSymbol:
     preferred_stock: bool = False
     etp: bool = False
     spac: bool = False
+    listed_shares: int | None = None
+    par_value: int | None = None
+    capital: int | None = None
     source: str = "KIS_MASTER"
     synced_at: datetime | None = None
     inactive_at: datetime | None = None
+    raw_attributes: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)

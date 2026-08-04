@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
@@ -21,9 +23,13 @@ UPSERT_SYMBOL_SQL = text(
       preferred_stock,
       etp,
       spac,
+      listed_shares,
+      par_value,
+      capital,
       source,
       synced_at,
       inactive_at,
+      raw_attributes,
       created_at,
       updated_at
     )
@@ -40,9 +46,13 @@ UPSERT_SYMBOL_SQL = text(
       :preferred_stock,
       :etp,
       :spac,
+      :listed_shares,
+      :par_value,
+      :capital,
       :source,
       :synced_at,
       :inactive_at,
+      CAST(:raw_attributes AS jsonb),
       now(),
       now()
     )
@@ -58,9 +68,13 @@ UPSERT_SYMBOL_SQL = text(
       preferred_stock = EXCLUDED.preferred_stock,
       etp = EXCLUDED.etp,
       spac = EXCLUDED.spac,
+      listed_shares = EXCLUDED.listed_shares,
+      par_value = EXCLUDED.par_value,
+      capital = EXCLUDED.capital,
       source = EXCLUDED.source,
       synced_at = EXCLUDED.synced_at,
       inactive_at = EXCLUDED.inactive_at,
+      raw_attributes = EXCLUDED.raw_attributes,
       updated_at = now()
     """
 )
@@ -81,7 +95,8 @@ DEACTIVATE_MISSING_SYMBOLS_SQL = (
     )
     .bindparams(bindparam("markets", expanding=True))
     .bindparams(bindparam("active_symbols", expanding=True))
-) 
+)
+
 
 def sync_symbols(session: Session, symbols: list[StockSymbol]) -> SymbolSyncResult:
     """Symbol 정보를 DB에 저장
@@ -89,15 +104,15 @@ def sync_symbols(session: Session, symbols: list[StockSymbol]) -> SymbolSyncResu
     Args:
         session(Session): DB Session
         symbols(list[StockSymbol]): 불러온 symbol list
-    
+
     Returns:
-        SymbolSyncResult: 
+        SymbolSyncResult:
             upserted_count: upsert row count \n
             inactive_count: inactive row count
     """
     if not symbols:
         return SymbolSyncResult(upserted_count=0, inactive_count=0)
-    
+
     payload = [_to_payload(symbol) for symbol in symbols]
     session.execute(UPSERT_SYMBOL_SQL, payload)
 
@@ -113,17 +128,17 @@ def sync_symbols(session: Session, symbols: list[StockSymbol]) -> SymbolSyncResu
         inactive_count=result.rowcount or 0,
     )
 
+
 def upsert_symbols(session: Session, symbols: list[StockSymbol]) -> int:
     return sync_symbols(session, symbols).upserted_count
 
 
 def _to_payload(symbol: StockSymbol) -> dict[str, object]:
-
     """SQL문에 사용할 dict 자료형으로 변환합니다.
 
-    Args: 
+    Args:
         symbol (StockSymbol): 주식 정보
-    
+
     Returns:
         dict: stock dict
     """
@@ -140,7 +155,15 @@ def _to_payload(symbol: StockSymbol) -> dict[str, object]:
         "preferred_stock": symbol.preferred_stock,
         "etp": symbol.etp,
         "spac": symbol.spac,
+        "listed_shares": symbol.listed_shares,
+        "par_value": symbol.par_value,
+        "capital": symbol.capital,
         "source": symbol.source,
         "synced_at": symbol.synced_at,
         "inactive_at": symbol.inactive_at,
+        "raw_attributes": (
+            json.dumps(symbol.raw_attributes, ensure_ascii=False)
+            if symbol.raw_attributes is not None
+            else None
+        ),
     }
