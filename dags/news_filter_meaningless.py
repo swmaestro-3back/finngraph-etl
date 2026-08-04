@@ -28,9 +28,7 @@ if dag and task:
         def judge() -> dict[str, Any]:
             from pipelines.news.jobs.filter_meaningless_news import judge_unchecked_news
 
-            # async 모드는 vLLM/Bedrock 지원 (Bedrock은 boto3 동기 호출을 to_thread로 감싸
-            # asyncio.Semaphore로 동시 4요청). provider는 MATERIAL_EVENT_FILTER_PROVIDER로 결정.
-            result = judge_unchecked_news(mode="async", max_concurrency=4)
+            result = judge_unchecked_news(mode="async")
 
             return {
                 "kept_ids": result["kept_ids"],
