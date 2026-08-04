@@ -28,8 +28,7 @@ if dag and task:
         def summarize() -> dict[str, Any]:
             from pipelines.news.jobs.summarize_news import summarize_unsummarized_news
 
-            # async 모드는 vLLM 전용 (httpx + asyncio.Semaphore 동시 4요청)
-            result = summarize_unsummarized_news(mode="async", max_concurrency=4)
+            result = summarize_unsummarized_news(mode="async")
 
             return {
                 "rows": result["rows"],

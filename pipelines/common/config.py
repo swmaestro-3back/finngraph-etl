@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
     )
 
+    bedrock_region: str = Field(default="", validation_alias="BEDROCK_REGION")
+    bedrock_chat_model: str = Field(default="", validation_alias="BEDROCK_CHAT_MODEL")
+    bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
+
     gemini_model: str = Field(default="", validation_alias="GEMINI_MODEL")
     google_api_key: str = Field(default="", validation_alias="GOOGLE_API_KEY")
 

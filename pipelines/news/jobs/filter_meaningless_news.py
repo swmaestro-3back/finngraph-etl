@@ -15,7 +15,6 @@ DEFAULT_MAX_ITEMS_PER_RUN = 300
 def judge_unchecked_news(
     limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
     mode: str = "sequential",
-    max_workers: int | None = None,
     max_concurrency: int | None = None,
     batch_size: int | None = None,
 ) -> dict[str, Any]:
@@ -27,7 +26,6 @@ def judge_unchecked_news(
         pipeline_input={},
         use_llm=True,
         mode=mode,
-        max_workers=max_workers,
         max_concurrency=max_concurrency,
         batch_size=batch_size,
     )
@@ -57,7 +55,6 @@ def run(
     apply: bool = True,
     limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
     mode: str = "sequential",
-    max_workers: int | None = None,
     max_concurrency: int | None = None,
     batch_size: int | None = None,
 ) -> dict[str, Any]:
@@ -65,7 +62,6 @@ def run(
     judged = judge_unchecked_news(
         limit=limit,
         mode=mode,
-        max_workers=max_workers,
         max_concurrency=max_concurrency,
         batch_size=batch_size,
     )

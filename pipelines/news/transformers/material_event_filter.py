@@ -2,14 +2,13 @@ import asyncio
 import json
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 from string import Template
 from typing import Any
 
-import httpx
-
+from pipelines.common.bedrock import extract_bedrock_text, get_bedrock_client
+from pipelines.common.config import get_settings
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
@@ -223,45 +222,31 @@ def get_material_event_filter_config() -> dict[str, Any]:
     try:
         from pipelines.news import config
 
+        settings = get_settings()
+
         return {
             "enable_llm": True,
-            "provider": getattr(config, "MATERIAL_EVENT_FILTER_PROVIDER", "bedrock"),
-            "body_limit": getattr(config, "MATERIAL_EVENT_FILTER_BODY_LIMIT", 12000),
-            "max_tokens": getattr(config, "MATERIAL_EVENT_FILTER_MAX_TOKENS", 80),
-            "max_workers": getattr(config, "MATERIAL_EVENT_FILTER_MAX_WORKERS", 3),
+            "body_limit": getattr(config, "NEWS_LLM_BODY_LIMIT", 12000),
+            "max_tokens": getattr(config, "NEWS_LLM_MAX_TOKENS", 512),
             "max_concurrency": getattr(
                 config,
-                "MATERIAL_EVENT_FILTER_MAX_CONCURRENCY",
+                "NEWS_LLM_MAX_CONCURRENCY",
                 3,
             ),
             "batch_size": getattr(config, "MATERIAL_EVENT_FILTER_BATCH_SIZE", 3),
             "fail_open": getattr(config, "MATERIAL_EVENT_FILTER_FAIL_OPEN", False),
-            "vllm_base_url": getattr(config, "VLLM_BASE_URL", ""),
-            "vllm_model": getattr(config, "VLLM_CHAT_MODEL", ""),
-            "vllm_api_key": getattr(config, "VLLM_API_KEY", "EMPTY"),
-            "vllm_timeout": getattr(config, "VLLM_REQUEST_TIMEOUT", 300),
-            "ollama_base_url": getattr(config, "OLLAMA_BASE_URL", ""),
-            "ollama_model": getattr(config, "OLLAMA_CHAT_MODEL", ""),
-            "bedrock_region": getattr(config, "BEDROCK_REGION", ""),
-            "bedrock_model": getattr(config, "BEDROCK_CHAT_MODEL", ""),
-            "bedrock_timeout": getattr(config, "BEDROCK_REQUEST_TIMEOUT", 300),
+            "bedrock_region": settings.bedrock_region,
+            "bedrock_model": settings.bedrock_chat_model,
+            "bedrock_timeout": settings.bedrock_request_timeout,
         }
     except Exception:
         return {
             "enable_llm": False,
-            "provider": "bedrock",
             "body_limit": 12000,
-            "max_tokens": 80,
-            "max_workers": 3,
+            "max_tokens": 512,
             "max_concurrency": 3,
             "batch_size": 3,
             "fail_open": False,
-            "vllm_base_url": "",
-            "vllm_model": "",
-            "vllm_api_key": "EMPTY",
-            "vllm_timeout": 300,
-            "ollama_base_url": "",
-            "ollama_model": "",
             "bedrock_region": "",
             "bedrock_model": "",
             "bedrock_timeout": 300,
@@ -736,135 +721,6 @@ def build_llm_failure_result(
     }
 
 
-def build_vllm_chat_completion_request(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
-) -> tuple[str, dict[str, str], dict[str, Any], int]:
-    base_url = str(filter_config.get("vllm_base_url") or "").rstrip("/")
-    model = str(filter_config.get("vllm_model") or "")
-
-    if not base_url or not model:
-        raise RuntimeError("vLLM 이벤트 필터 설정이 비어있음")
-
-    return (
-        f"{base_url}/chat/completions",
-        {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {filter_config.get('vllm_api_key') or 'EMPTY'}",
-        },
-        {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": load_material_event_prompt_text("material_event_single_system.txt"),
-                },
-                {
-                    "role": "user",
-                    "content": build_llm_material_event_prompt(
-                        item=item,
-                        pipeline_input=pipeline_input,
-                        body_limit=int(filter_config.get("body_limit") or 12000),
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": int(filter_config.get("max_tokens") or 80),
-            "chat_template_kwargs": {
-                "enable_thinking": False,
-            },
-            "stream": False,
-        },
-        int(filter_config.get("vllm_timeout") or 300),
-    )
-
-
-def parse_vllm_material_event_response(
-    response_data: dict[str, Any],
-) -> dict[str, Any]:
-    choices = response_data.get("choices", [])
-
-    if not choices:
-        raise RuntimeError("vLLM 이벤트 필터 choices가 비어있음")
-
-    raw_response = choices[0].get("message", {}).get("content", "")
-    parsed = parse_keep_from_text(raw_response)
-
-    if not parsed:
-        logging.warning(f"vLLM 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("vLLM 이벤트 필터 JSON 파싱 실패")
-
-    return normalize_llm_material_event_result(parsed)
-
-
-def judge_material_event_with_vllm(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
-) -> dict[str, Any]:
-    import requests
-
-    url, headers, payload, timeout = build_vllm_chat_completion_request(
-        item=item,
-        pipeline_input=pipeline_input,
-        filter_config=filter_config,
-    )
-    response = requests.post(
-        url,
-        headers=headers,
-        json=payload,
-        timeout=timeout,
-    )
-    response.raise_for_status()
-
-    return parse_vllm_material_event_response(response.json())
-
-
-async def judge_material_event_with_vllm_async(
-    item: dict[str, Any],
-    pipeline_input: dict[str, Any] | None,
-    filter_config: dict[str, Any],
-    client: httpx.AsyncClient,
-) -> dict[str, Any]:
-    url, headers, payload, timeout = build_vllm_chat_completion_request(
-        item=item,
-        pipeline_input=pipeline_input,
-        filter_config=filter_config,
-    )
-    response = await client.post(
-        url,
-        headers=headers,
-        json=payload,
-        timeout=timeout,
-    )
-    response.raise_for_status()
-
-    return parse_vllm_material_event_response(response.json())
-
-
-@lru_cache
-def _get_bedrock_client(region: str, timeout: int) -> Any:
-    import boto3
-    from botocore.config import Config
-
-    return boto3.client(
-        "bedrock-runtime",
-        region_name=region or None,
-        config=Config(
-            read_timeout=timeout,
-            connect_timeout=timeout,
-            retries={"max_attempts": 2, "mode": "standard"},
-        ),
-    )
-
-
-def extract_bedrock_text(response_data: dict[str, Any]) -> str:
-    content = response_data.get("output", {}).get("message", {}).get("content", [])
-
-    for block in content:
-        if isinstance(block, dict) and "text" in block:
-            return block["text"]
-
-    return ""
-
-
 def build_bedrock_converse_request(
     item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
 ) -> tuple[str, str, str, dict[str, Any]]:
@@ -909,7 +765,7 @@ def judge_material_event_with_bedrock(
         pipeline_input=pipeline_input,
         filter_config=filter_config,
     )
-    client = _get_bedrock_client(
+    client = get_bedrock_client(
         str(filter_config.get("bedrock_region") or ""),
         int(filter_config.get("bedrock_timeout") or 300),
     )
@@ -948,7 +804,7 @@ def judge_material_events_batch_with_bedrock(
     if not model_id:
         raise RuntimeError("Bedrock batch 이벤트 필터 설정이 비어있음(모델 ID 필요)")
 
-    client = _get_bedrock_client(region, int(filter_config.get("bedrock_timeout") or 300))
+    client = get_bedrock_client(region, int(filter_config.get("bedrock_timeout") or 300))
     response = client.converse(
         modelId=model_id,
         system=[{"text": load_material_event_prompt_text("material_event_batch_system.txt")}],
@@ -984,67 +840,12 @@ def judge_material_events_batch_with_bedrock(
     return parsed
 
 
-def judge_material_event_with_ollama(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
-) -> dict[str, Any]:
-    import requests
-
-    base_url = str(filter_config.get("ollama_base_url", "")).rstrip("/")
-    model = filter_config.get("ollama_model", "")
-
-    if not base_url or not model:
-        raise RuntimeError("Ollama 이벤트 필터 설정이 비어있음")
-
-    response = requests.post(
-        f"{base_url}/api/generate",
-        json={
-            "model": model,
-            "prompt": build_llm_material_event_prompt(
-                item=item,
-                pipeline_input=pipeline_input,
-                body_limit=int(filter_config.get("body_limit") or 12000),
-            ),
-            "stream": False,
-            "options": {
-                "temperature": 0.0,
-                "num_predict": int(filter_config.get("max_tokens") or 80),
-            },
-        },
-        timeout=300,
-    )
-    response.raise_for_status()
-
-    raw_response = response.json().get("response", "")
-    parsed = parse_keep_from_text(raw_response)
-
-    if not parsed:
-        logging.warning(f"Ollama 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("Ollama 이벤트 필터 JSON 파싱 실패")
-
-    return normalize_llm_material_event_result(parsed)
-
-
 def judge_material_event_with_llm(
     item: dict[str, Any],
     pipeline_input: dict[str, Any] | None = None,
     filter_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     filter_config = filter_config or get_material_event_filter_config()
-    provider = str(filter_config.get("provider") or "bedrock").lower()
-
-    if provider == "ollama":
-        return judge_material_event_with_ollama(
-            item=item,
-            pipeline_input=pipeline_input,
-            filter_config=filter_config,
-        )
-
-    if provider == "vllm":
-        return judge_material_event_with_vllm(
-            item=item,
-            pipeline_input=pipeline_input,
-            filter_config=filter_config,
-        )
 
     return judge_material_event_with_bedrock(
         item=item,
@@ -1053,136 +854,12 @@ def judge_material_event_with_llm(
     )
 
 
-def judge_material_events_batch_with_vllm(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    filter_config: dict[str, Any],
-) -> dict[int, dict[str, Any]]:
-    import requests
-
-    base_url = str(filter_config.get("vllm_base_url", "")).rstrip("/")
-    model = filter_config.get("vllm_model", "")
-
-    if not base_url or not model:
-        raise RuntimeError("vLLM batch 이벤트 필터 설정이 비어있음")
-
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {filter_config.get('vllm_api_key') or 'EMPTY'}",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": load_material_event_prompt_text("material_event_batch_system.txt"),
-                },
-                {
-                    "role": "user",
-                    "content": build_batch_llm_material_event_prompt(
-                        items=items,
-                        pipeline_input=pipeline_input,
-                        body_limit=int(filter_config.get("body_limit") or 12000),
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": int(filter_config.get("max_tokens") or 80) * max(len(items), 1),
-            "chat_template_kwargs": {
-                "enable_thinking": False,
-            },
-            "stream": False,
-        },
-        timeout=int(filter_config.get("vllm_timeout") or 300),
-    )
-    response.raise_for_status()
-
-    choices = response.json().get("choices", [])
-
-    if not choices:
-        raise RuntimeError("vLLM batch 이벤트 필터 choices가 비어있음")
-
-    raw_response = choices[0].get("message", {}).get("content", "")
-    parsed = parse_batch_keep_from_text(
-        text=raw_response,
-        expected_count=len(items),
-    )
-
-    if not parsed:
-        logging.warning(f"vLLM batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("vLLM batch 이벤트 필터 JSON 파싱 실패")
-
-    return parsed
-
-
-def judge_material_events_batch_with_ollama(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    filter_config: dict[str, Any],
-) -> dict[int, dict[str, Any]]:
-    import requests
-
-    base_url = str(filter_config.get("ollama_base_url", "")).rstrip("/")
-    model = filter_config.get("ollama_model", "")
-
-    if not base_url or not model:
-        raise RuntimeError("Ollama batch 이벤트 필터 설정이 비어있음")
-
-    response = requests.post(
-        f"{base_url}/api/generate",
-        json={
-            "model": model,
-            "prompt": build_batch_llm_material_event_prompt(
-                items=items,
-                pipeline_input=pipeline_input,
-                body_limit=int(filter_config.get("body_limit") or 12000),
-            ),
-            "stream": False,
-            "options": {
-                "temperature": 0.0,
-                "num_predict": int(filter_config.get("max_tokens") or 80) * max(len(items), 1),
-            },
-        },
-        timeout=300,
-    )
-    response.raise_for_status()
-
-    raw_response = response.json().get("response", "")
-    parsed = parse_batch_keep_from_text(
-        text=raw_response,
-        expected_count=len(items),
-    )
-
-    if not parsed:
-        logging.warning(f"Ollama batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("Ollama batch 이벤트 필터 JSON 파싱 실패")
-
-    return parsed
-
-
 def judge_material_events_batch_with_llm(
     items: list[dict[str, Any]],
     pipeline_input: dict[str, Any] | None,
     filter_config: dict[str, Any] | None = None,
 ) -> dict[int, dict[str, Any]]:
     filter_config = filter_config or get_material_event_filter_config()
-    provider = str(filter_config.get("provider") or "bedrock").lower()
-
-    if provider == "ollama":
-        return judge_material_events_batch_with_ollama(
-            items=items,
-            pipeline_input=pipeline_input,
-            filter_config=filter_config,
-        )
-
-    if provider == "vllm":
-        return judge_material_events_batch_with_vllm(
-            items=items,
-            pipeline_input=pipeline_input,
-            filter_config=filter_config,
-        )
 
     return judge_material_events_batch_with_bedrock(
         items=items,
@@ -1250,7 +927,6 @@ async def build_material_event_analysis_for_item_async(
     pipeline_input: dict[str, Any] | None,
     use_llm: bool,
     filter_config: dict[str, Any] | None,
-    client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
 ) -> dict[str, Any]:
     body_limit = int((filter_config or {}).get("body_limit") or 12000)
@@ -1265,18 +941,8 @@ async def build_material_event_analysis_for_item_async(
     if not use_llm:
         return build_safe_keep_result(provider="llm_disabled")
 
-    provider = str((filter_config or {}).get("provider") or "bedrock").lower()
-
     try:
         async with semaphore:
-            if provider == "vllm":
-                return await judge_material_event_with_vllm_async(
-                    item=item,
-                    pipeline_input=pipeline_input,
-                    filter_config=filter_config or {},
-                    client=client,
-                )
-
             return await judge_material_event_with_bedrock_async(
                 item=item,
                 pipeline_input=pipeline_input,
@@ -1286,7 +952,7 @@ async def build_material_event_analysis_for_item_async(
         title = get_printable_text(item.get("title", ""))
         fail_open = bool((filter_config or {}).get("fail_open", False))
         logging.warning(
-            f"{provider} 비동기 이벤트 필터 실패: fail_open={fail_open}, "
+            f"Bedrock 비동기 이벤트 필터 실패: fail_open={fail_open}, "
             f"title={title}, error={type(e).__name__}: {e}"
         )
         return build_llm_failure_result(
@@ -1302,57 +968,20 @@ async def build_material_event_analyses_async(
     filter_config: dict[str, Any] | None,
     max_concurrency: int,
 ) -> dict[int, dict[str, Any]]:
-    max_concurrency = max(int(max_concurrency or 1), 1)
-    semaphore = asyncio.Semaphore(max_concurrency)
-    limits = httpx.Limits(
-        max_connections=max_concurrency,
-        max_keepalive_connections=max_concurrency,
-    )
-
-    async with httpx.AsyncClient(limits=limits) as client:
-        tasks = [
-            build_material_event_analysis_for_item_async(
-                item=item,
-                pipeline_input=pipeline_input,
-                use_llm=use_llm,
-                filter_config=filter_config,
-                client=client,
-                semaphore=semaphore,
-            )
-            for item in items
-        ]
-        results = await asyncio.gather(*tasks)
+    semaphore = asyncio.Semaphore(max(int(max_concurrency or 1), 1))
+    tasks = [
+        build_material_event_analysis_for_item_async(
+            item=item,
+            pipeline_input=pipeline_input,
+            use_llm=use_llm,
+            filter_config=filter_config,
+            semaphore=semaphore,
+        )
+        for item in items
+    ]
+    results = await asyncio.gather(*tasks)
 
     return {index: analysis for index, analysis in enumerate(results)}
-
-
-def build_material_event_analyses_threaded(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    use_llm: bool,
-    filter_config: dict[str, Any] | None,
-    max_workers: int,
-) -> dict[int, dict[str, Any]]:
-    analyses = {}
-    max_workers = max(int(max_workers or 1), 1)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                build_material_event_analysis_for_item,
-                item,
-                pipeline_input,
-                use_llm,
-                filter_config,
-            ): index
-            for index, item in enumerate(items)
-        }
-
-        for future in as_completed(futures):
-            index = futures[future]
-            analyses[index] = future.result()
-
-    return analyses
 
 
 def build_material_event_analyses_batch(
@@ -1469,7 +1098,6 @@ def filter_material_event_news(
     use_llm: bool | None = None,
     min_confidence: float | None = None,
     mode: str = "sequential",
-    max_workers: int | None = None,
     max_concurrency: int | None = None,
     batch_size: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1479,9 +1107,6 @@ def filter_material_event_news(
     if use_llm is None:
         use_llm = bool(filter_config.get("enable_llm"))
 
-    if max_workers is None:
-        max_workers = int(filter_config.get("max_workers", 3))
-
     if max_concurrency is None:
         max_concurrency = int(filter_config.get("max_concurrency", 3))
 
@@ -1489,13 +1114,8 @@ def filter_material_event_news(
         batch_size = int(filter_config.get("batch_size", 3))
 
     mode = (mode or "sequential").lower()
-    provider = str(filter_config.get("provider") or "bedrock").lower()
-    supports_async = provider in {"vllm", "bedrock"}
 
     if mode == "async":
-        if not supports_async:
-            raise ValueError("async mode는 vLLM/Bedrock provider에서만 지원합니다.")
-
         analyses = asyncio.run(
             build_material_event_analyses_async(
                 items=items,
@@ -1504,14 +1124,6 @@ def filter_material_event_news(
                 filter_config=filter_config,
                 max_concurrency=max_concurrency,
             )
-        )
-    elif mode == "thread":
-        analyses = build_material_event_analyses_threaded(
-            items=items,
-            pipeline_input=pipeline_input,
-            use_llm=bool(use_llm),
-            filter_config=filter_config,
-            max_workers=max_workers,
         )
     elif mode == "batch":
         analyses = build_material_event_analyses_batch(

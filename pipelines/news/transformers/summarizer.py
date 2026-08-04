@@ -8,8 +8,8 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-import httpx
-
+from pipelines.common.bedrock import extract_bedrock_text, get_bedrock_client
+from pipelines.common.config import get_settings
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
@@ -30,28 +30,28 @@ def get_summarizer_config() -> dict[str, Any]:
     try:
         from pipelines.news import config
 
+        settings = get_settings()
+
         return {
-            "body_limit": getattr(config, "NEWS_SUMMARY_BODY_LIMIT", DEFAULT_BODY_LIMIT),
-            "max_tokens": getattr(config, "NEWS_SUMMARY_MAX_TOKENS", DEFAULT_MAX_TOKENS),
+            "body_limit": getattr(config, "NEWS_LLM_BODY_LIMIT", DEFAULT_BODY_LIMIT),
+            "max_tokens": getattr(config, "NEWS_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS),
             "max_concurrency": getattr(
                 config,
-                "NEWS_SUMMARY_MAX_CONCURRENCY",
+                "NEWS_LLM_MAX_CONCURRENCY",
                 DEFAULT_MAX_CONCURRENCY,
             ),
-            "vllm_base_url": getattr(config, "VLLM_BASE_URL", ""),
-            "vllm_model": getattr(config, "VLLM_CHAT_MODEL", ""),
-            "vllm_api_key": getattr(config, "VLLM_API_KEY", "EMPTY"),
-            "vllm_timeout": getattr(config, "VLLM_REQUEST_TIMEOUT", DEFAULT_TIMEOUT),
+            "bedrock_region": settings.bedrock_region,
+            "bedrock_model": settings.bedrock_chat_model,
+            "bedrock_timeout": settings.bedrock_request_timeout,
         }
     except Exception:
         return {
             "body_limit": DEFAULT_BODY_LIMIT,
             "max_tokens": DEFAULT_MAX_TOKENS,
             "max_concurrency": DEFAULT_MAX_CONCURRENCY,
-            "vllm_base_url": "",
-            "vllm_model": "",
-            "vllm_api_key": "EMPTY",
-            "vllm_timeout": DEFAULT_TIMEOUT,
+            "bedrock_region": "",
+            "bedrock_model": "",
+            "bedrock_timeout": DEFAULT_TIMEOUT,
         }
 
 
@@ -112,77 +112,69 @@ def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LI
     )
 
 
-def build_summary_request(
-    item: dict[str, Any], config: dict[str, Any]
-) -> tuple[str, dict[str, str], dict[str, Any], int]:
-    base_url = str(config.get("vllm_base_url") or "").rstrip("/")
-    model = str(config.get("vllm_model") or "")
+def clean_summary_text(content: str) -> str:
+    content = re.sub(r"<think>.*?</think>", "", content or "", flags=re.DOTALL | re.IGNORECASE)
 
-    if not base_url or not model:
-        raise RuntimeError("vLLM 요약 설정이 비어있음")
+    return content.replace("```", "").strip()
+
+
+def build_bedrock_summary_request(
+    item: dict[str, Any], config: dict[str, Any]
+) -> tuple[str, str, str, dict[str, Any]]:
+    model_id = str(config.get("bedrock_model") or "")
+
+    if not model_id:
+        raise RuntimeError("Bedrock 설정이 비어있음(모델 ID 필요)")
 
     return (
-        f"{base_url}/chat/completions",
+        model_id,
+        load_summary_prompt_text("summary_single_system.txt"),
+        build_summary_prompt(
+            item,
+            body_limit=int(config.get("body_limit") or DEFAULT_BODY_LIMIT),
+        ),
         {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.get('vllm_api_key') or 'EMPTY'}",
-        },
-        {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": load_summary_prompt_text("summary_single_system.txt"),
-                },
-                {
-                    "role": "user",
-                    "content": build_summary_prompt(
-                        item,
-                        body_limit=int(config.get("body_limit") or DEFAULT_BODY_LIMIT),
-                    ),
-                },
-            ],
             "temperature": 0.0,
-            "max_tokens": int(config.get("max_tokens") or DEFAULT_MAX_TOKENS),
-            "chat_template_kwargs": {
-                "enable_thinking": False,
-            },
-            "stream": False,
+            "maxTokens": int(config.get("max_tokens") or DEFAULT_MAX_TOKENS),
         },
-        int(config.get("vllm_timeout") or DEFAULT_TIMEOUT),
     )
 
 
-def parse_summary_response(response_data: dict[str, Any]) -> str:
+def parse_bedrock_summary_response(response_data: dict[str, Any]) -> str:
+    raw_response = extract_bedrock_text(response_data)
 
-    choices = response_data.get("choices", [])
+    if not raw_response:
+        raise RuntimeError("Bedrock 응답이 비어있음")
 
-    if not choices:
-        raise RuntimeError("vLLM 요약 choices가 비어있음")
-
-    content = choices[0].get("message", {}).get("content", "") or ""
-    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
-    content = content.replace("```", "").strip()
-
-    return content
+    return clean_summary_text(raw_response)
 
 
-async def summarize_with_vllm_async(
-    item: dict[str, Any],
-    config: dict[str, Any],
-    client: httpx.AsyncClient,
-) -> str:
-    url, headers, payload, timeout = build_summary_request(item=item, config=config)
-    response = await client.post(url, headers=headers, json=payload, timeout=timeout)
-    response.raise_for_status()
+def summarize_with_bedrock(item: dict[str, Any], config: dict[str, Any]) -> str:
+    model_id, system_text, user_text, inference_config = build_bedrock_summary_request(
+        item=item, config=config
+    )
+    client = get_bedrock_client(
+        str(config.get("bedrock_region") or ""),
+        int(config.get("bedrock_timeout") or DEFAULT_TIMEOUT),
+    )
+    response = client.converse(
+        modelId=model_id,
+        system=[{"text": system_text}],
+        messages=[{"role": "user", "content": [{"text": user_text}]}],
+        inferenceConfig=inference_config,
+    )
 
-    return parse_summary_response(response.json())
+    return parse_bedrock_summary_response(response)
+
+
+async def summarize_with_bedrock_async(item: dict[str, Any], config: dict[str, Any]) -> str:
+    # boto3는 동기 클라이언트라 to_thread로 감싸 asyncio.Semaphore 동시성만 활용한다.
+    return await asyncio.to_thread(summarize_with_bedrock, item, config)
 
 
 async def build_summary_for_item_async(
     item: dict[str, Any],
     config: dict[str, Any],
-    client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
 ) -> tuple[int, str] | None:
 
@@ -190,12 +182,11 @@ async def build_summary_for_item_async(
 
     try:
         async with semaphore:
-            summary = await summarize_with_vllm_async(item=item, config=config, client=client)
+            summary = await summarize_with_bedrock_async(item=item, config=config)
     except Exception as e:
         title = get_printable_text(item.get("title", ""))
         logging.warning(
-            f"vLLM 비동기 요약 실패: news_id={news_id}, title={title}, "
-            f"error={type(e).__name__}: {e}"
+            f"Bedrock 비동기 실패: news_id={news_id}, title={title}, error={type(e).__name__}: {e}"
         )
         return None
 
@@ -210,24 +201,16 @@ async def build_summaries_async(
     config: dict[str, Any],
     max_concurrency: int,
 ) -> list[tuple[int, str]]:
-    max_concurrency = max(int(max_concurrency or 1), 1)
-    semaphore = asyncio.Semaphore(max_concurrency)
-    limits = httpx.Limits(
-        max_connections=max_concurrency,
-        max_keepalive_connections=max_concurrency,
-    )
-
-    async with httpx.AsyncClient(limits=limits) as client:
-        tasks = [
-            build_summary_for_item_async(
-                item=item,
-                config=config,
-                client=client,
-                semaphore=semaphore,
-            )
-            for item in items
-        ]
-        results = await asyncio.gather(*tasks)
+    semaphore = asyncio.Semaphore(max(int(max_concurrency or 1), 1))
+    tasks = [
+        build_summary_for_item_async(
+            item=item,
+            config=config,
+            semaphore=semaphore,
+        )
+        for item in items
+    ]
+    results = await asyncio.gather(*tasks)
 
     return [result for result in results if result is not None]
 
@@ -242,7 +225,7 @@ def summarize_news_items(
         return []
 
     if mode != "async":
-        raise ValueError(f"지원하지 않는 요약 모드: {mode} (async만 지원)")
+        raise ValueError(f"지원하지 않는 모드: {mode} (async만 지원)")
 
     config = get_summarizer_config()
     concurrency = max_concurrency or int(config.get("max_concurrency") or DEFAULT_MAX_CONCURRENCY)
