@@ -8,13 +8,8 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-import httpx
-
-# Bedrock 클라이언트/응답 파싱은 material_event_filter의 검증된 헬퍼를 공유한다.
-from pipelines.news.transformers.material_event_filter import (
-    _get_bedrock_client,
-    extract_bedrock_text,
-)
+from pipelines.common.bedrock import extract_bedrock_text, get_bedrock_client
+from pipelines.common.config import get_settings
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
@@ -22,7 +17,6 @@ from pipelines.news.utils.text_utils import (
 
 SUMMARY_PROMPT_DIRECTORY = Path(__file__).with_name("prompts")
 
-DEFAULT_PROVIDER = "bedrock"
 DEFAULT_BODY_LIMIT = 12000
 DEFAULT_MAX_TOKENS = 512
 DEFAULT_MAX_CONCURRENCY = 4
@@ -36,33 +30,25 @@ def get_summarizer_config() -> dict[str, Any]:
     try:
         from pipelines.news import config
 
+        settings = get_settings()
+
         return {
-            "provider": getattr(config, "NEWS_SUMMARY_PROVIDER", DEFAULT_PROVIDER),
-            "body_limit": getattr(config, "NEWS_SUMMARY_BODY_LIMIT", DEFAULT_BODY_LIMIT),
-            "max_tokens": getattr(config, "NEWS_SUMMARY_MAX_TOKENS", DEFAULT_MAX_TOKENS),
+            "body_limit": getattr(config, "NEWS_LLM_BODY_LIMIT", DEFAULT_BODY_LIMIT),
+            "max_tokens": getattr(config, "NEWS_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS),
             "max_concurrency": getattr(
                 config,
-                "NEWS_SUMMARY_MAX_CONCURRENCY",
+                "NEWS_LLM_MAX_CONCURRENCY",
                 DEFAULT_MAX_CONCURRENCY,
             ),
-            "vllm_base_url": getattr(config, "VLLM_BASE_URL", ""),
-            "vllm_model": getattr(config, "VLLM_CHAT_MODEL", ""),
-            "vllm_api_key": getattr(config, "VLLM_API_KEY", "EMPTY"),
-            "vllm_timeout": getattr(config, "VLLM_REQUEST_TIMEOUT", DEFAULT_TIMEOUT),
-            "bedrock_region": getattr(config, "BEDROCK_REGION", ""),
-            "bedrock_model": getattr(config, "BEDROCK_CHAT_MODEL", ""),
-            "bedrock_timeout": getattr(config, "BEDROCK_REQUEST_TIMEOUT", DEFAULT_TIMEOUT),
+            "bedrock_region": settings.bedrock_region,
+            "bedrock_model": settings.bedrock_chat_model,
+            "bedrock_timeout": settings.bedrock_request_timeout,
         }
     except Exception:
         return {
-            "provider": DEFAULT_PROVIDER,
             "body_limit": DEFAULT_BODY_LIMIT,
             "max_tokens": DEFAULT_MAX_TOKENS,
             "max_concurrency": DEFAULT_MAX_CONCURRENCY,
-            "vllm_base_url": "",
-            "vllm_model": "",
-            "vllm_api_key": "EMPTY",
-            "vllm_timeout": DEFAULT_TIMEOUT,
             "bedrock_region": "",
             "bedrock_model": "",
             "bedrock_timeout": DEFAULT_TIMEOUT,
@@ -126,61 +112,10 @@ def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LI
     )
 
 
-def build_summary_request(
-    item: dict[str, Any], config: dict[str, Any]
-) -> tuple[str, dict[str, str], dict[str, Any], int]:
-    base_url = str(config.get("vllm_base_url") or "").rstrip("/")
-    model = str(config.get("vllm_model") or "")
-
-    if not base_url or not model:
-        raise RuntimeError("vLLM 요약 설정이 비어있음")
-
-    return (
-        f"{base_url}/chat/completions",
-        {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.get('vllm_api_key') or 'EMPTY'}",
-        },
-        {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": load_summary_prompt_text("summary_single_system.txt"),
-                },
-                {
-                    "role": "user",
-                    "content": build_summary_prompt(
-                        item,
-                        body_limit=int(config.get("body_limit") or DEFAULT_BODY_LIMIT),
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": int(config.get("max_tokens") or DEFAULT_MAX_TOKENS),
-            "chat_template_kwargs": {
-                "enable_thinking": False,
-            },
-            "stream": False,
-        },
-        int(config.get("vllm_timeout") or DEFAULT_TIMEOUT),
-    )
-
-
 def clean_summary_text(content: str) -> str:
     content = re.sub(r"<think>.*?</think>", "", content or "", flags=re.DOTALL | re.IGNORECASE)
 
     return content.replace("```", "").strip()
-
-
-def parse_summary_response(response_data: dict[str, Any]) -> str:
-
-    choices = response_data.get("choices", [])
-
-    if not choices:
-        raise RuntimeError("vLLM 요약 choices가 비어있음")
-
-    return clean_summary_text(choices[0].get("message", {}).get("content", "") or "")
 
 
 def build_bedrock_summary_request(
@@ -218,7 +153,7 @@ def summarize_with_bedrock(item: dict[str, Any], config: dict[str, Any]) -> str:
     model_id, system_text, user_text, inference_config = build_bedrock_summary_request(
         item=item, config=config
     )
-    client = _get_bedrock_client(
+    client = get_bedrock_client(
         str(config.get("bedrock_region") or ""),
         int(config.get("bedrock_timeout") or DEFAULT_TIMEOUT),
     )
@@ -237,41 +172,21 @@ async def summarize_with_bedrock_async(item: dict[str, Any], config: dict[str, A
     return await asyncio.to_thread(summarize_with_bedrock, item, config)
 
 
-async def summarize_with_vllm_async(
-    item: dict[str, Any],
-    config: dict[str, Any],
-    client: httpx.AsyncClient,
-) -> str:
-    url, headers, payload, timeout = build_summary_request(item=item, config=config)
-    response = await client.post(url, headers=headers, json=payload, timeout=timeout)
-    response.raise_for_status()
-
-    return parse_summary_response(response.json())
-
-
 async def build_summary_for_item_async(
     item: dict[str, Any],
     config: dict[str, Any],
-    client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
 ) -> tuple[int, str] | None:
 
     news_id = item.get("_news_id")
-    provider = str(config.get("provider") or DEFAULT_PROVIDER).lower()
 
     try:
         async with semaphore:
-            if provider == "bedrock":
-                summary = await summarize_with_bedrock_async(item=item, config=config)
-            elif provider == "vllm":
-                summary = await summarize_with_vllm_async(item=item, config=config, client=client)
-            else:
-                raise ValueError(f"지원하지 않는 provider: {provider}")
+            summary = await summarize_with_bedrock_async(item=item, config=config)
     except Exception as e:
         title = get_printable_text(item.get("title", ""))
         logging.warning(
-            f"{provider} 비동기 실패: news_id={news_id}, title={title}, "
-            f"error={type(e).__name__}: {e}"
+            f"Bedrock 비동기 실패: news_id={news_id}, title={title}, error={type(e).__name__}: {e}"
         )
         return None
 
@@ -286,24 +201,16 @@ async def build_summaries_async(
     config: dict[str, Any],
     max_concurrency: int,
 ) -> list[tuple[int, str]]:
-    max_concurrency = max(int(max_concurrency or 1), 1)
-    semaphore = asyncio.Semaphore(max_concurrency)
-    limits = httpx.Limits(
-        max_connections=max_concurrency,
-        max_keepalive_connections=max_concurrency,
-    )
-
-    async with httpx.AsyncClient(limits=limits) as client:
-        tasks = [
-            build_summary_for_item_async(
-                item=item,
-                config=config,
-                client=client,
-                semaphore=semaphore,
-            )
-            for item in items
-        ]
-        results = await asyncio.gather(*tasks)
+    semaphore = asyncio.Semaphore(max(int(max_concurrency or 1), 1))
+    tasks = [
+        build_summary_for_item_async(
+            item=item,
+            config=config,
+            semaphore=semaphore,
+        )
+        for item in items
+    ]
+    results = await asyncio.gather(*tasks)
 
     return [result for result in results if result is not None]
 
@@ -321,11 +228,6 @@ def summarize_news_items(
         raise ValueError(f"지원하지 않는 모드: {mode} (async만 지원)")
 
     config = get_summarizer_config()
-    provider = str(config.get("provider") or DEFAULT_PROVIDER).lower()
-
-    if provider not in {"bedrock", "vllm"}:
-        raise ValueError(f"지원하지 않는 provider: {provider} (bedrock/vllm만 지원)")
-
     concurrency = max_concurrency or int(config.get("max_concurrency") or DEFAULT_MAX_CONCURRENCY)
 
     return asyncio.run(
