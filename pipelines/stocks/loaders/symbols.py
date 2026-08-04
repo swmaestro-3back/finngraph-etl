@@ -8,6 +8,13 @@ from sqlalchemy.orm import Session
 from pipelines.stocks.models import StockSymbol, SymbolSyncResult
 
 # upsert SQL
+#
+# conflict target이 symbol이 아니라 standard_code인 이유:
+#   symbol 부분 유니크(WHERE is_active)를 쓰면 종목이 하루 master에서 빠졌다가 다시
+#   나타날 때 기존 비활성 행과 충돌하지 않아 중복 행이 생긴다. 표준코드는 활성 여부와
+#   무관하게 같은 종목을 가리키므로 재등장 시 같은 행을 되살린다. 반대로 종목코드가
+#   재사용되어 다른 회사가 새 표준코드로 들어오면 새 행이 되고 옛 행은 비활성으로 남는다.
+#   자세한 근거는 migrations/versions/20260804_02_stocks_surrogate_id.sql 참고.
 UPSERT_SYMBOL_SQL = text(
     """
     INSERT INTO stocks (
@@ -56,8 +63,8 @@ UPSERT_SYMBOL_SQL = text(
       now(),
       now()
     )
-    ON CONFLICT (symbol) DO UPDATE SET
-      standard_code = EXCLUDED.standard_code,
+    ON CONFLICT (standard_code) DO UPDATE SET
+      symbol = EXCLUDED.symbol,
       name = EXCLUDED.name,
       market = EXCLUDED.market,
       listed_date = EXCLUDED.listed_date,
@@ -80,6 +87,10 @@ UPSERT_SYMBOL_SQL = text(
 )
 
 # 사라진 기존 종목을 inactive 하기위한 SQL문
+#
+# 판정 기준이 symbol이 아니라 standard_code다. 종목코드가 재사용되면 같은 symbol을 옛 회사와
+# 새 회사가 공유하게 되는데, symbol 기준으로는 "오늘 master에 있음"으로 잡혀 옛 행이 활성인
+# 채로 남는다. 그러면 활성 종목 부분 유니크(stocks_active_symbol_uk)에 두 행이 걸린다.
 DEACTIVATE_MISSING_SYMBOLS_SQL = (
     text(
         """
@@ -90,11 +101,11 @@ DEACTIVATE_MISSING_SYMBOLS_SQL = (
           updated_at = now()
         WHERE market IN :markets
           AND is_active = true
-          AND symbol NOT IN :active_symbols
+          AND standard_code NOT IN :active_standard_codes
         """
     )
     .bindparams(bindparam("markets", expanding=True))
-    .bindparams(bindparam("active_symbols", expanding=True))
+    .bindparams(bindparam("active_standard_codes", expanding=True))
 )
 
 
@@ -113,15 +124,17 @@ def sync_symbols(session: Session, symbols: list[StockSymbol]) -> SymbolSyncResu
     if not symbols:
         return SymbolSyncResult(upserted_count=0, inactive_count=0)
 
-    payload = [_to_payload(symbol) for symbol in symbols]
-    session.execute(UPSERT_SYMBOL_SQL, payload)
-
+    # 비활성 처리를 upsert보다 먼저 한다. 종목코드가 재사용된 경우 옛 행이 활성인 채로
+    # 남아 있으면 같은 symbol을 쓰는 새 행 insert가 활성 종목 부분 유니크에 걸린다.
     markets = sorted({symbol.market for symbol in symbols})
-    active_symbols = sorted({symbol.symbol for symbol in symbols})
+    active_standard_codes = sorted({symbol.standard_code for symbol in symbols})
     result = session.execute(
         DEACTIVATE_MISSING_SYMBOLS_SQL,
-        {"markets": markets, "active_symbols": active_symbols},
+        {"markets": markets, "active_standard_codes": active_standard_codes},
     )
+
+    payload = [_to_payload(symbol) for symbol in symbols]
+    session.execute(UPSERT_SYMBOL_SQL, payload)
 
     return SymbolSyncResult(
         upserted_count=len(payload),
