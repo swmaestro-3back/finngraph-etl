@@ -4,7 +4,12 @@ import unittest
 from datetime import datetime
 
 from pipelines.common.time import KST
-from pipelines.stocks.extractors.kis_stock_master import KOSDAQ_SPEC, KOSPI_SPEC, parse_master_row
+from pipelines.stocks.extractors.kis_stock_master import (
+    KOSDAQ_SPEC,
+    KOSPI_SPEC,
+    LISTED_SHARES_UNIT,
+    parse_master_row,
+)
 
 
 class KisStockMasterTest(unittest.TestCase):
@@ -23,6 +28,9 @@ class KisStockMasterTest(unittest.TestCase):
                 KOSPI_SPEC.preferred_stock_index: "0",
                 KOSPI_SPEC.etp_index: "N",
                 KOSPI_SPEC.spac_index: "N",
+                KOSPI_SPEC.listed_shares_index: "000000005846278",
+                KOSPI_SPEC.par_value_index: "000000000100",
+                KOSPI_SPEC.capital_index: "000000000778046685000",
             },
         )
 
@@ -40,6 +48,42 @@ class KisStockMasterTest(unittest.TestCase):
         self.assertFalse(symbol.preferred_stock)
         self.assertFalse(symbol.etp)
         self.assertFalse(symbol.spac)
+        # master 상장주수는 천주 단위 -> 주 단위로 정규화되어야 한다
+        self.assertEqual(symbol.listed_shares, 5_846_278 * LISTED_SHARES_UNIT)
+        self.assertEqual(symbol.par_value, 100)
+        self.assertEqual(symbol.capital, 778_046_685_000)
+
+    def test_listed_shares_normalized_to_share_unit(self) -> None:
+        """상장주수 단위 변환 누락은 시가총액을 1000배 틀리게 만든다."""
+        row = _build_row(
+            KOSPI_SPEC,
+            symbol="005930",
+            standard_code="KR7005930003",
+            name="Samsung",
+            values={KOSPI_SPEC.listed_shares_index: "000000005846278"},
+        )
+
+        symbol = parse_master_row(row, KOSPI_SPEC)
+
+        self.assertEqual(symbol.listed_shares, 5_846_278_000)
+        # KIS inquire-price의 lstn_stcn(5,846,278,608)과 천주 절삭분만큼만 차이나야 한다
+        self.assertLess(abs(symbol.listed_shares - 5_846_278_608), LISTED_SHARES_UNIT)
+
+    def test_parse_master_row_allows_blank_numeric_fields(self) -> None:
+        """신규 상장 등으로 숫자 필드가 비어 있어도 파싱은 성공해야 한다."""
+        row = _build_row(
+            KOSPI_SPEC,
+            symbol="005930",
+            standard_code="KR7005930003",
+            name="Samsung",
+            values={},
+        )
+
+        symbol = parse_master_row(row, KOSPI_SPEC)
+
+        self.assertIsNone(symbol.listed_shares)
+        self.assertIsNone(symbol.par_value)
+        self.assertIsNone(symbol.capital)
 
     def test_parse_kosdaq_master_row_flags(self) -> None:
         """KOSDAQ 데이터 파싱 테스트"""
@@ -87,7 +131,8 @@ def _build_row(
         fields[index] = value
 
     suffix = "".join(
-        _fit_fixed_width(value, width) for value, width in zip(fields, spec.suffix_widths)
+        _fit_fixed_width(value, width)
+        for value, width in zip(fields, spec.suffix_widths, strict=True)
     )
     return f"{symbol:<9}{standard_code:<12}{name}{suffix}"
 
