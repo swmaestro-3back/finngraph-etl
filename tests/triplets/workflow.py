@@ -16,7 +16,7 @@ from langchain_core.tracers.langchain import wait_for_all_tracers
 from pipelines.common.neo4j import neo4j_database
 from pipelines.triplets.crud import upsert_triplets
 from pipelines.triplets.graph.workflow import GraphRunner
-from pipelines.triplets.scripts.seed_db import seed
+from tests.triplets.seed_db import seed
 
 TEXT = """
 삼성전자 SK하이닉스 삼성디스플레이 LG디스플레이는 세계 반도체·디스플레이를 주도하고 있다.
