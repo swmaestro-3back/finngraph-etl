@@ -79,15 +79,14 @@ pytest -m integration
 ## Running Neo4j locally
 
 ```bash
+# neo4j stand-alone setup
 docker compose up -d neo4j
+
+# 비밀번호 초기화 및 볼륨 초기화
+docker compose down -v
 ```
 
-- hardened image인 `dhi.io/neo4j:5-debian-dev`는 공격 표면 최소화 정책으로 웹 UI 제거하여 DHI 이미지엔 Neo4j Browser UI가 아예 없다.
-- 따라서, Neo4j Desktop의 Remote Connections를 통해 접속하여 확인한다.
-- 접속 정보는 `.env`의 `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`를 사용한다.
-- 데이터는 named volume `etl_neo4j_data`에 보존된다. `docker compose down` 후 다시 `up` 해도 유지되며,
-  초기화하려면 `docker compose down -v`를 실행한다.
-- 초기 비밀번호(`NEO4J_AUTH`)는 볼륨 최초 생성 시에만 적용된다. 비밀번호 변경이 반영되지 않으면 볼륨을 초기화한다.
+neo4j:5 community 버전은 username은 무조건 neo4j여야함.
 
 ## Running Airflow locally
 
