@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     bedrock_region: str = Field(default="", validation_alias="BEDROCK_REGION")
     bedrock_chat_model: str = Field(default="", validation_alias="BEDROCK_CHAT_MODEL")
     bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
+    aws_bearer_token_bedrock: str = Field(default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK")
 
     neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
     neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
