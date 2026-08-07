@@ -39,10 +39,11 @@ etl/
 
 ## Local Checks
 
-CI와 동일한 검사를 로컬에서 돌리려면 먼저 dev 의존성을 설치한다.
+CI와 동일한 검사를 로컬에서 돌리려면 먼저 의존성을 설치한다. `uv sync`는 dev
+dependency-group(pytest/ruff/pre-commit)까지 기본으로 설치한다.
 
 ```bash
-python -m pip install -e ".[dev]"
+uv sync
 ```
 
 ### 자동 (pre-commit)
@@ -50,30 +51,30 @@ python -m pip install -e ".[dev]"
 한 번 설정하면 commit·push 때 검사가 자동으로 돈다.
 
 ```bash
-pre-commit install                       # commit 시 ruff(자동수정) + ruff-format
-pre-commit install --hook-type pre-push  # push 시 pytest
+uv run pre-commit install                       # commit 시 ruff(자동수정) + ruff-format
+uv run pre-commit install --hook-type pre-push  # push 시 pytest
 ```
 
 ### 수동
 
 ```bash
-ruff check . && ruff format --check .            # lint (CI: lint job)
-pytest -m "not integration"                      # 유닛 테스트 (CI: unit-test job)
-python -m compileall pipelines dags scripts
+uv run ruff check . && uv run ruff format --check .   # lint (CI: lint job)
+uv run pytest -m "not integration"                    # 유닛 테스트 (CI: unit-test job)
+uv run python -m compileall pipelines dags scripts
 ```
 
 DAG 파싱 검증은 airflow가 필요하다(CI: dag-validation job).
 
 ```bash
-python -m pip install -e ".[airflow]"
-python scripts/validate_dags.py
+uv sync --extra airflow
+uv run python scripts/validate_dags.py
 ```
 
 DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
 
 ```bash
 docker compose up -d db
-pytest -m integration
+uv run pytest -m integration
 ```
 
 ## Running Neo4j locally
