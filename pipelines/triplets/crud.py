@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import get_args
 
 from pipelines.common.neo4j import neo4j_database
-from pipelines.triplets.graph.models import EntityLabel, Triplet
+from pipelines.triplets.graph.models import Entity, EntityLabel, Triplet
 from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
 
 # NER 태그를 Neo4j Label 태그로 변환
@@ -26,55 +26,47 @@ _ITEM_DECOMPOSITION: dict[str, tuple[str, str]] = {
 _MAX_PROVENANCE = 10
 
 
-def _edge_specs(triplet: Triplet) -> list[tuple[str, str, str, str, str]]:
-    """하나의 Triplet을 (subject_label, subject_name, rel, object_label, object_name)
-    엣지 목록으로 변환한다.
+def _binary_edges(triplet: Triplet) -> list[tuple[Entity, str, Entity]]:
+    """하나의 Triplet을 (subject, rel, object) 이항 엣지 목록으로 분해한다.
 
     item이 없으면 (subject)-[predicate]->(object) 단일 엣지로,
     item이 있으면 _ITEM_DECOMPOSITION 규칙에 따라 (subject-item), (item-object)
     두 개의 이항 엣지로 분해한다. 분해된 엣지도 각각 하나의 (subject, rel, object)
     트리플로 취급하므로, item은 첫 엣지의 object이자 둘째 엣지의 subject가 된다.
-    """
 
-    # NER Label을 Neo4j Label로 변환
-    subject_label = _TYPE_TO_LABEL[triplet.subject.label]
-    object_label = _TYPE_TO_LABEL[triplet.object.label]
+    각 엔드포인트는 Entity(text/label) 그대로 보존하므로, 호출부에서 Neo4j Label로
+    매핑하거나(_edge_specs) EntityLabel을 그대로 사용할 수 있다(news_relations 적재).
+    """
 
     if triplet.item is None:
         # predicate는 FPDF가 PREDICATE_DICT에 등록된 술어에만 트리플을 만들어주므로 항상
         # 화이트리스트 안이지만, 관계 타입으로 직접 삽입되는 값이라 한 번 더 방어적으로 검증한다.
         if triplet.predicate not in PREDICATE_DICT:
             return []
-        return [
-            (
-                subject_label,
-                triplet.subject.text,
-                triplet.predicate,
-                object_label,
-                triplet.object.text,
-            )
-        ]
+        return [(triplet.subject, triplet.predicate, triplet.object)]
 
     decomposition = _ITEM_DECOMPOSITION.get(triplet.predicate)
     # item이 있으나 분해 규칙이 없는 술어면 item을 버리고 이항 관계로만 저장한다.
     if decomposition is None:
         if triplet.predicate not in PREDICATE_DICT:
             return []
-        return [
-            (
-                subject_label,
-                triplet.subject.text,
-                triplet.predicate,
-                object_label,
-                triplet.object.text,
-            )
-        ]
+        return [(triplet.subject, triplet.predicate, triplet.object)]
 
-    item_label = _TYPE_TO_LABEL[triplet.item.label]
     rel_subject_item, rel_item_object = decomposition
     return [
-        (subject_label, triplet.subject.text, rel_subject_item, item_label, triplet.item.text),
-        (item_label, triplet.item.text, rel_item_object, object_label, triplet.object.text),
+        (triplet.subject, rel_subject_item, triplet.item),
+        (triplet.item, rel_item_object, triplet.object),
+    ]
+
+
+def _edge_specs(triplet: Triplet) -> list[tuple[str, str, str, str, str]]:
+    """하나의 Triplet을 (subject_label, subject_name, rel, object_label, object_name)
+    Neo4j 엣지 목록으로 변환한다. NER Label을 Neo4j Label로 매핑한다.
+    """
+
+    return [
+        (_TYPE_TO_LABEL[subject.label], subject.text, rel, _TYPE_TO_LABEL[obj.label], obj.text)
+        for subject, rel, obj in _binary_edges(triplet)
     ]
 
 
@@ -139,3 +131,74 @@ async def upsert_triplets(news_id: str, triplets: list[Triplet]) -> None:
             """,
             {"rows": rows, "news_id": news_id, "max_provenance": _MAX_PROVENANCE},
         )
+
+
+async def _fetch_company_tickers(names: list[str]) -> dict[str, str]:
+    """KRX 상장 기업명 목록에 대한 ticker를 Neo4j에서 한 번에 조회한다.
+
+    삼중항 추출로 만들어지는 Company 노드는 name만 가지지만, 정규화 단계에서 표면형을
+    KRX 사전 정식명으로 재작성하므로 시드된 (:Company:KOSPI|KOSDAQ {name, ticker}) 노드와
+    name이 일치한다. 상장사가 아니면 매핑에 담기지 않아 code는 NULL로 남는다.
+    """
+
+    if not names:
+        return {}
+
+    records = await neo4j_database.execute(
+        """
+        UNWIND $names AS name
+        MATCH (c:Company {name: name})
+        WHERE c:KOSPI OR c:KOSDAQ
+        RETURN c.name AS name, c.ticker AS ticker
+        """,
+        {"names": names},
+    )
+    return {record["name"]: record["ticker"] for record in records}
+
+
+async def build_news_relation_rows(triplets: list[Triplet]) -> list[dict]:
+    """삼중항을 news_relations 테이블 행(dict) 목록으로 변환한다.
+
+    1. Neo4j 적재와 동일하게 _binary_edges로 이항 엣지 분해 (item 술어는 2개로 분해)
+    2. 동일 (subject_name, relation, object_name) 엣지는 배치 내에서 중복 제거
+       (news_relations의 UNIQUE 제약과 동일한 키)
+    3. COMPANY 엔티티는 Neo4j에서 ticker를 조회해 code로 채운다. 그 외 타입(COUNTRY ISO 등)은
+       현재 NULL로 두고 이후 백필한다.
+    """
+
+    edges: list[tuple[Entity, str, Entity]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for triplet in triplets:
+        for subject, rel, obj in _binary_edges(triplet):
+            edge_key = (subject.text, rel, obj.text)
+            if edge_key in seen:
+                continue
+            seen.add(edge_key)
+            edges.append((subject, rel, obj))
+
+    # COMPANY 엔드포인트 이름을 모아 한 번의 쿼리로 ticker 조회
+    company_names = sorted(
+        {
+            endpoint.text
+            for subject, _, obj in edges
+            for endpoint in (subject, obj)
+            if endpoint.label == "COMPANY"
+        }
+    )
+    name_to_ticker = await _fetch_company_tickers(company_names)
+
+    def _code(entity: Entity) -> str | None:
+        return name_to_ticker.get(entity.text) if entity.label == "COMPANY" else None
+
+    return [
+        {
+            "subject_name": subject.text,
+            "subject_type": subject.label,
+            "subject_code": _code(subject),
+            "relation": rel,
+            "object_name": obj.text,
+            "object_type": obj.label,
+            "object_code": _code(obj),
+        }
+        for subject, rel, obj in edges
+    ]
