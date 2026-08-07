@@ -2,9 +2,7 @@
 
 Airflow로 실행되는 팀 공용 ETL 레포입니다. 이 레포는 데이터 수집, 변환, 적재 로직을 도메인별 패키지로 관리합니다.
 
-FastAPI는 포함하지 않습니다. ETL 실행, 스케줄, 재시도, 로그 확인은 Airflow가 담당합니다.
-
-## Structure
+## 구조
 
 ```text
 etl/
@@ -21,7 +19,7 @@ etl/
 └── tests/                # 테스트
 ```
 
-## Conventions
+## 컨벤션
 
 - `dags/`에는 DAG 정의만 둡니다.
 - 실제 ETL 로직은 `pipelines/{domain}/jobs/`에 둡니다.
@@ -29,7 +27,7 @@ etl/
 - 여러 도메인에서 공유하는 코드는 `pipelines/common/`에 둡니다.
 - Airflow task는 job 함수를 호출하고, job 함수가 extract-transform-load 흐름을 조립합니다.
 
-## Stock Pipeline Policy
+## 주식 파이프라인 정책
 
 - 과거 일봉은 FinanceDataReader로 초기 적재합니다.
 - 오늘 이후 장중 데이터는 한국투자증권 Open API의 1분봉 조회로 누적합니다.
@@ -37,7 +35,7 @@ etl/
 - 1분봉은 기본 60일 보관, 5분봉은 3년 보관, 일봉은 영구 보관합니다.
 - 사용자-facing 차트는 최대 5분 지연을 허용합니다.
 
-## Local Checks
+## 로컬 기본 검사
 
 CI와 동일한 검사를 로컬에서 돌리려면 먼저 의존성을 설치한다. `uv sync`는 dev
 dependency-group(pytest/ruff/pre-commit)까지 기본으로 설치한다.
@@ -109,3 +107,32 @@ docker compose --profile airflow down    # 중지. -v를 붙이면 메타DB/로�
 - 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`9-16 * * 1-5` 등)이 KST 기준으로 해석된다.
 - DAG는 생성 시 일시정지 상태로 등록된다(`DAGS_ARE_PAUSED_AT_CREATION`). UI에서 unpause 후 사용한다.
 
+## Database 초기화와 migration
+
+로컬 DB는 `timescale/timescaledb` 기반이며 `pgvector` extension을 함께 사용한다. DB volume이 처음
+만들어질 때 PostgreSQL이 `/docker-entrypoint-initdb.d`의 파일을 파일명 순서대로 자동 실행한다.
+
+```text
+docker/db/initdb/001_extensions.sql      # timescaledb + vector extension
+docker/db/initdb/002_run_migrations.sh   # /migrations/versions/*.sql 파일명 순 실행
+migrations/versions/*.sql                # migration 파일 (컨테이너에 마운트됨)
+```
+
+자동 초기화는 volume이 처음 생성될 때만 돈다. **이미 `etl_pgdata` volume이 있으면 새 migration을
+수동으로 적용해야 한다.**
+
+```bash
+docker compose exec -T db psql -U etl -d etl < migrations/versions/<파일명>.sql
+```
+
+## 로컬에서 Job 실행
+
+Airflow 없이 job 함수를 직접 실행할 수 있다.
+
+```bash
+python scripts/run_job.py pipelines.stocks.jobs.sync_stock_master:run
+```
+
+위 명령은 KIS public master 파일에서 KOSPI/KOSDAQ 종목 master 데이터를 가져와 `stocks` 테이블에
+동기화한다. DB가 실행 중이고 stocks migration이 적용되어 있어야 한다. 종목 master 동기화는 공개
+파일을 내려받으므로 `KIS_APP_KEY` 등의 인증 정보는 필요 없다(장중 API job에만 필요).
