@@ -50,13 +50,16 @@ members AS (
                PARTITION BY b.subject_name, b.relation, b.object_name
                ORDER BY md5(mn.id::text || :seed), mn.id
            ) AS rn,
-           count(*) OVER (
+           -- 집계에서 기준 뉴스 자신을 뺀다. 파티션에는 자기 자신도 들어 있는데,
+           -- 바깥 SELECT의 WHERE는 리스트만 걸러내고 윈도 함수에는 영향을 주지
+           -- 못한다. FILTER 없이 세면 "관련 뉴스 수"가 항상 1 부풀려진다.
+           count(*) FILTER (WHERE m.news_id <> :news_id) OVER (
                PARTITION BY b.subject_name, b.relation, b.object_name
-           ) AS news_count,
-           min(mn.published_at) OVER (
+           ) AS related_count,
+           min(mn.published_at) FILTER (WHERE m.news_id <> :news_id) OVER (
                PARTITION BY b.subject_name, b.relation, b.object_name
            ) AS first_news_at,
-           max(mn.published_at) OVER (
+           max(mn.published_at) FILTER (WHERE m.news_id <> :news_id) OVER (
                PARTITION BY b.subject_name, b.relation, b.object_name
            ) AS last_news_at
     FROM base AS b
@@ -70,10 +73,11 @@ members AS (
                   AND b.base_at + make_interval(hours => :window_hours)
 )
 SELECT subject_ref, relation, object_ref,
-       news_count, first_news_at, last_news_at,
+       related_count, first_news_at, last_news_at,
        news_id, title, link, published_at
 FROM members
--- 자기 자신은 그룹 메타(news_count 등)에는 포함하되 리스트에서는 뺀다.
+-- 기준 데이터는 리스트에서 뺀다. 집계값은 이미 FILTER로 제외돼 있으므로,
+-- related_count는 절단 전 리스트 길이와 정확히 일치한다.
 -- rn 상위 (limit+1)건 중 자기 자신은 최대 1건이므로, 제외 후에도 limit건이 남는다.
 WHERE news_id <> :news_id
   AND rn <= :limit_plus_self
@@ -124,7 +128,7 @@ def fetch_related_news_groups(
                 "subject_ref": row["subject_ref"],
                 "relation": row["relation"],
                 "object_ref": row["object_ref"],
-                "news_count": row["news_count"],
+                "related_count": row["related_count"],
                 "first_news_at": row["first_news_at"],
                 "last_news_at": row["last_news_at"],
                 "news": [],
