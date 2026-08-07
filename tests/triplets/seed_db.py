@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pipelines.common.neo4j import neo4j_database
 
-SEED_DIR = Path(__file__).resolve().parent.parent / "data" / "seed"
+SEED_DIR = Path(__file__).resolve().parent / "data" / "seed"
 
 
 def _load(filename: str) -> list[dict]:

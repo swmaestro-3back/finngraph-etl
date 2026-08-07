@@ -39,10 +39,11 @@ etl/
 
 ## Local Checks
 
-CI와 동일한 검사를 로컬에서 돌리려면 먼저 dev 의존성을 설치한다.
+CI와 동일한 검사를 로컬에서 돌리려면 먼저 의존성을 설치한다. `uv sync`는 dev
+dependency-group(pytest/ruff/pre-commit)까지 기본으로 설치한다.
 
 ```bash
-python -m pip install -e ".[dev]"
+uv sync
 ```
 
 ### 자동 (pre-commit)
@@ -50,44 +51,43 @@ python -m pip install -e ".[dev]"
 한 번 설정하면 commit·push 때 검사가 자동으로 돈다.
 
 ```bash
-pre-commit install                       # commit 시 ruff(자동수정) + ruff-format
-pre-commit install --hook-type pre-push  # push 시 pytest
+uv run pre-commit install                       # commit 시 ruff(자동수정) + ruff-format
+uv run pre-commit install --hook-type pre-push  # push 시 pytest
 ```
 
 ### 수동
 
 ```bash
-ruff check . && ruff format --check .            # lint (CI: lint job)
-pytest -m "not integration"                      # 유닛 테스트 (CI: unit-test job)
-python -m compileall pipelines dags scripts
+uv run ruff check . && uv run ruff format --check .   # lint (CI: lint job)
+uv run pytest -m "not integration"                    # 유닛 테스트 (CI: unit-test job)
+uv run python -m compileall pipelines dags scripts
 ```
 
 DAG 파싱 검증은 airflow가 필요하다(CI: dag-validation job).
 
 ```bash
-python -m pip install -e ".[airflow]"
-python scripts/validate_dags.py
+uv sync --extra airflow
+uv run python scripts/validate_dags.py
 ```
 
 DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
 
 ```bash
 docker compose up -d db
-pytest -m integration
+uv run pytest -m integration
 ```
 
 ## Running Neo4j locally
 
 ```bash
+# neo4j stand-alone setup
 docker compose up -d neo4j
+
+# 비밀번호 초기화 및 볼륨 초기화
+docker compose down -v
 ```
 
-- hardened image인 `dhi.io/neo4j:5-debian-dev`는 공격 표면 최소화 정책으로 웹 UI 제거하여 DHI 이미지엔 Neo4j Browser UI가 아예 없다.
-- 따라서, Neo4j Desktop의 Remote Connections를 통해 접속하여 확인한다.
-- 접속 정보는 `.env`의 `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`를 사용한다.
-- 데이터는 named volume `etl_neo4j_data`에 보존된다. `docker compose down` 후 다시 `up` 해도 유지되며,
-  초기화하려면 `docker compose down -v`를 실행한다.
-- 초기 비밀번호(`NEO4J_AUTH`)는 볼륨 최초 생성 시에만 적용된다. 비밀번호 변경이 반영되지 않으면 볼륨을 초기화한다.
+neo4j:5 community 버전은 username은 무조건 neo4j여야함.
 
 ## Running Airflow locally
 
