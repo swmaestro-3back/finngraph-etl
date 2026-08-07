@@ -28,18 +28,15 @@ Triplet = tuple[str, str, str]
 def get_summarizer_config() -> dict[str, Any]:
 
     try:
-        from pipelines.news import config
+        from pipelines.news.config import get_news_settings
 
         settings = get_settings()
+        news_settings = get_news_settings()
 
         return {
-            "body_limit": getattr(config, "NEWS_LLM_BODY_LIMIT", DEFAULT_BODY_LIMIT),
-            "max_tokens": getattr(config, "NEWS_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS),
-            "max_concurrency": getattr(
-                config,
-                "NEWS_LLM_MAX_CONCURRENCY",
-                DEFAULT_MAX_CONCURRENCY,
-            ),
+            "body_limit": news_settings.news_llm_body_limit,
+            "max_tokens": news_settings.news_llm_max_tokens,
+            "max_concurrency": news_settings.news_llm_max_concurrency,
             "bedrock_region": settings.bedrock_region,
             "bedrock_model": settings.bedrock_chat_model,
             "bedrock_timeout": settings.bedrock_request_timeout,

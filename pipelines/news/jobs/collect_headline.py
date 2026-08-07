@@ -1,12 +1,7 @@
 from typing import Any
 
-from pipelines.news.config import (
-    HEADLINE_MORE_COUNT,
-    MAX_TOTAL_COLLECTED_ITEMS,
-    OFFICIAL_SOURCE_THRESHOLD,
-)
+from pipelines.news.config import get_news_settings
 from pipelines.news.extractors.anchor_headline_collector import (
-    ANCHOR_CATEGORIES,
     iter_anchor_category_headline_pages,
     validate_anchor_headline_settings,
 )
@@ -28,10 +23,11 @@ from pipelines.news.transformers.news_type_filter import filter_official_source_
 def collect_category_new_headlines(
     category_id: int,
     target_count: int,
-    max_more_calls: int = HEADLINE_MORE_COUNT,
+    max_more_calls: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
-    category_name = ANCHOR_CATEGORIES.get(category_id, str(category_id))
+    settings = get_news_settings()
+    category_name = settings.anchor_categories.get(category_id, str(category_id))
 
     collected: list[dict[str, Any]] = []
     seen_titles: set = set()
@@ -92,7 +88,7 @@ def collect_category_new_headlines(
         page_official_news, page_official_removed = filter_official_source_news(
             items=page_new_news,
             pipeline_input={},
-            official_source_threshold=OFFICIAL_SOURCE_THRESHOLD,
+            official_source_threshold=settings.official_source_threshold,
         )
         stats["official_source_removed"] += len(page_official_removed)
 
@@ -111,7 +107,8 @@ def collect_category_new_headlines(
 def run() -> None:
     validate_anchor_headline_settings()
 
-    category_ids = list(ANCHOR_CATEGORIES.keys())
+    settings = get_news_settings()
+    category_ids = list(settings.anchor_categories.keys())
 
     selected_news: list[dict[str, Any]] = []
     category_result_counts: dict[str, dict[str, Any]] = {}
@@ -119,8 +116,8 @@ def run() -> None:
     for category_id in category_ids:
         category_selected_news, category_stats = collect_category_new_headlines(
             category_id=category_id,
-            target_count=MAX_TOTAL_COLLECTED_ITEMS,
-            max_more_calls=HEADLINE_MORE_COUNT,
+            target_count=settings.max_total_collected_items,
+            max_more_calls=settings.headline_more_count,
         )
 
         selected_news.extend(category_selected_news)
