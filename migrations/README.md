@@ -16,8 +16,3 @@ DB migration 파일을 관리합니다. 운영 DB에 migration을 적용하기 �
 | 4   | `versions/20260725_04_keyword_search.sql`        | `search_keywords`                                            |
 | 5   | `versions/20260725_05_news_relations.sql`        | `news_relations` + 뷰(`news_companies`, `entities_relations`) |
 | 6   | `versions/20260729_07_pinned_search_keyword.sql` | `search_keywords.is_pinned` 컬럼 + '특징주' 고정 키워드 시드             |
-
-
-
-
-&nbsp;
