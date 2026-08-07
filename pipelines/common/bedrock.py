@@ -7,14 +7,21 @@ common에 둔다. 접속 설정(BEDROCK_REGION/BEDROCK_CHAT_MODEL/BEDROCK_REQUES
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Any
+
+from pipelines.common.config import get_settings
 
 
 @lru_cache
 def get_bedrock_client(region: str, timeout: int) -> Any:
     import boto3
     from botocore.config import Config
+
+    token = get_settings().aws_bearer_token_bedrock
+    if token:
+        os.environ.setdefault("AWS_BEARER_TOKEN_BEDROCK", token)
 
     return boto3.client(
         "bedrock-runtime",

@@ -6,8 +6,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-prompts/
-ontology/
 
 # Python 빌드 산출물 (editable install 시 생성)
 *.egg-info/

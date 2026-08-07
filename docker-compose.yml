@@ -67,26 +67,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-
-  # 테마 파이프라인용 그래프 DB. db와 마찬가지로 프로파일 없이 단독 기동 가능: `docker compose up -d neo4j`
+  
   neo4j:
-    build:
-      context: .
-      dockerfile: docker/neo4j/Dockerfile
-    image: etl-neo4j:5
+    image: neo4j:5
     environment:
-      # 볼륨 최초 생성 시에만 초기 비밀번호로 적용된다(docker/neo4j/README.md 참고).
-      NEO4J_AUTH: "${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-etlneo4j}"
+      NEO4J_AUTH: "${NEO4J_USERNAME:?NEO4J_USERNAME 을 .env 에 설정하세요}/${NEO4J_PASSWORD:?NEO4J_PASSWORD 를 .env 에 설정하세요}"
+      NEO4J_initial_dbms_default__database: "${NEO4J_DATABASE:?NEO4J_DATABASE 를 .env 에 설정하세요}"
     ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474"
-      - "${NEO4J_BOLT_PORT:-7687}:7687"
+      # port mapping
+      - "7474:7474" # HTTP Neo4j Browser (http://localhost:7474)
+      - "7687:7687" # Bolt Driver (app.core.db)
     volumes:
       - etl_neo4j_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-etlneo4j} 'RETURN 1' || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:?} -p ${NEO4J_PASSWORD:?} 'RETURN 1' || exit 1"]
       interval: 10s
-      timeout: 10s
-      retries: 12
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # Airflow 메타데이터 전용 DB. ETL 데이터(db, timescale)와 수명주기/백업 정책을 분리한다.
   airflow-db:

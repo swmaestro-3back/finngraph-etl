@@ -1,7 +1,11 @@
+import asyncio
+import json
 import re
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-
+from pipelines.common.bedrock import (
+    extract_bedrock_text,
+    get_bedrock_client,
+)
 from pipelines.common.config import get_settings
 from pipelines.triplets.graph.models import (
     Entity,
@@ -9,12 +13,34 @@ from pipelines.triplets.graph.models import (
     RelationFrame,
 )
 from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
-from pipelines.triplets.graph.prompts.relation_extraction import PROMPT
+from pipelines.triplets.graph.prompts.relation_extraction import (
+    FEW_SHOT_MESSAGES,
+    SYSTEM_MESSAGE,
+    build_user_message,
+)
 
 settings = get_settings()
 
-# LLM이 프롬프트 지시를 어기고 미등록 술어를 지어냈을 때를 걸러내기 위한 검증용 술어 집합.
-_REGISTERED_PREDICATES: set[str] = set(PREDICATE_DICT.keys())
+# Converse 응답의 최대 출력 토큰 수
+_MAX_TOKENS = 8192
+
+# 술어 사전에 등록된 술어 집합. LLM이 프롬프트 지시를 어기고 새 술어를 지어냈을 때
+# label()에서 즉시 걸러내기 위한 화이트리스트로 쓴다.
+_REGISTERED_PREDICATES = set(PREDICATE_DICT)
+
+# Converse Structured Ouput 설정
+_OUTPUT_CONFIG = {
+    "textFormat": {
+        "type": "json_schema",
+        "structure": {
+            "jsonSchema": {
+                "name": "RawRelationList",
+                "description": "Extracted multilateral business relationship frames.",
+                "schema": json.dumps(RawRelationList.model_json_schema()),
+            }
+        },
+    }
+}
 
 
 # source_sentence 검증용 정규화: LLM이 verbatim 지시를 어기고 공백/개행만 미묘하게 바꿔도
@@ -25,15 +51,41 @@ def _normalize_for_match(s: str) -> str:
 
 class RelationExtractor:
     def __init__(self):
+        if not settings.bedrock_chat_model:
+            raise RuntimeError("Bedrock 설정이 비어있음(BEDROCK_CHAT_MODEL 필요)")
 
-        self._model = ChatGoogleGenerativeAI(
-            model=settings.gemini_model, temperature=0, google_api_key=settings.google_api_key
+        self._model_id = settings.bedrock_chat_model
+
+        # Bedrock Client 생성
+        self._client = get_bedrock_client(
+            settings.bedrock_region,
+            settings.bedrock_request_timeout,
         )
 
-        self._chain = PROMPT | self._model.with_structured_output(
-            schema=RawRelationList,
-            method="json_schema",
+    def _invoke(self, text: str, entities_str: str) -> RawRelationList:
+        # boto3 converse는 동기 호출이라 호출부(label)에서 to_thread로 감싼다.
+        # outputConfig(structured output)로 RawRelationList 스키마를 강제하므로, 응답 텍스트는
+        # 코드펜스·군더더기 없이 스키마를 만족하는 JSON 문자열이 그대로 온다.
+        response = self._client.converse(
+            # 모델명
+            modelId=self._model_id,
+            # System Prompt
+            system=[{"text": SYSTEM_MESSAGE}],
+            # few-shot 턴 + 이번 요청의 user 턴을 조합해 messages를 구성한다.
+            messages=FEW_SHOT_MESSAGES + [build_user_message(text, entities_str)],
+            inferenceConfig={"temperature": 0.0, "maxTokens": _MAX_TOKENS},
+            outputConfig=_OUTPUT_CONFIG,
         )
+
+        raw_text = extract_bedrock_text(response)
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"관계 추출 Bedrock 응답 JSON 파싱 실패: {raw_text[:500]}") from e
+
+        # structured output이라도 pydantic 검증은 남겨, 다운스트림이 항상
+        # 타입 안전한 모델을 받게 한다.
+        return RawRelationList.model_validate(parsed)
 
     async def label(
         self,
@@ -47,15 +99,8 @@ class RelationExtractor:
         # 존재하는지, 존재한다면 라벨이 무엇인지 확인하는 유일한 소스가 된다
         entity_label_by_text = {e.text.strip(): e.label for e in entities}
 
-        # 술어 사전·few-shot은 PROMPT의 고정 prefix(system 지시)에 이미 들어있으므로,
-        # 요청마다 채우는 변수는 text/entities만이다.
-        invoke_input = {
-            "text": text,
-            "entities": entities_str,
-        }
-
-        # LLM 호출은 네트워크 I/O라 ainvoke로 await 해서 이벤트 루프를 막지 않는다.
-        result = await self._chain.ainvoke(invoke_input)
+        # LLM 호출은 네트워크 I/O(동기 boto3)라 to_thread로 감싸 이벤트 루프를 막지 않는다.
+        result = await asyncio.to_thread(self._invoke, text, entities_str)
         normalized_text = _normalize_for_match(text)
 
         frames: list[RelationFrame] = []
@@ -83,9 +128,7 @@ class RelationExtractor:
                 if item_label is not None:
                     item_entity = Entity(text=raw_frame.item.strip(), label=item_label)
 
-            # 근거 문장 검증: 공백 정규화 후 원문에 substring으로 존재해야 통과.
-            # source_sentence는 필수이므로 검증에 실패한 프레임은 근거 없는 관계로
-            # 간주하고 전체를 버린다 (subject/object 그라운딩 실패와 같은 정책).
+            # source_sentence가 없다면 해당 프레임은 버림
             source_sentence = raw_frame.source_sentence.strip()
             if not source_sentence or _normalize_for_match(source_sentence) not in normalized_text:
                 continue

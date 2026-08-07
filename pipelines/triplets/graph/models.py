@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 EntityLabel = Literal[
     "COMPANY",
@@ -33,6 +33,11 @@ class Entity(BaseModel):
 # 할루시네이션을 방지용 모델 생성
 # 추후 Label 매핑해서 반환
 class RawRelation(BaseModel):
+    # Bedrock structured output(json_schema)은 모든 object 스키마에
+    # additionalProperties:false를 요구한다. extra="forbid"를 주면 Pydantic이
+    # model_json_schema()에 이 키를 자동으로 넣어준다.
+    model_config = ConfigDict(extra="forbid")
+
     # source_sentence/clause를 predicate보다 먼저 선언: structured output은 필드 선언
     # 순서대로 채워지므로, "근거 문장을 먼저 찾고 → 절로 재구성하고 → 그 다음에 술어를 고르는"
     # 순서가 프레임마다 강제된다. 기존 전역 clauses 필드의 CoT 역할을 프레임 단위로 옮긴 것.
@@ -78,6 +83,8 @@ class RawRelation(BaseModel):
 
 
 class RawRelationList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     frames: list[RawRelation] = Field(
         description=(
             "List of extracted frames, each containing source_sentence, clause, subject, "
