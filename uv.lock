@@ -932,13 +932,15 @@ dependencies = [
 airflow = [
     { name = "apache-airflow" },
 ]
+news = [
+    { name = "beautifulsoup4" },
+]
+
+[package.dev-dependencies]
 dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
-]
-news = [
-    { name = "beautifulsoup4" },
 ]
 
 [package.metadata]
@@ -954,17 +956,21 @@ requires-dist = [
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "neo4j", specifier = ">=6.2.0" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2" },
     { name = "requests", specifier = ">=2.32" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "tenacity", specifier = ">=8.3" },
 ]
-provides-extras = ["dev", "airflow", "news"]
+provides-extras = ["airflow", "news"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=3.7" },
+    { name = "pytest", specifier = ">=8.2" },
+    { name = "ruff", specifier = ">=0.5" },
+]
 
 [[package]]
 name = "fastapi"

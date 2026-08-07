@@ -25,12 +25,15 @@ dependencies = [
   "flashtext>=2.7",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
+# dev 도구는 uv sync 시 기본 포함되도록 dependency-group으로 둔다(extra와 달리 기본 설치됨).
 dev = [
   "pytest>=8.2",
   "ruff>=0.5",
   "pre-commit>=3.7",
 ]
+
+[project.optional-dependencies]
 airflow = [
   "apache-airflow>=3.3",
 ]
