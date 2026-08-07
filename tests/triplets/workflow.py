@@ -5,7 +5,7 @@
 LLM 키(GEMINI_MODEL/GOOGLE_API_KEY)가 필요해 pytest가 수집하지 않도록
 test_ 접두사를 붙이지 않는다.
 
-실행: python -m tests.triplets.workflow
+실행: uv run python -m tests.triplets.workflow
 """
 
 import asyncio

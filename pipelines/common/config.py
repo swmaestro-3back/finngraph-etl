@@ -36,9 +36,6 @@ class Settings(BaseSettings):
     bedrock_chat_model: str = Field(default="", validation_alias="BEDROCK_CHAT_MODEL")
     bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
 
-    gemini_model: str = Field(default="", validation_alias="GEMINI_MODEL")
-    google_api_key: str = Field(default="", validation_alias="GOOGLE_API_KEY")
-
     neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
     neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
     neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")

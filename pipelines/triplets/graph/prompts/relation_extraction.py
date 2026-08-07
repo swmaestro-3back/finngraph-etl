@@ -6,13 +6,6 @@ from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
 _PREDICATE_DICT: dict = PREDICATE_DICT
 
 
-# 술어 이름만 나열하지 않고 description과 argument(역할)별 설명을 함께 조립해 프롬프트에
-# 제공한다. 타입 제약만으로는 방향을 구분할 수 없는 근접 동의어(예: ACQUIRES vs DIVESTS_FROM,
-# PRODUCES vs DEVELOPS)를 LLM이 헷갈리지 않도록 돕는 역할 설명이다.
-# argument가 3개인 술어는 세 번째(item) 역할을 subject/object와 별도로 표시하고, dictionary에
-# 기록된 required 값을 그대로 노출해 "item이 없으면 프레임 자체를 버려야 하는지(mandatory)"
-# 아니면 "item 없이도 추출해도 되는지(optional)"를 LLM이 predicate별로 구분하게 한다.
-# 문서 자체가 요청당 변하지 않으므로 모듈 로드 시 한 번만 조립해둔다.
 def _format_predicate_entry(predicate: str, entry: dict) -> str:
     arg_names = list(entry["arguments"].keys())
     subject_role, object_role = arg_names[0], arg_names[1]
@@ -33,7 +26,7 @@ _REGISTERED_PREDICATES_LIST = "\n".join(
     for predicate, entry in sorted(_PREDICATE_DICT.items())
 )
 
-_SYSTEM = """\
+SYSTEM_MESSAGE = f"""\
 ### [Role]
 You are an expert Information Extraction system specialized in Korean economic and financial news.
 Your sole task is to extract multilateral business relationships among entities such as 'COMPANY, GOVERNMENT, COUNTRY, and MATERIAL/PRODUCT' in the form of structured frames: (subject, predicate, object), optionally with a fourth 'item' argument.
@@ -66,6 +59,9 @@ Your sole task is to extract multilateral business relationships among entities 
 - subject: The active agent (COMPANY, GOVERNMENT, or COUNTRY).
 - object: The target entity. (COMPANY, GOVERNMENT, COUNTRY, COMMODITY, PRODUCT)
 - item: Only for predicates that declare an "item" role (see registered_predicates list) — the specific product/commodity/material (COMMODITY, PRODUCT) involved. Fill it whenever the text names one. If the predicate's item is [mandatory] and no item is named, do not extract that frame. If [optional], extract the frame anyway and leave item null.
+
+**Registered predicate list**:
+{_REGISTERED_PREDICATES_LIST}
 """
 
 _EXAMPLES = [
@@ -285,45 +281,21 @@ _EXAMPLES = [
     },
 ]
 
-# Bedrock Converse에는 structured output 강제 기능이 없으므로, system 지시에
-# "frames 배열을 담은 JSON만 출력하라"는 출력 형식 규약을 명시한다. 실제 스키마는
-# 아래 few-shot 예시의 assistant 응답(JSON)이 예로 보여준다.
-_OUTPUT_FORMAT = """\
-### [Output Format]
-Return ONLY a single JSON object, with no surrounding prose and no markdown code fences.
-The object has exactly one key "frames" whose value is a list of frame objects.
-Each frame object has the keys: "source_sentence", "clause", "predicate", "is_negated",
-"tense", "subject", "object", and "item" (use null when there is no item).
-If no relationship is found, return {"frames": []}.
-"""
-
-# SYSTEM_MESSAGE 조합: SYSTEM_PROMPT + REGISTERED_PREDICATES + OUTPUT_FORMAT.
-# Converse의 system 필드(system=[{"text": ...}])에 그대로 넣는다.
-SYSTEM_MESSAGE = (
-    _SYSTEM
-    + "\n\n**Registered predicate list**:\n"
-    + _REGISTERED_PREDICATES_LIST
-    + "\n\n"
-    + _OUTPUT_FORMAT
-)
-
 
 def _user_text(text: str, entities: str) -> str:
     return f"**Text**:\n{text}\n\n**NER results (entities)**:\n{entities}"
 
 
-# Few-shot을 Converse 메시지 턴(user/assistant 교대)으로 펼쳐둔다. 모듈 로드 시 한 번만
-# 조립하며, 요청마다 이 뒤에 실제 user 턴만 덧붙인다.
-_FEW_SHOT_MESSAGES: list[dict[str, Any]] = []
+# Bedrock에서 few-shot prompt를 전달하기 위한 템플릿 생성 로직
+FEW_SHOT_MESSAGES: list[dict[str, Any]] = []
 for _example in _EXAMPLES:
-    _FEW_SHOT_MESSAGES.append(
+    FEW_SHOT_MESSAGES.append(
         {"role": "user", "content": [{"text": _user_text(_example["text"], _example["entities"])}]}
     )
-    _FEW_SHOT_MESSAGES.append({"role": "assistant", "content": [{"text": _example["output"]}]})
+    FEW_SHOT_MESSAGES.append({"role": "assistant", "content": [{"text": _example["output"]}]})
 
 
-def build_messages(text: str, entities: str) -> list[dict[str, Any]]:
-    """Converse messages 배열을 만든다: few-shot 턴 + 이번 요청의 user 턴."""
-    return _FEW_SHOT_MESSAGES + [
-        {"role": "user", "content": [{"text": _user_text(text, entities)}]}
-    ]
+# User Message 생성 로직
+def build_user_message(text: str, entities: str) -> dict[str, Any]:
+    """이번 요청의 실제 user 턴 하나를 만든다. 호출부에서 FEW_SHOT_MESSAGES와 조합한다."""
+    return {"role": "user", "content": [{"text": _user_text(text, entities)}]}
