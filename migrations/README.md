@@ -16,3 +16,9 @@ DB migration 파일을 관리합니다. 운영 DB에 migration을 적용하기 �
 | 5 | `versions/20260725_05_news_relations.sql` | `news_relations` + 뷰(`news_companies`, `entities_relations`) |
 | 6 | `versions/20260725_06_news_clusters.sql` | `news_clusters` (클러스터링 결과 저장) |
 | 7 | `versions/20260729_07_pinned_search_keyword.sql` | `search_keywords.is_pinned` 컬럼 + '특징주' 고정 키워드 시드 |
+| 8 | `versions/0001_create_stocks.sql` | `stocks` 종목 마스터. 날짜 접두사 규칙 이전에 만들어져 파일명만 다르다 |
+| 9 | `versions/20260730_01_stocks_raw_attributes.sql` | `stocks.raw_attributes` (필드 탐색·파싱 검증용) |
+| 10 | `versions/20260804_01_stocks_share_columns.sql` | `stocks.listed_shares` / `par_value` / `capital` |
+| 11 | `versions/20260804_02_stocks_surrogate_id.sql` | `stocks` surrogate id 전환 + `company_id` FK. `companies`(2번) 이후여야 한다 |
+| 12 | `versions/20260804_03_companies_active_ticker.sql` | `companies.delisted_at` + 활성 ticker 부분 UNIQUE |
+| 13 | `versions/20260808_01_companies_master.sql` | `companies` 확장(국내 비상장·외국 수용) + `company_aliases` + `unresolved_entities` |
