@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
 
+    related_news_window_hours: int = Field(
+        default=72,
+        validation_alias="RELATED_NEWS_WINDOW_HOURS",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -2,7 +2,7 @@
 --
 -- 마이그레이션 러너 미도입 → DB에 수동 적용(반복 적용 안전, IF NOT EXISTS).
 -- 적용 순서: 01_news → 02_companies → 03_themes → 04_keyword_search
---            → 05_news_relations → 06_news_clusters (FK 의존 순서)
+--            → 05_news_relations (FK 의존 순서)
 
 CREATE TABLE IF NOT EXISTS news (
     id                  BIGSERIAL PRIMARY KEY,
