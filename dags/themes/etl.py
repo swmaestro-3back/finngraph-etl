@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
 
 try:
     from airflow.sdk import dag, task
@@ -10,17 +9,17 @@ except ImportError:
     dag = None
     task = None
 
-SOURCES = ["judal", "naver", "antwinner"]
+SOURCES = ["judal", "naver"]
 
 if dag and task:
 
     @dag(
-        dag_id="themes_pipeline",
+        dag_id="themes_etl",
         start_date=datetime(2026, 1, 1),
         schedule="0 0 * * *",
         catchup=False,
         max_active_runs=1,
-        tags=["etl", "themes"],
+        tags=["themes"],
     )
     def themes_pipeline():
 
@@ -31,24 +30,22 @@ if dag and task:
             asyncio.run(reset())
 
         @task
-        def extract_themes(source_name: str) -> list[dict[str, Any]]:
+        def extract_themes(source_name: str) -> str:
             from pipelines.themes.jobs.steps import extract_source
 
             return asyncio.run(extract_source(source_name))
 
         @task
-        def validate_themes(
-            raw_themes_nested: list[list[dict[str, Any]]],
-        ) -> list[dict[str, Any]]:
+        def validate_themes(source_paths: list[str]) -> str:
             from pipelines.themes.jobs.steps import validate_themes as _validate
 
-            return asyncio.run(_validate(raw_themes_nested))
+            return asyncio.run(_validate(source_paths))
 
         @task
-        def load_themes(validated_themes: list[dict[str, Any]]) -> None:
+        def load_themes(validated_path: str) -> None:
             from pipelines.themes.jobs.steps import load_themes as _load
 
-            asyncio.run(_load(validated_themes))
+            asyncio.run(_load(validated_path))
 
         reset = reset_themes()
 

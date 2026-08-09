@@ -17,7 +17,7 @@ if dag and task:
         schedule=None,
         catchup=False,
         max_active_runs=1,
-        tags=["stocks", "daily", "backfill"],
+        tags=["stocks"],
     )
     def stocks_daily_backfill():
         @task

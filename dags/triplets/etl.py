@@ -17,7 +17,7 @@ if dag and task:
         schedule="0 * * * *",
         catchup=False,
         max_active_runs=1,
-        tags=["triplets", "neo4j", "etl"],
+        tags=["triplets"],
     )
     def triplets_etl():
 
