@@ -6,10 +6,11 @@ x-airflow-common: &airflow-common
     dockerfile: docker/airflow/Dockerfile
   image: etl-airflow:3.3.0
   user: "${AIRFLOW_UID:-50000}:0"
-  # 잡 실행에 필요한 env(KIS_*, NEO4J_*, news 변수 등)를 통째로 주입한다.
-  # 컨테이너 네트워크에 맞는 값은 아래 environment가 덮어쓴다(environment > env_file).
+
   env_file:
     - path: .env
+      required: false
+    - path: .env.news
       required: false
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
