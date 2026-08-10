@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # .env 파일을 읽어오기 위한 설정
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+
     database_url: str = Field(
         default="postgresql+psycopg://etl:etl@localhost:15432/etl",
         validation_alias="DATABASE_URL",

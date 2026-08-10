@@ -783,6 +783,54 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
         return items
 
 
+def insert_news_relations(news_id: int, rows: list[dict[str, Any]]) -> int:
+    """추출된 삼중항을 news_relations에 멱등 저장한다.
+
+    UNIQUE(news_id, subject_name, relation, object_name)로 재추출 시 ON CONFLICT DO NOTHING.
+    rows 항목 형식: {subject_name, subject_type, subject_code, relation,
+                    object_name, object_type, object_code}. 신규 삽입된 행 수를 반환한다.
+    """
+
+    if not rows:
+        return 0
+
+    inserted_count = 0
+
+    with session_scope() as session:
+        for row in rows:
+            result = session.execute(
+                text(
+                    """
+                    INSERT INTO news_relations (
+                        news_id,
+                        subject_name,
+                        subject_type,
+                        subject_code,
+                        relation,
+                        object_name,
+                        object_type,
+                        object_code
+                    )
+                    VALUES (
+                        :news_id,
+                        :subject_name,
+                        :subject_type,
+                        :subject_code,
+                        :relation,
+                        :object_name,
+                        :object_type,
+                        :object_code
+                    )
+                    ON CONFLICT (news_id, subject_name, relation, object_name) DO NOTHING;
+                    """
+                ),
+                {"news_id": news_id, **row},
+            )
+            inserted_count += result.rowcount or 0
+
+    return inserted_count
+
+
 def fetch_triplets_for_news_ids(
     news_ids: list[int],
 ) -> dict[int, list[tuple[str, str, str]]]:

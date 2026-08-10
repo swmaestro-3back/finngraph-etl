@@ -12,20 +12,20 @@ except ImportError:
 if dag and task:
 
     @dag(
-        dag_id="stocks_intraday_1m",
+        dag_id="stocks_aggregate_candles",
         start_date=datetime(2026, 1, 1),
-        schedule="*/5 9-15 * * 1-5",
+        schedule="*/5 9-16 * * 1-5",
         catchup=False,
         max_active_runs=1,
-        tags=["stocks", "intraday", "1m"],
+        tags=["stocks"],
     )
-    def stocks_intraday_1m():
+    def stocks_aggregate_candles():
         @task(retries=2)
-        def collect_intraday_1m() -> None:
-            from pipelines.stocks.jobs.collect_intraday_1m import run
+        def aggregate_candles() -> None:
+            from pipelines.stocks.jobs.aggregate_candles import run
 
             run()
 
-        collect_intraday_1m()
+        aggregate_candles()
 
-    stocks_intraday_1m()
+    stocks_aggregate_candles()

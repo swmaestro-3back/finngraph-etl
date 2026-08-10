@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-# dev 도구는 uv sync 시 기본 포함되도록 dependency-group으로 둔다(extra와 달리 기본 설치됨).
+# 커밋 전 CI를 위한 dev 도구는 uv sync 시 기본 포함되도록 dependency-group으로 둔다(extra와 달리 기본 설치됨).
 dev = [
   "pytest>=8.2",
   "ruff>=0.5",
@@ -34,6 +34,7 @@ dev = [
 ]
 
 [project.optional-dependencies]
+# Airflow와 같이 로컬 환경에 설치하지 않는 경우에는 optional을 통해 uv sync시 기본적으로 패키지 설치가 진행되지 않도록 한다.
 airflow = [
   "apache-airflow>=3.3",
 ]
