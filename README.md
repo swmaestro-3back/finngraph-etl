@@ -23,7 +23,7 @@ finngraph-etl/
 └── tests/                # 테스트
 ```
 
-## Conventions
+## 컨벤션
 
 - `dags/`에는 DAG 정의만 둡니다.
 - 실제 ETL 로직은 `pipelines/{domain}/jobs/`에 둡니다.
