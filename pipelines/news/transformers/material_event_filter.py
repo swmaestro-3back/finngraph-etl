@@ -220,21 +220,18 @@ MATERIAL_RELATION_SURFACE_PATTERN = re.compile(
 
 def get_material_event_filter_config() -> dict[str, Any]:
     try:
-        from pipelines.news import config
+        from pipelines.news.config import get_news_settings
 
         settings = get_settings()
+        news_settings = get_news_settings()
 
         return {
             "enable_llm": True,
-            "body_limit": getattr(config, "NEWS_LLM_BODY_LIMIT", 12000),
-            "max_tokens": getattr(config, "NEWS_LLM_MAX_TOKENS", 512),
-            "max_concurrency": getattr(
-                config,
-                "NEWS_LLM_MAX_CONCURRENCY",
-                3,
-            ),
-            "batch_size": getattr(config, "MATERIAL_EVENT_FILTER_BATCH_SIZE", 3),
-            "fail_open": getattr(config, "MATERIAL_EVENT_FILTER_FAIL_OPEN", False),
+            "body_limit": news_settings.news_llm_body_limit,
+            "max_tokens": news_settings.news_llm_max_tokens,
+            "max_concurrency": news_settings.news_llm_max_concurrency,
+            "batch_size": news_settings.material_event_filter_batch_size,
+            "fail_open": news_settings.material_event_filter_fail_open,
             "bedrock_region": settings.bedrock_region,
             "bedrock_model": settings.bedrock_chat_model,
             "bedrock_timeout": settings.bedrock_request_timeout,

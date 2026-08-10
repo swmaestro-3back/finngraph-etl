@@ -5,32 +5,28 @@ from typing import Any
 
 import requests
 
-from pipelines.news.config import (
-    API_BASE_URL,
-    CLIENT_ID,
-    CLIENT_SECRET,
-    MAX_PAGES,
-    REQUEST_DELAY,
-    SEARCH_DISPLAY,
-    SEARCH_SORT,
-)
+from pipelines.news.config import get_news_settings
 from pipelines.news.utils.text_utils import get_printable_text
 
 SOURCE_TYPE_KEYWORD_SEARCH = "keyword_search"
 
 
 def validate_search_settings() -> None:
-    if not CLIENT_ID or not CLIENT_SECRET:
+    settings = get_news_settings()
+
+    if not settings.client_id or not settings.client_secret:
         raise RuntimeError("환경 변수가 설정되지 않았습니다.")
 
-    if not API_BASE_URL:
+    if not settings.api_base_url:
         raise RuntimeError("환경 변수가 설정되지 않았습니다.")
 
 
 def build_request_headers() -> dict[str, str]:
+    settings = get_news_settings()
+
     return {
-        "X-Naver-Client-Id": CLIENT_ID or "",
-        "X-Naver-Client-Secret": CLIENT_SECRET or "",
+        "X-Naver-Client-Id": settings.client_id.get_secret_value(),
+        "X-Naver-Client-Secret": settings.client_secret.get_secret_value(),
     }
 
 
@@ -77,7 +73,7 @@ def fetch_search_news_page(
 
     try:
         response = session.get(
-            API_BASE_URL,
+            get_news_settings().api_base_url,
             params=params,
             headers=build_request_headers(),
             timeout=timeout,
@@ -104,15 +100,20 @@ def fetch_search_news_page(
 def iter_search_news_pages(
     keyword: str,
     keyword_id: int | None = None,
-    max_pages: int = MAX_PAGES,
-    display: int = SEARCH_DISPLAY,
-    sort: str = SEARCH_SORT,
+    max_pages: int | None = None,
+    display: int | None = None,
+    sort: str | None = None,
     source_type: str = SOURCE_TYPE_KEYWORD_SEARCH,
     wait_seconds: int = 10,
 ) -> Iterator[list[dict[str, Any]]]:
 
     if not keyword or not keyword.strip():
         return
+
+    settings = get_news_settings()
+    max_pages = settings.max_pages if max_pages is None else max_pages
+    display = settings.search_display if display is None else display
+    sort = settings.search_sort if sort is None else sort
 
     display = max(1, min(display, 100))
     seen_links: set = set()
@@ -163,7 +164,7 @@ def iter_search_news_pages(
             if len(raw_items) < display:
                 break
 
-            time.sleep(REQUEST_DELAY)
+            time.sleep(settings.request_delay)
 
     finally:
         session.close()
@@ -172,9 +173,9 @@ def iter_search_news_pages(
 def search_news(
     keyword: str,
     keyword_id: int | None = None,
-    max_pages: int = MAX_PAGES,
-    display: int = SEARCH_DISPLAY,
-    sort: str = SEARCH_SORT,
+    max_pages: int | None = None,
+    display: int | None = None,
+    sort: str | None = None,
     source_type: str = SOURCE_TYPE_KEYWORD_SEARCH,
 ) -> list[dict[str, Any]]:
 

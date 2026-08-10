@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from pipelines.news.config import ANCHOR_HOST, REQUEST_DELAY
+from pipelines.news.config import get_news_settings
 from pipelines.news.extractors.article_metadata import extract_anchor_published_at
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
@@ -20,14 +20,16 @@ def is_anchor_link(url: str) -> bool:
     if not url:
         return False
 
-    if not ANCHOR_HOST:
+    anchor_host = get_news_settings().anchor_host
+
+    if not anchor_host:
         return False
 
     try:
         parsed = urlparse(url)
         host = parsed.netloc.lower()
 
-        return host == ANCHOR_HOST or host.endswith(f".{ANCHOR_HOST}")
+        return host == anchor_host or host.endswith(f".{anchor_host}")
 
     except Exception:
         return False
@@ -308,6 +310,6 @@ def enrich_items_with_article_body(items: list[dict[str, Any]]) -> list[dict[str
 
         enriched_items.append(item)
 
-        time.sleep(REQUEST_DELAY)
+        time.sleep(get_news_settings().request_delay)
 
     return enriched_items
