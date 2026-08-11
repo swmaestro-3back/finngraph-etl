@@ -1,19 +1,23 @@
-# ETL Platform
+# finngraph-etl
 
-Airflow로 실행되는 팀 공용 ETL 레포입니다. 이 레포는 데이터 수집, 변환, 적재 로직을 도메인별 패키지로 관리합니다.
+뉴스·기업·주가·테마·삼중항관계 데이터를 수집 > 가공 > 적재하는 Airflow 기반 ETL 파이프라인.
 
-## 구조
+## Structure
 
 ```text
-etl/
-├── dags/                 # Airflow DAG 정의
+finngraph-etl/
+├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
+│   ├── health/           # 운영 헬스체크
+│   ├── news/             # 뉴스 수집 · 필터 · 요약
+│   ├── stocks/           # 주가 캔들 수집 · 집계
+│   ├── themes/           # 테마 크롤링
+│   └── triplets/         # 삼중항(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
-│   ├── common/           # 설정, DB(Postgres/Neo4j), 로깅, 재시도, 레이트리밋 공통 코드
-│   ├── stocks/           # 국내 주식 OHLCV 수집
-│   ├── disclosures/      # 공시 수집
-│   ├── news/             # 뉴스/이벤트 수집
-│   ├── themes/           # 테마-종목 매핑 수집
-│   └── triplets/         # 뉴스 → 지식그래프 트리플 추출 (LangGraph 워크플로우)
+│   ├── common/           # ETL 내 사용되는 공통 모듈
+│   ├── stocks/           # 주식 및 주가 ETL
+│   ├── news/             # 뉴스 ETL
+│   ├── themes/           # 테마 ETL
+│   └── triplets/         # 삼중항관계 ETL
 ├── migrations/           # DB migration
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
@@ -27,22 +31,80 @@ etl/
 - 여러 도메인에서 공유하는 코드는 `pipelines/common/`에 둡니다.
 - Airflow task는 job 함수를 호출하고, job 함수가 extract-transform-load 흐름을 조립합니다.
 
-## 주식 파이프라인 정책
+## Running Airflow locally
 
-- 과거 일봉은 FinanceDataReader로 초기 적재합니다.
-- 오늘 이후 장중 데이터는 한국투자증권 Open API의 1분봉 조회로 누적합니다.
-- 5분봉은 API에서 직접 받지 않고 1분봉에서 내부 집계합니다.
-- 1분봉은 기본 60일 보관, 5분봉은 3년 보관, 일봉은 영구 보관합니다.
-- 사용자-facing 차트는 최대 5분 지연을 허용합니다.
+Airflow 3.3(LocalExecutor) 스택을 docker compose 프로파일로 띄운다. 프로젝트 코드는 Airflow와
+같은 파이썬 환경에 설치된다(Airflow 3.x부터 SQLAlchemy 2.0을 써서 의존성 충돌이 없다).
 
-## 로컬 기본 검사
+```bash
+# 환경변수 설정
+cp .env.example .env
 
-CI와 동일한 검사를 로컬에서 돌리려면 먼저 의존성을 설치한다. `uv sync`는 dev
-dependency-group(pytest/ruff/pre-commit)까지 기본으로 설치한다.
+# 최초 1회 (또는 의존성/Dockerfile 변경된 경우)
+# 이미지 빌드
+docker compose --profile airflow build
+
+# airflow 관련 스택 기동
+docker compose --profile airflow up -d  
+
+# Airflow 컨테이너 중지
+docker compose --profile airflow down
+
+# Airflow 컨테이너 중지 및 볼륨(메타DB/로그)까지 삭제
+dockre compose --profice airflow down -v
+```
+
+- Airflow Web UI는 `http://localhost:8080`로 접속한다.
+  - 기본 계정은 airflow/airflow이다.
+- `dags/`, `pipelines/`, `scripts/`는 컨테이너에 마운트되므로 코드 수정이 즉시 반영된다.
+  `pyproject.toml` 의존성이 바뀌면 `airflow build`로 이미지를 다시 빌드해야 한다.
+- 컨테이너 안에서 ETL DB 접속은 `db:5432`다(compose가 `DATABASE_URL`/`DB_HOST`/`DB_PORT`를 덮어씀).
+- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`9-16 * * 1-5` 등)이 KST 기준으로 해석된다.
+- DAG는 생성 시 일시정지 상태로 등록된다(`DAGS_ARE_PAUSED_AT_CREATION`). UI에서 unpause 후 사용한다.
+
+### 스택 구성
+
+`--profile airflow`는 Airflow 컨테이너 하나가 아니라 역할별로 분리된 여러 서비스를 함께 띄운다
+(Airflow 3.x 방식). `dags/`의 파이썬 파일은 "무엇을 언제 어떤 순서로 실행할지"를 **정의만** 하고,
+실제 실행은 아래 컨테이너들이 담당한다.
+
+| 서비스 | 역할 |
+| --- | --- |
+| `airflow-init` | 최초 1회 DB 마이그레이션 + admin 계정 생성 후 종료 |
+| `airflow-apiserver` | 웹 UI + Execution API (포트 8080) |
+| `airflow-scheduler` | 스케줄 판단 + LocalExecutor라 태스크 실제 실행도 여기서 수행 |
+| `airflow-dag-processor` | `dags/`를 파싱해 DAG 등록 (Airflow 3부터 scheduler에서 분리) |
+| `airflow-db` | Airflow 메타데이터 전용 Postgres (ETL 데이터 `db`와 분리) |
+
+- `apache-airflow`는 `pyproject.toml`의 optional-dependency라 기본 `uv sync`엔 설치되지 않는다.
+  DAG 파일이 `from airflow.sdk import ...`를 `try/except`로 감싸는 것은, airflow가 없는 로컬 편집·CI
+  문법검사 환경에서도 파싱이 깨지지 않게 하기 위함이다. 실제 실행은 airflow가 설치된 컨테이너 안에서만 된다.
+- 데코레이터로 정의한 DAG 함수는 파일 최상단에서 한 번 호출해야 dag-processor가 인식·등록한다.
+
+## Running Neo4j locally
+
+```bash
+# Neo4j 컨테이너만 실행
+docker compose up -d neo4j
+
+# Neo4j 컨테이너 중지
+
+# Neo4j 컨테이너 중지 및 볼륨까지 삭제
+docker compose down -v
+```
+
+- neo4j:5 community 버전은 username은 무조건 neo4j여야한다.
+- 기본 계정 정보는 처음 이미지 빌드 시 `.env` 정보로 인해 초기화된다.
+  - 비밀번호가 바뀐 경우 `docker compose down -v` 옵션으로 볼륨을 내리고 다시 실행시켜야 한다.
+
+## Local Checks Before Commit
 
 ```bash
 uv sync
 ```
+- CI와 동일한 검사를 로컬에서 돌리기 위해 먼저 관련 의존성 패키지(pytest/ruff/pre-commit)를 설치해야 한다.
+- CI 관련 패키지는 `dev dependency-groups`로 지정되어 
+`uv sync`시 필수 패키지와 같이 설치된다.
 
 ### 자동 (pre-commit)
 
@@ -74,65 +136,3 @@ DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
 docker compose up -d db
 uv run pytest -m integration
 ```
-
-## Running Neo4j locally
-
-```bash
-# neo4j stand-alone setup
-docker compose up -d neo4j
-
-# 비밀번호 초기화 및 볼륨 초기화
-docker compose down -v
-```
-
-neo4j:5 community 버전은 username은 무조건 neo4j여야함.
-
-## Running Airflow locally
-
-Airflow 3.3(LocalExecutor) 스택을 docker compose 프로파일로 띄운다. 프로젝트 코드는 Airflow와
-같은 파이썬 환경에 설치된다(Airflow 3.x부터 SQLAlchemy 2.0을 써서 의존성 충돌이 없다).
-
-```bash
-cp .env.example .env                     # 값 채우기 (특히 news 변수, AIRFLOW_FERNET_KEY)
-docker compose --profile airflow build   # 커스텀 이미지 빌드 (의존성 변경 시에만 재실행)
-docker compose --profile airflow up -d
-# UI: http://localhost:8080 (기본 계정 airflow/airflow)
-docker compose --profile airflow down    # 중지. -v를 붙이면 메타DB/로그까지 초기화
-```
-
-- 기존 `docker compose up -d db` 워크플로는 그대로 동작한다(airflow 서비스는 profile로 분리).
-- `dags/`, `pipelines/`, `scripts/`는 컨테이너에 마운트되므로 코드 수정이 즉시 반영된다.
-  `pyproject.toml` 의존성이 바뀌면 이미지를 다시 빌드한다.
-- 컨테이너 안에서 ETL DB 접속은 `db:5432`다(compose가 `DATABASE_URL`/`DB_HOST`/`DB_PORT`를 덮어씀).
-- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`9-16 * * 1-5` 등)이 KST 기준으로 해석된다.
-- DAG는 생성 시 일시정지 상태로 등록된다(`DAGS_ARE_PAUSED_AT_CREATION`). UI에서 unpause 후 사용한다.
-
-## Database 초기화와 migration
-
-로컬 DB는 `timescale/timescaledb` 기반이며 `pgvector` extension을 함께 사용한다. DB volume이 처음
-만들어질 때 PostgreSQL이 `/docker-entrypoint-initdb.d`의 파일을 파일명 순서대로 자동 실행한다.
-
-```text
-docker/db/initdb/001_extensions.sql      # timescaledb + vector extension
-docker/db/initdb/002_run_migrations.sh   # /migrations/versions/*.sql 파일명 순 실행
-migrations/versions/*.sql                # migration 파일 (컨테이너에 마운트됨)
-```
-
-자동 초기화는 volume이 처음 생성될 때만 돈다. **이미 `etl_pgdata` volume이 있으면 새 migration을
-수동으로 적용해야 한다.**
-
-```bash
-docker compose exec -T db psql -U etl -d etl < migrations/versions/<파일명>.sql
-```
-
-## 로컬에서 Job 실행
-
-Airflow 없이 job 함수를 직접 실행할 수 있다.
-
-```bash
-python scripts/run_job.py pipelines.stocks.jobs.sync_stock_master:run
-```
-
-위 명령은 KIS public master 파일에서 KOSPI/KOSDAQ 종목 master 데이터를 가져와 `stocks` 테이블에
-동기화한다. DB가 실행 중이고 stocks migration이 적용되어 있어야 한다. 종목 master 동기화는 공개
-파일을 내려받으므로 `KIS_APP_KEY` 등의 인증 정보는 필요 없다(장중 API job에만 필요).

@@ -1,11 +1,6 @@
 from typing import Any
 
-from pipelines.news.config import (
-    KEYWORD_SEARCH_BATCH_SIZE,
-    MAX_PAGES,
-    SEARCH_DISPLAY,
-    SEARCH_SORT,
-)
+from pipelines.news.config import get_news_settings
 from pipelines.news.extractors.search_collector import (
     SOURCE_TYPE_KEYWORD_SEARCH,
     iter_search_news_pages,
@@ -39,9 +34,9 @@ def _merge_keyword_ids(target: dict[str, Any], source: dict[str, Any]) -> None:
 
 def collect_news_for_keywords(
     keywords: list[dict[str, Any]],
-    max_pages: int = MAX_PAGES,
-    display: int = SEARCH_DISPLAY,
-    sort: str = SEARCH_SORT,
+    max_pages: int | None = None,
+    display: int | None = None,
+    sort: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
     seen_by_url: dict[str, dict[str, Any]] = {}
@@ -101,7 +96,7 @@ def collect_news_for_keywords(
 def run() -> None:
     validate_search_settings()
 
-    keywords = fetch_active_search_keywords(limit=KEYWORD_SEARCH_BATCH_SIZE)
+    keywords = fetch_active_search_keywords(limit=get_news_settings().keyword_search_batch_size)
 
     if not keywords:
         print("검색할 active 키워드가 없습니다.")

@@ -1,72 +1,116 @@
+from __future__ import annotations
+
 import json
 import logging
-import os
+from functools import lru_cache
 from pathlib import Path
 
-from dotenv import load_dotenv
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(_REPO_ROOT / ".env")
+ROOT_DIR = Path(__file__).resolve().parents[2]
 
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-API_BASE_URL = os.getenv("API_BASE_URL")
-
-SEARCH_DISPLAY = int(os.getenv("SEARCH_DISPLAY"))
-SEARCH_SORT = os.getenv("SEARCH_SORT")
-MAX_PAGES = int(os.getenv("MAX_PAGES"))
-
-# 한 번 실행에서 처리할 active 키워드 개수(재검색 주기 관리).
-KEYWORD_SEARCH_BATCH_SIZE = int(os.getenv("KEYWORD_SEARCH_BATCH_SIZE"))
-ANCHOR_HOST = os.getenv("ANCHOR_HOST", "").strip().lower()
-ANCHOR_URL_TEMPLATE = os.getenv("ANCHOR_URL_TEMPLATE", "").strip()
+ENV_FILES = (ROOT_DIR / ".env", ROOT_DIR / ".env.news")
 
 
-def load_anchor_categories() -> dict[int, str]:
-    raw_categories = os.getenv("ANCHOR_CATEGORIES", "").strip()
+class NewsSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=ENV_FILES, env_file_encoding="utf-8", extra="ignore")
 
-    if not raw_categories:
-        return {}
+    client_id: SecretStr = Field(default=SecretStr(""), validation_alias="CLIENT_ID")
+    client_secret: SecretStr = Field(default=SecretStr(""), validation_alias="CLIENT_SECRET")
+    api_base_url: str = Field(default="", validation_alias="API_BASE_URL")
 
-    try:
-        parsed_categories = json.loads(raw_categories)
-    except json.JSONDecodeError as e:
-        raise RuntimeError("ANCHOR_CATEGORIES 환경 변수는 올바른 JSON이어야 합니다.") from e
+    search_display: int = Field(default=100, validation_alias="SEARCH_DISPLAY")
+    search_sort: str = Field(default="date", validation_alias="SEARCH_SORT")
+    max_pages: int = Field(default=1, validation_alias="MAX_PAGES")
 
-    if not isinstance(parsed_categories, dict):
-        raise RuntimeError("ANCHOR_CATEGORIES 환경 변수는 JSON 객체여야 합니다.")
+    keyword_search_batch_size: int = Field(default=50, validation_alias="KEYWORD_SEARCH_BATCH_SIZE")
 
-    try:
-        return {
-            int(category_id): str(category_name)
-            for category_id, category_name in parsed_categories.items()
-        }
-    except (TypeError, ValueError) as e:
-        raise RuntimeError("ANCHOR_CATEGORIES의 카테고리 ID는 정수여야 합니다.") from e
+    anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
+    anchor_url_template: str = Field(default="", validation_alias="ANCHOR_URL_TEMPLATE")
+    anchor_categories: dict[int, str] = Field(
+        default_factory=dict,
+        validation_alias="ANCHOR_CATEGORIES",
+    )
+    more_api_path_section: str = Field(default="", validation_alias="MORE_API_PATH_SECTION")
+    more_api_path_latest: str = Field(default="", validation_alias="MORE_API_PATH_LATEST")
+    parent_section_id: str = Field(default="", validation_alias="PARENT_SECTION_ID")
+    headline_selector: str = Field(default="", validation_alias="HEADLINE_SELECTOR")
+
+    max_total_collected_items: int = Field(
+        default=100,
+        validation_alias="MAX_TOTAL_COLLECTED_ITEMS",
+    )
+
+    official_source_threshold: int = Field(default=0, validation_alias="OFFICIAL_SOURCE_THRESHOLD")
+
+    request_delay: float = Field(default=1.0, validation_alias="REQUEST_DELAY")
+
+    headline_more_count: int = Field(default=3, validation_alias="HEADLINE_MORE_COUNT")
+
+    material_event_filter_batch_size: int = Field(
+        default=3,
+        validation_alias="MATERIAL_EVENT_FILTER_BATCH_SIZE",
+    )
+
+    material_event_filter_fail_open: bool = Field(
+        default=False,
+        validation_alias="MATERIAL_EVENT_FILTER_FAIL_OPEN",
+    )
+
+    news_llm_body_limit: int = Field(default=12000, validation_alias="NEWS_LLM_BODY_LIMIT")
+    news_llm_max_tokens: int = Field(default=512, validation_alias="NEWS_LLM_MAX_TOKENS")
+    news_llm_max_concurrency: int = Field(default=4, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
+
+    @field_validator("anchor_host", mode="after")
+    @classmethod
+    def _normalize_host(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("anchor_url_template", mode="after")
+    @classmethod
+    def _strip_template(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("anchor_categories", mode="before")
+    @classmethod
+    def _parse_categories(cls, value: object) -> dict[int, str]:
+        """`{"101": "경제"}` JSON 문자열을 `{101: "경제"}`로 파싱한다.
+
+        미설정·빈 문자열은 빈 dict. 형식 오류는 즉시 드러나도록 예외를 올린다.
+        """
+        if value is None or value == "":
+            return {}
+
+        if isinstance(value, dict):
+            parsed: object = value
+        elif isinstance(value, str):
+            stripped = value.strip()
+
+            if not stripped:
+                return {}
+
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError as e:
+                raise ValueError("ANCHOR_CATEGORIES 환경 변수는 올바른 JSON이어야 합니다.") from e
+        else:
+            raise ValueError("ANCHOR_CATEGORIES는 JSON 문자열이어야 합니다.")
+
+        if not isinstance(parsed, dict):
+            raise ValueError("ANCHOR_CATEGORIES 환경 변수는 JSON 객체여야 합니다.")
+
+        try:
+            return {int(key): str(name) for key, name in parsed.items()}
+        except (TypeError, ValueError) as e:
+            raise ValueError("ANCHOR_CATEGORIES의 카테고리 ID는 정수여야 합니다.") from e
 
 
-ANCHOR_CATEGORIES = load_anchor_categories()
+@lru_cache
+def get_news_settings() -> NewsSettings:
+    return NewsSettings()
 
-MORE_API_PATH_SECTION = os.getenv("MORE_API_PATH_SECTION")
-MORE_API_PATH_LATEST = os.getenv("MORE_API_PATH_LATEST")
-PARENT_SECTION_ID = os.getenv("PARENT_SECTION_ID")
-HEADLINE_SELECTOR = os.getenv("HEADLINE_SELECTOR")
-
-MAX_TOTAL_COLLECTED_ITEMS = int(os.getenv("MAX_TOTAL_COLLECTED_ITEMS"))
-OFFICIAL_SOURCE_THRESHOLD = int(os.getenv("OFFICIAL_SOURCE_THRESHOLD"))
-REQUEST_DELAY = float(os.getenv("REQUEST_DELAY"))
-HEADLINE_MORE_COUNT = int(os.getenv("HEADLINE_MORE_COUNT"))
-
-MATERIAL_EVENT_FILTER_BATCH_SIZE = int(os.getenv("MATERIAL_EVENT_FILTER_BATCH_SIZE", "3"))
-MATERIAL_EVENT_FILTER_FAIL_OPEN = os.getenv(
-    "MATERIAL_EVENT_FILTER_FAIL_OPEN", "false"
-).strip().lower() in {"1", "true", "yes", "on"}
-
-NEWS_LLM_BODY_LIMIT = int(os.getenv("NEWS_LLM_BODY_LIMIT", "12000"))
-NEWS_LLM_MAX_TOKENS = int(os.getenv("NEWS_LLM_MAX_TOKENS", "512"))
-NEWS_LLM_MAX_CONCURRENCY = int(os.getenv("NEWS_LLM_MAX_CONCURRENCY", "4"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)

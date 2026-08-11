@@ -1,4 +1,3 @@
-# ETL 데이터 DB(db)는 프로파일 없이 단독 기동 가능: `docker compose up -d db`
 # Airflow 스택 전체 기동: `docker compose --profile airflow up -d` (README "Running Airflow locally")
 x-airflow-common: &airflow-common
   build:
@@ -6,12 +5,16 @@ x-airflow-common: &airflow-common
     dockerfile: docker/airflow/Dockerfile
   image: etl-airflow:3.3.0
   user: "${AIRFLOW_UID:-50000}:0"
-  # 잡 실행에 필요한 env(KIS_*, NEO4J_*, news 변수 등)를 통째로 주입한다.
-  # 컨테이너 네트워크에 맞는 값은 아래 environment가 덮어쓴다(environment > env_file).
+
   env_file:
     - path: .env
       required: false
+    - path: .env.news
+      required: false
   environment: &airflow-common-env
+    # 앱 로그(pipelines)와 Airflow 로그 레벨을 .env의 LOG_LEVEL 하나로 동시 제어(기본 INFO).
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    AIRFLOW__LOGGING__LOGGING_LEVEL: ${LOG_LEVEL:-INFO}
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow

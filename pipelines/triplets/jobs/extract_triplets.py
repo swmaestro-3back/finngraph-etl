@@ -7,9 +7,10 @@ from pipelines.common.logging import get_logger
 from pipelines.common.neo4j import neo4j_database
 from pipelines.news.loaders.news_repository import (
     fetch_unprocessed_triplet_news_items,
+    insert_news_relations,
     mark_news_relation_extracted,
 )
-from pipelines.triplets.crud import upsert_triplets
+from pipelines.triplets.crud import build_news_relation_rows, upsert_triplets
 from pipelines.triplets.graph.workflow import GraphRunner
 
 logger = get_logger(__name__)
@@ -30,9 +31,12 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
         final_state = await runner.ainvoke(str(news_id), item["body_text"])
         triplets = final_state.get("triplets") or []
 
-        # 삼중항관계가 존재한다면 Neo4j에 반영
+        # 삼중항관계가 존재한다면 Neo4j 그래프와 news_relations 테이블에 반영
         if triplets:
             await upsert_triplets(str(news_id), triplets)
+            # 이항 엣지로 분해 + COMPANY ticker 조회 후 news_relations에 멱등 적재
+            relation_rows = await build_news_relation_rows(triplets)
+            insert_news_relations(news_id, relation_rows)
 
         has_triplets = bool(triplets)
         # News 테이블에 relation_extracted 최신화

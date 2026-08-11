@@ -18,10 +18,10 @@ async def _run_async() -> None:
     """
     await reset()
 
-    nested = await asyncio.gather(*(extract_source(source_name) for source_name in SOURCES))
+    source_paths = await asyncio.gather(*(extract_source(source_name) for source_name in SOURCES))
 
-    validated = await validate_themes(nested)
-    await load_themes(validated)
+    validated_path = await validate_themes(list(source_paths))
+    await load_themes(validated_path)
 
 
 def run() -> None:

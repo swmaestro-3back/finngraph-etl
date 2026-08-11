@@ -17,7 +17,7 @@ if dag and task:
         schedule="0 1 * * *",  # 테마 크롤러(themes_pipeline, 자정) 이후 실행
         catchup=False,
         max_active_runs=1,
-        tags=["themes", "rdb-mirror"],
+        tags=["themes"],
     )
     def themes_mirror_to_rdb():
         @task(retries=2)

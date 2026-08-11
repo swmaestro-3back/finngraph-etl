@@ -20,7 +20,7 @@ if dag and task:
         schedule="0 * * * *",
         catchup=False,
         max_active_runs=1,
-        tags=["news", "filter", "material-event"],
+        tags=["news"],
     )
     def news_filter_meaningless():
 

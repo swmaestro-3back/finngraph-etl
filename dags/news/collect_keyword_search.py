@@ -14,20 +14,20 @@ except ImportError:
 if dag and task:
 
     @dag(
-        dag_id="news_collect_headline",
+        dag_id="news_collect_keyword_search",
         start_date=pendulum.datetime(2026, 1, 1, tz="Asia/Seoul"),
-        schedule="*/30 * * * *",
+        schedule="0 * * * *",
         catchup=False,
         max_active_runs=1,
-        tags=["news", "headline"],
+        tags=["news"],
     )
-    def news_collect_headline():
+    def news_collect_keyword_search():
         @task(retries=2, retry_delay=timedelta(minutes=5))
-        def collect_headline() -> None:
-            from pipelines.news.jobs.collect_headline import run
+        def collect_keyword_search() -> None:
+            from pipelines.news.jobs.collect_keyword_search import run
 
             run()
 
-        collect_headline()
+        collect_keyword_search()
 
-    news_collect_headline()
+    news_collect_keyword_search()

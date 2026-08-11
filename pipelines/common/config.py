@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # .env 파일을 읽어오기 위한 설정
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+
     database_url: str = Field(
         default="postgresql+psycopg://etl:etl@localhost:15432/etl",
         validation_alias="DATABASE_URL",
@@ -41,6 +43,11 @@ class Settings(BaseSettings):
     neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
     neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
+
+    related_news_window_hours: int = Field(
+        default=72,
+        validation_alias="RELATED_NEWS_WINDOW_HOURS",
+    )
 
 
 @lru_cache
