@@ -23,6 +23,7 @@ dependencies = [
   "boto3>=1.34",
   "langgraph>=1.2.6",
   "flashtext>=2.7",
+  "finance-datareader>=0.9.9",
 ]
 
 [dependency-groups]
