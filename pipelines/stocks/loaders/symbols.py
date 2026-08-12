@@ -109,6 +109,52 @@ DEACTIVATE_MISSING_SYMBOLS_SQL = (
 )
 
 
+# 서비스 제공 대상 종목 목록
+#
+# 우선주·ETP·SPAC를 뺀다. 수집 범위와 제공 범위를 구분하는 원칙(master는 전량 적재)은
+# 파일 하나로 끝나는 master에나 적용된다. 재무·수급·배당·분봉은 종목당 API 1회씩이라
+# 전량을 돌면 호출 수가 4,400건이 되고, 그중 1,700건은 화면에 나가지도 않는다.
+SELECT_SERVICEABLE_SYMBOLS_SQL = text(
+    """
+    SELECT s.id, s.symbol
+      FROM stocks AS s
+     WHERE s.is_active
+       AND NOT s.preferred_stock
+       AND NOT s.etp
+       AND NOT s.spac
+     ORDER BY s.symbol
+    """
+)
+
+SELECT_ACTIVE_STOCK_IDS_SQL = text("SELECT symbol, id FROM stocks WHERE is_active")
+
+
+def fetch_serviceable_stocks(session: Session, limit: int | None = None) -> list[tuple[int, str]]:
+    """시세·재무 수집 대상 종목을 (stock_id, symbol)로 반환한다.
+
+    Args:
+        session (Session): DB 세션.
+        limit (int | None): 상한. 호출 한도 때문에 배치를 쪼갤 때 쓴다.
+
+    Returns:
+        list[tuple[int, str]]: (stock_id, symbol) 목록. 단축코드 오름차순.
+    """
+
+    rows = session.execute(SELECT_SERVICEABLE_SYMBOLS_SQL).all()
+    result = [(row.id, row.symbol) for row in rows]
+    return result[:limit] if limit else result
+
+
+def fetch_active_stock_ids(session: Session) -> dict[str, int]:
+    """활성 종목의 단축코드 → stock_id 매핑.
+
+    extractor가 돌려주는 단축코드를 시세 테이블의 키로 바꾸는 데 쓴다. 활성 종목의
+    단축코드는 부분 유니크(stocks_active_symbol_uk)라 중복이 없다.
+    """
+
+    return {row.symbol: row.id for row in session.execute(SELECT_ACTIVE_STOCK_IDS_SQL)}
+
+
 def sync_symbols(session: Session, symbols: list[StockSymbol]) -> SymbolSyncResult:
     """Symbol 정보를 DB에 저장
 

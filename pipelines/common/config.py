@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     kis_app_secret: str = Field(default="", validation_alias="KIS_APP_SECRET")
     kis_account_no: str = Field(default="", validation_alias="KIS_ACCOUNT_NO")
     kis_rate_limit_per_second: int = Field(default=15, validation_alias="KIS_RATE_LIMIT_PER_SECOND")
+    kis_base_url: str = Field(
+        default="https://openapi.koreainvestment.com:9443",
+        validation_alias="KIS_BASE_URL",
+    )
+    # 접근토큰은 발급 자체에 분당 1회 제한이 있고 유효기간이 24시간이다. job마다 새로 발급하면
+    # 곧바로 한도에 걸리므로 파일에 캐시해 프로세스 간에 재사용한다.
+    kis_token_cache_path: str = Field(
+        default="/tmp/etl-kis-token.json",
+        validation_alias="KIS_TOKEN_CACHE_PATH",
+    )
 
     stock_intraday_retention_days: int = Field(
         default=60,
@@ -32,6 +42,21 @@ class Settings(BaseSettings):
     stock_intraday_target_delay_minutes: int = Field(
         default=5,
         validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
+    )
+
+    # 일봉 백필 소급 연수와, 일별 갱신 시 되짚어볼 구간. 갱신 구간이 짧으면 휴장·장애로 빠진
+    # 날을 영영 못 채우고, 길면 매일 그만큼 재조회한다.
+    stock_daily_backfill_years: int = Field(
+        default=10,
+        validation_alias="STOCK_DAILY_BACKFILL_YEARS",
+    )
+    stock_daily_lookback_days: int = Field(
+        default=10,
+        validation_alias="STOCK_DAILY_LOOKBACK_DAYS",
+    )
+    stock_period_lookback_days: int = Field(
+        default=120,
+        validation_alias="STOCK_PERIOD_LOOKBACK_DAYS",
     )
 
     bedrock_region: str = Field(default="", validation_alias="BEDROCK_REGION")
