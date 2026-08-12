@@ -62,15 +62,15 @@ def render_summary_prompt(filename: str, **values: str) -> str:
 
 
 def build_summary_source_text(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LIMIT) -> str:
-    body_text = clean_article_body_for_storage(
-        get_printable_text(item.get("_body_text", "")),
+    text = clean_article_body_for_storage(
+        get_printable_text(item.get("_text", "")),
         article_title=get_printable_text(item.get("title", "")),
     )
 
     if body_limit and body_limit > 0:
-        body_text = body_text[:body_limit]
+        text = text[:body_limit]
 
-    return body_text.strip()
+    return text.strip()
 
 
 def format_triplets_for_prompt(triplets: list[Triplet] | None) -> str:

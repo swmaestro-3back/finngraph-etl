@@ -298,15 +298,15 @@ def parse_keep_from_text(text: str) -> dict[str, Any]:
 
 
 def build_material_event_source_text(item: dict[str, Any], body_limit: int = 12000) -> str:
-    body_text = clean_article_body_for_storage(
-        get_printable_text(item.get("_body_text", "")),
+    text = clean_article_body_for_storage(
+        get_printable_text(item.get("_text", "")),
         article_title=get_printable_text(item.get("title", "")),
     )
 
     if body_limit and body_limit > 0:
-        body_text = body_text[:body_limit]
+        text = text[:body_limit]
 
-    return body_text.strip()
+    return text.strip()
 
 
 def count_removed_noise_chars(entries: Any) -> int:
@@ -332,7 +332,7 @@ def analyze_material_event_body_quality(
     body_limit: int = 12000,
 ) -> dict[str, Any]:
 
-    raw_body = get_printable_text(item.get("_body_text", ""))
+    raw_body = get_printable_text(item.get("_text", ""))
     removed_during_check = []
     cleaned_body = clean_article_body_for_storage(
         raw_body,
@@ -407,12 +407,12 @@ def build_deterministic_body_quality_result(
 
 def analyze_simple_market_wrap(item: dict[str, Any]) -> dict[str, Any]:
 
-    body_text = build_material_event_source_text(item=item, body_limit=12000)
-    has_index = bool(MARKET_INDEX_PATTERN.search(body_text))
-    has_movement = bool(MARKET_MOVEMENT_PATTERN.search(body_text))
-    observation_count = len(MARKET_OBSERVATION_PATTERN.findall(body_text))
-    has_verified_event = bool(VERIFIED_NON_PRICE_EVENT_PATTERN.search(body_text))
-    has_relation_event_signal = bool(MATERIAL_RELATION_SURFACE_PATTERN.search(body_text))
+    text = build_material_event_source_text(item=item, body_limit=12000)
+    has_index = bool(MARKET_INDEX_PATTERN.search(text))
+    has_movement = bool(MARKET_MOVEMENT_PATTERN.search(text))
+    observation_count = len(MARKET_OBSERVATION_PATTERN.findall(text))
+    has_verified_event = bool(VERIFIED_NON_PRICE_EVENT_PATTERN.search(text))
+    has_relation_event_signal = bool(MATERIAL_RELATION_SURFACE_PATTERN.search(text))
     is_simple_market_wrap = (
         has_index and has_movement and not has_verified_event and not has_relation_event_signal
     )
@@ -502,7 +502,6 @@ def build_llm_material_event_prompt(item: dict[str, Any], body_limit: int = 1200
         policy_text=build_material_event_policy_text(),
         relation_schema_text=build_material_predicate_schema_text(),
         title=get_printable_text(item.get("title", "")),
-        description=get_printable_text(item.get("description", "")),
         source_text=build_material_event_source_text(item, body_limit),
     )
 

@@ -28,7 +28,7 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
 
     try:
         # 삼중항추출
-        final_state = await runner.ainvoke(str(news_id), item["body_text"])
+        final_state = await runner.ainvoke(str(news_id), item["text"])
         triplets = final_state.get("triplets") or []
 
         # 삼중항관계가 존재한다면 Neo4j 그래프와 news_relations 테이블에 반영

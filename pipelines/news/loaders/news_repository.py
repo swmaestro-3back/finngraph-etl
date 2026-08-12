@@ -50,13 +50,13 @@ def build_news_summary(item: dict[str, Any]) -> str:
     if summary_parts:
         return "\n".join(summary_parts)
 
-    body_text = clean_article_body_for_storage(
-        item.get("_body_text", ""),
+    news_text = clean_article_body_for_storage(
+        item.get("_text", ""),
         article_title=get_printable_text(item.get("title", "")),
     )
 
-    if body_text:
-        return body_text[:300]
+    if news_text:
+        return news_text[:300]
 
     return get_printable_text(item.get("title", ""))
 
@@ -64,12 +64,12 @@ def build_news_summary(item: dict[str, Any]) -> str:
 def _prepare_article_body_for_storage(item: dict[str, Any]) -> str:
 
     removed_noise = []
-    body_text = clean_article_body_for_storage(
-        item.get("_body_text", ""),
+    news_text = clean_article_body_for_storage(
+        item.get("_text", ""),
         removed_noise=removed_noise,
         article_title=get_printable_text(item.get("title", "")),
     )
-    item["_body_text"] = body_text
+    item["_text"] = news_text
 
     if removed_noise:
         previous_removed_noise = item.get("_body_noise_removed", [])
@@ -79,14 +79,14 @@ def _prepare_article_body_for_storage(item: dict[str, Any]) -> str:
 
         item["_body_noise_removed"] = previous_removed_noise + removed_noise
 
-    return body_text
+    return news_text
 
 
 def has_article_body(item: dict[str, Any]) -> bool:
 
     return bool(
         clean_article_body_for_storage(
-            item.get("_body_text", ""),
+            item.get("_text", ""),
             article_title=get_printable_text(item.get("title", "")),
         )
     )
@@ -97,8 +97,7 @@ def insert_or_update_news(
 ) -> dict[str, Any]:
 
     title = get_printable_text(item.get("title", ""))
-    description = get_printable_text(item.get("description", ""))
-    body_text = _prepare_article_body_for_storage(item)
+    news_text = _prepare_article_body_for_storage(item)
     summary = build_news_summary(item) if save_summary else ""
     link = item.get("link", "")
     originallink = item.get("originallink", "")
@@ -113,7 +112,7 @@ def insert_or_update_news(
     if not link:
         raise ValueError("뉴스 링크가 비어있음")
 
-    if not body_text:
+    if not news_text:
         raise ValueError("뉴스가 없음")
 
     existing_row = session.execute(
@@ -152,8 +151,7 @@ def insert_or_update_news(
 
         update_params = {
             "title": title,
-            "description": description,
-            "body_text": body_text,
+            "text": news_text,
             "link": link,
             "originallink": originallink,
             "published_at": published_at,
@@ -172,9 +170,8 @@ def insert_or_update_news(
                 UPDATE news
                 SET
                     title = :title,
-                    description = :description,
                     {summary_assignment}
-                    body_text = :body_text,
+                    text = :text,
                     link = :link,
                     originallink = :originallink,
                     published_at = :published_at
@@ -197,18 +194,16 @@ def insert_or_update_news(
             f"""
             INSERT INTO news (
                 title,
-                description,
                 summary,
-                body_text,
+                text,
                 link,
                 originallink,
                 published_at
             )
             VALUES (
                 :title,
-                :description,
                 :summary,
-                :body_text,
+                :text,
                 :link,
                 :originallink,
                 :published_at
@@ -216,9 +211,8 @@ def insert_or_update_news(
             ON CONFLICT (link) DO UPDATE
             SET
                 title = EXCLUDED.title,
-                description = EXCLUDED.description,
                 {summary_update_sql}
-                body_text = EXCLUDED.body_text,
+                text = EXCLUDED.text,
                 originallink = EXCLUDED.originallink,
                 published_at = EXCLUDED.published_at
             RETURNING id;
@@ -226,9 +220,8 @@ def insert_or_update_news(
         ),
         {
             "title": title,
-            "description": description,
             "summary": summary,
-            "body_text": body_text,
+            "text": news_text,
             "link": link,
             "originallink": originallink,
             "published_at": published_at,
@@ -324,15 +317,14 @@ def save_news_items(
 
 def fetch_recent_news_items(limit: int = 50) -> list[dict[str, Any]]:
 
-    body_filter_sql = "WHERE body_text IS NOT NULL AND BTRIM(body_text) <> ''"
+    body_filter_sql = "WHERE text IS NOT NULL AND BTRIM(text) <> ''"
 
     query = f"""
         SELECT
             id,
             title,
-            description,
             summary,
-            body_text,
+            text,
             link,
             originallink,
             published_at
@@ -351,9 +343,8 @@ def fetch_recent_news_items(limit: int = 50) -> list[dict[str, Any]]:
             (
                 news_id,
                 title,
-                description,
                 summary,
-                body_text,
+                news_text,
                 link,
                 originallink,
                 published_at,
@@ -362,8 +353,8 @@ def fetch_recent_news_items(limit: int = 50) -> list[dict[str, Any]]:
             item = {
                 "_news_id": news_id,
                 "title": title or "",
-                "description": description or summary or "",
-                "_body_text": body_text or "",
+                "description": summary or "",
+                "_text": news_text or "",
                 "link": link or "",
                 "originallink": originallink or "",
                 "pubDate": (
@@ -382,16 +373,15 @@ def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
         SELECT
             id,
             title,
-            description,
             summary,
-            body_text,
+            text,
             link,
             originallink,
             published_at
         FROM news
         WHERE is_material IS NULL
-          AND body_text IS NOT NULL
-          AND BTRIM(body_text) <> ''
+          AND text IS NOT NULL
+          AND BTRIM(text) <> ''
         ORDER BY id ASC
         LIMIT :limit;
     """
@@ -405,9 +395,8 @@ def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
             (
                 news_id,
                 title,
-                description,
                 summary,
-                body_text,
+                news_text,
                 link,
                 originallink,
                 published_at,
@@ -417,8 +406,8 @@ def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
                 {
                     "_news_id": news_id,
                     "title": title or "",
-                    "description": description or summary or "",
-                    "_body_text": body_text or "",
+                    "description": summary or "",
+                    "_text": news_text or "",
                     "link": link or "",
                     "originallink": originallink or "",
                     "pubDate": (
@@ -486,12 +475,12 @@ def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any
     query = """
         SELECT
             id,
-            body_text
+            text
         FROM news
         WHERE relation_extracted IS NULL
           AND is_material = TRUE
-          AND body_text IS NOT NULL
-          AND BTRIM(body_text) <> ''
+          AND text IS NOT NULL
+          AND BTRIM(text) <> ''
         ORDER BY id ASC
         LIMIT :limit;
     """
@@ -499,7 +488,7 @@ def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any
     with session_scope() as session:
         rows = session.execute(text(query), {"limit": limit}).fetchall()
 
-        return [{"news_id": int(news_id), "body_text": body_text} for news_id, body_text in rows]
+        return [{"news_id": int(news_id), "text": news_text} for news_id, news_text in rows]
 
 
 def mark_news_relation_extracted(
@@ -754,12 +743,12 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
         SELECT
             id,
             title,
-            body_text
+            text
         FROM news
         WHERE relation_extracted IS NOT NULL
           AND (summary IS NULL OR BTRIM(summary) = '')
-          AND body_text IS NOT NULL
-          AND BTRIM(body_text) <> ''
+          AND text IS NOT NULL
+          AND BTRIM(text) <> ''
         ORDER BY id ASC
         LIMIT :limit;
     """
@@ -770,13 +759,13 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
         items = []
 
         for row in rows:
-            news_id, title, body_text = row
+            news_id, title, news_text = row
 
             items.append(
                 {
                     "_news_id": news_id,
                     "title": title or "",
-                    "_body_text": body_text or "",
+                    "_text": news_text or "",
                 }
             )
 

@@ -13,8 +13,6 @@ from pipelines.news.utils.text_utils import (
     get_printable_text,
 )
 
-DESCRIPTION_FROM_BODY_LENGTH = 150
-
 
 def is_anchor_link(url: str) -> bool:
     if not url:
@@ -124,8 +122,8 @@ def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
 
 def fetch_anchor_article_body_from_url(url: str) -> str:
 
-    body_text, _ = fetch_anchor_article_data_from_url(url)
-    return body_text
+    text, _ = fetch_anchor_article_data_from_url(url)
+    return text
 
 
 def fetch_article_body_from_url(url: str) -> str:
@@ -210,24 +208,6 @@ def fetch_article_body_from_url(url: str) -> str:
         return ""
 
 
-def fill_empty_description_from_body(
-    item: dict[str, Any], body_text: str, max_chars: int = DESCRIPTION_FROM_BODY_LENGTH
-) -> None:
-
-    if get_printable_text(item.get("description", "")):
-        return
-
-    body_text = get_printable_text(body_text)
-
-    if not body_text:
-        return
-
-    if len(body_text) > max_chars:
-        item["description"] = body_text[:max_chars].rstrip() + "..."
-    else:
-        item["description"] = body_text
-
-
 def enrich_items_with_article_body(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     enriched_items = []
@@ -240,69 +220,66 @@ def enrich_items_with_article_body(items: list[dict[str, Any]]) -> list[dict[str
 
         removed_body_noise = []
 
-        if "_body_text" in item:
-            body_text = clean_article_body_for_storage(
-                item.get("_body_text", ""),
+        if "_text" in item:
+            text = clean_article_body_for_storage(
+                item.get("_text", ""),
                 removed_noise=removed_body_noise,
                 article_title=get_printable_text(item.get("title", "")),
             )
-            item["_body_text"] = body_text
+            item["_text"] = text
             item["_body_noise_removed"] = previous_removed_noise + removed_body_noise
-            fill_empty_description_from_body(item, body_text)
 
             if removed_body_noise:
                 title = get_printable_text(item.get("title", ""))
                 logging.info(f"노이즈 제거: {title} / {len(removed_body_noise)}개")
 
-            if body_text:
+            if text:
                 enriched_items.append(item)
                 continue
 
         urls = [url for url in [item.get("link", ""), item.get("originallink", "")] if url]
 
-        body_text = ""
+        text = ""
         body_source_url = ""
         published_at = ""
 
         for url in dict.fromkeys(urls):
             if is_anchor_link(url):
-                raw_body_text, candidate_published_at = fetch_anchor_article_data_from_url(url)
+                raw_text, candidate_published_at = fetch_anchor_article_data_from_url(url)
             else:
-                raw_body_text = fetch_article_body_from_url(url)
+                raw_text = fetch_article_body_from_url(url)
                 candidate_published_at = ""
 
             if candidate_published_at and not published_at:
                 published_at = candidate_published_at
 
             candidate_removed_noise = []
-            candidate_body_text = clean_article_body_for_storage(
-                raw_body_text,
+            candidate_text = clean_article_body_for_storage(
+                raw_text,
                 removed_noise=candidate_removed_noise,
                 article_title=get_printable_text(item.get("title", "")),
             )
             removed_body_noise.extend(candidate_removed_noise)
 
-            if candidate_body_text:
-                body_text = candidate_body_text
+            if candidate_text:
+                text = candidate_text
                 body_source_url = url
                 break
 
-        item["_body_text"] = body_text
+        item["_text"] = text
         item["_body_source_url"] = body_source_url
         item["_body_noise_removed"] = previous_removed_noise + removed_body_noise
 
         if published_at and not get_printable_text(item.get("pubDate", "")):
             item["pubDate"] = published_at
 
-        fill_empty_description_from_body(item, body_text)
-
         title = get_printable_text(item.get("title", ""))
 
-        if body_text:
+        if text:
             body_source_label = "대상" if is_anchor_link(body_source_url) else body_source_url
             logging.info(
                 f"추출 성공: {title} / "
-                f"{len(body_text)}자 / source={body_source_label} / "
+                f"{len(text)}자 / source={body_source_label} / "
                 f"노이즈 제거={len(removed_body_noise)}개"
             )
         else:
