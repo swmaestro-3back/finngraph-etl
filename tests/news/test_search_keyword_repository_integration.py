@@ -1,13 +1,4 @@
-"""search_keyword_repository 통합 테스트.
-
-실제 Postgres에 붙어 `fetch_active_search_keywords`가 is_pinned 키워드를
-로테이션/배치 제한(limit)과 무관하게 항상 반환하는지 검증한다. `integration`
-마커가 붙어 CI unit-test job에서는 제외되고 db-integration job에서만 실행된다.
-로컬은 `docker compose up -d db` 후 `pytest -m integration`.
-
-주의: 로더가 사용하는 컬럼만 담은 **테스트 로컬 최소 스키마**를 직접 생성/보정한다.
-운영 스키마는 migrations/versions/20260725_04 + 20260729_07 에 있다.
-"""
+"""search_keyword_repository 통합 테스트."""
 
 from __future__ import annotations
 
@@ -18,26 +9,25 @@ from pipelines.common.database import session_scope
 
 pytestmark = pytest.mark.integration
 
-# 다른 데이터와 섞이지 않도록 테스트 전용 키워드 접두어. 정리(cleanup) 기준이기도 하다.
 TEST_KEYWORD_PREFIX = "pytest-itest-kw-"
 
-# 로더가 참조하는 컬럼만 담은 최소 스키마(운영 DDL 아님). 기존 테이블에 is_pinned가
-# 없을 수 있으므로 ADD COLUMN IF NOT EXISTS로 보정한다.
 _MINIMAL_KEYWORDS_DDL = """
 CREATE TABLE IF NOT EXISTS search_keywords (
     id               BIGSERIAL PRIMARY KEY,
     keyword          TEXT NOT NULL UNIQUE,
-    source_type      VARCHAR(20),
-    source_id        BIGINT,
-    status           VARCHAR(20) NOT NULL DEFAULT 'active',
-    is_pinned        BOOLEAN NOT NULL DEFAULT false,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_searched_at TIMESTAMPTZ
 );
 """
-_ADD_IS_PINNED = (
-    "ALTER TABLE search_keywords ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;"
-)
+
+# 축소 이전 스키마가 남은 DB를 운영과 같은 조건으로 맞춘다.
+_DROP_LEGACY_COLUMNS = """
+ALTER TABLE search_keywords
+    DROP COLUMN IF EXISTS source_type,
+    DROP COLUMN IF EXISTS source_id,
+    DROP COLUMN IF EXISTS status,
+    DROP COLUMN IF EXISTS is_pinned;
+"""
 
 
 @pytest.fixture()
@@ -60,61 +50,70 @@ def _delete_test_rows() -> None:
 def keywords_table():
     with session_scope() as session:
         session.execute(text(_MINIMAL_KEYWORDS_DDL))
-        session.execute(text(_ADD_IS_PINNED))
+        session.execute(text(_DROP_LEGACY_COLUMNS))
 
     _delete_test_rows()
     yield
     _delete_test_rows()
 
 
-def _insert(*, suffix, is_pinned, status="active") -> int:
-    # last_searched_at을 now()로 채워 "방금 검색됨"으로 둔다. 로테이션 우선순위에서
-    # 뒤로 밀리므로, pinned가 아니면 작은 limit에서 뽑히지 않아야 한다.
+def _insert(*, suffix: str, searched: bool) -> int:
     with session_scope() as session:
         row = session.execute(
             text(
                 """
-                INSERT INTO search_keywords
-                    (keyword, source_type, status, is_pinned, last_searched_at)
-                VALUES (:keyword, NULL, :status, :is_pinned, now())
+                INSERT INTO search_keywords (keyword, last_searched_at)
+                VALUES (:keyword, CASE WHEN :searched THEN now() ELSE NULL END)
                 RETURNING id;
                 """
             ),
-            {
-                "keyword": TEST_KEYWORD_PREFIX + suffix,
-                "status": status,
-                "is_pinned": is_pinned,
-            },
+            {"keyword": TEST_KEYWORD_PREFIX + suffix, "searched": searched},
         ).fetchone()
         return row[0]
 
 
-def _fetched_test_keywords(repo, *, limit):
-    rows = repo.fetch_active_search_keywords(limit=limit)
-    return {r["keyword"] for r in rows if r["keyword"].startswith(TEST_KEYWORD_PREFIX)}
+def _fetch_all(repo) -> list[dict]:
+    # 서술어 시드 등 다른 행이 있어도 테스트 행이 포함되도록 넉넉한 limit을 쓴다.
+    return repo.fetch_active_search_keywords(limit=1_000_000)
 
 
-def test_pinned_keyword_included_regardless_of_limit(keywords_table, repo):
-    pinned = TEST_KEYWORD_PREFIX + "pinned"
-    rotation = TEST_KEYWORD_PREFIX + "rotation"
-    _insert(suffix="pinned", is_pinned=True)
-    _insert(suffix="rotation", is_pinned=False)
+def test_never_searched_keyword_precedes_recently_searched(keywords_table, repo):
+    never = TEST_KEYWORD_PREFIX + "never"
+    recent = TEST_KEYWORD_PREFIX + "recent"
+    _insert(suffix="never", searched=False)
+    _insert(suffix="recent", searched=True)
 
-    # limit=0: 로테이션 서브쿼리는 0건 → pinned만 반환되어야 한다.
-    only_pinned = _fetched_test_keywords(repo, limit=0)
-    assert pinned in only_pinned
-    assert rotation not in only_pinned
+    keywords = [row["keyword"] for row in _fetch_all(repo)]
 
-    # limit이 충분하면 로테이션 키워드도 함께 나온다(단, DB에 다른 active 행이 많으면
-    # rotation이 밀릴 수 있으므로 넉넉한 limit으로 검증).
-    both = _fetched_test_keywords(repo, limit=1_000_000)
-    assert pinned in both
-    assert rotation in both
+    assert keywords.index(never) < keywords.index(recent)
 
 
-def test_paused_pinned_keyword_is_excluded(keywords_table, repo):
-    # is_pinned=true여도 status가 active가 아니면 조회되지 않아야 한다.
-    paused = TEST_KEYWORD_PREFIX + "paused-pinned"
-    _insert(suffix="paused-pinned", is_pinned=True, status="paused")
+def test_limit_caps_returned_rows(keywords_table, repo):
+    _insert(suffix="limit-a", searched=False)
+    _insert(suffix="limit-b", searched=False)
+    _insert(suffix="limit-c", searched=False)
 
-    assert paused not in _fetched_test_keywords(repo, limit=1_000_000)
+    assert len(repo.fetch_active_search_keywords(limit=2)) == 2
+
+
+def test_returned_rows_expose_id_and_keyword_only(keywords_table, repo):
+    _insert(suffix="shape", searched=False)
+
+    row = next(row for row in _fetch_all(repo) if row["keyword"] == TEST_KEYWORD_PREFIX + "shape")
+
+    assert set(row) == {"id", "keyword"}
+    assert isinstance(row["id"], int)
+
+
+def test_mark_keywords_searched_updates_last_searched_at(keywords_table, repo):
+    keyword_id = _insert(suffix="mark", searched=False)
+
+    assert repo.mark_keywords_searched([keyword_id]) == 1
+
+    with session_scope() as session:
+        last_searched_at = session.execute(
+            text("SELECT last_searched_at FROM search_keywords WHERE id = :id"),
+            {"id": keyword_id},
+        ).scalar()
+
+    assert last_searched_at is not None

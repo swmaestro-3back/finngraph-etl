@@ -5,9 +5,6 @@ from typing import Any
 
 from pipelines.common.logging import get_logger
 from pipelines.common.neo4j import neo4j_database
-from pipelines.news.loaders.search_keyword_repository import (
-    generate_theme_search_keywords,
-)
 from pipelines.themes.loaders.rdb_mirror import mirror_themes_to_rdb
 
 logger = get_logger(__name__)
@@ -60,16 +57,11 @@ def run() -> None:
 
     result = mirror_themes_to_rdb(themes)
 
-    # 미러로 themes.id가 확정된 직후, 테마명에서 검색 키워드를 파생 생성한다(source_id=theme_id).
-    # 크롤러가 새로 발견한 테마도 자동으로 검색 대상이 되고, news_themes 매핑 선행조건이 성립한다.
-    keyword_count = generate_theme_search_keywords()
-
     print("\n" + "=" * 60)
     print("테마 RDB 미러 결과")
     print("=" * 60)
     print(f"- Neo4j 조회 테마 {len(themes)}개")
     print(f"- 적재 결과 {result}")
-    print(f"- 테마 키워드 생성/갱신 {keyword_count}개")
     print("작업 완료")
     print("=" * 60)
 
