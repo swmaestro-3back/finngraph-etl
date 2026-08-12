@@ -16,18 +16,15 @@ def judge_unchecked_news(
     limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
     mode: str = "sequential",
     max_concurrency: int | None = None,
-    batch_size: int | None = None,
 ) -> dict[str, Any]:
 
     source_news = fetch_unchecked_news_items(limit=limit)
 
     passed_items, removed_items = filter_material_event_news(
         items=source_news,
-        pipeline_input={},
         use_llm=True,
         mode=mode,
         max_concurrency=max_concurrency,
-        batch_size=batch_size,
     )
 
     kept_ids = [item.get("_news_id") for item in passed_items if item.get("_news_id")]
@@ -56,14 +53,12 @@ def run(
     limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
     mode: str = "sequential",
     max_concurrency: int | None = None,
-    batch_size: int | None = None,
 ) -> dict[str, Any]:
 
     judged = judge_unchecked_news(
         limit=limit,
         mode=mode,
         max_concurrency=max_concurrency,
-        batch_size=batch_size,
     )
 
     kept_ids = judged["kept_ids"]
