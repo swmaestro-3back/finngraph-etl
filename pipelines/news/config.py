@@ -48,11 +48,6 @@ class NewsSettings(BaseSettings):
 
     headline_more_count: int = Field(default=3, validation_alias="HEADLINE_MORE_COUNT")
 
-    material_event_filter_batch_size: int = Field(
-        default=3,
-        validation_alias="MATERIAL_EVENT_FILTER_BATCH_SIZE",
-    )
-
     material_event_filter_fail_open: bool = Field(
         default=False,
         validation_alias="MATERIAL_EVENT_FILTER_FAIL_OPEN",

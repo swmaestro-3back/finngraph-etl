@@ -13,6 +13,7 @@ from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
+from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
 
 MIN_ARTICLE_BODY_CHARS = 40
 NOISE_DOMINATED_BODY_MAX_CHARS = 240
@@ -186,24 +187,6 @@ MATERIAL_RELATION_SCHEMA: dict[str, dict[str, tuple[str, ...]]] = {
     "판결하다": {"subject": ("GOVERNMENT",), "object": ("COUNTRY", "GOVERNMENT", "COMPANY")},
     "국유화하다": {"subject": ("COUNTRY", "GOVERNMENT"), "object": ("COMPANY", "COMMODITY")},
 }
-MATERIAL_IMPACT_CHANNELS = {
-    "REVENUE",
-    "COST",
-    "PROFIT",
-    "CASH_FLOW",
-    "ASSET",
-    "FINANCING",
-    "OWNERSHIP",
-    "PRODUCTION",
-    "SUPPLY",
-    "DEMAND",
-    "CAPACITY",
-    "OPERATIONS",
-    "MARKET_ACCESS",
-    "REGULATION",
-    "TRADE",
-    "MACRO",
-}
 MATERIAL_RELATION_SURFACE_PATTERN = re.compile(
     r"(?:인수했|인수한다|설립했|합병했|매각했|투자했|계약했|계약을?\s*체결|"
     r"제휴했|수주했|수주를?\s*(?:확정|공시)|선정했|선정됐|선택했|선택을?\s*받|"
@@ -230,7 +213,6 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "body_limit": news_settings.news_llm_body_limit,
             "max_tokens": news_settings.news_llm_max_tokens,
             "max_concurrency": news_settings.news_llm_max_concurrency,
-            "batch_size": news_settings.material_event_filter_batch_size,
             "fail_open": news_settings.material_event_filter_fail_open,
             "bedrock_region": settings.bedrock_region,
             "bedrock_model": settings.bedrock_chat_model,
@@ -242,7 +224,6 @@ def get_material_event_filter_config() -> dict[str, Any]:
             "body_limit": 12000,
             "max_tokens": 512,
             "max_concurrency": 3,
-            "batch_size": 3,
             "fail_open": False,
             "bedrock_region": "",
             "bedrock_model": "",
@@ -274,7 +255,6 @@ def parse_keep_from_text(text: str) -> dict[str, Any]:
         return {}
 
     cleaned = text.replace("```json", "").replace("```", "").strip()
-    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
     lowered = cleaned.lower()
 
     parsed = extract_json_from_text(cleaned)
@@ -317,73 +297,16 @@ def parse_keep_from_text(text: str) -> dict[str, Any]:
     return {}
 
 
-def parse_batch_keep_from_text(
-    text: str,
-    expected_count: int,
-) -> dict[int, dict[str, Any]]:
-    """
-    batch 응답을 파싱한다.
-
-    권장 응답:
-    0: KEEP
-    1: DROP
-    """
-
-    parsed_json = extract_json_from_text(text)
-
-    if parsed_json and isinstance(parsed_json.get("results"), list):
-        return normalize_batch_llm_material_event_results(
-            parsed=parsed_json,
-            expected_count=expected_count,
-        )
-
-    if not text:
-        return {}
-
-    cleaned = text.replace("```", "").strip()
-    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
-    results = {}
-
-    for line in cleaned.splitlines():
-        line = line.strip()
-
-        if not line:
-            continue
-
-        match = re.search(
-            r"^(?:article\s*)?(\d+)\s*[:.)-]\s*(KEEP|DROP|TRUE|FALSE|YES|NO)\b",
-            line,
-            flags=re.IGNORECASE,
-        )
-
-        if not match:
-            continue
-
-        index = int(match.group(1))
-
-        if index < 0 or index >= expected_count:
-            continue
-
-        decision = match.group(2).lower()
-        normalized = normalize_llm_material_event_result(
-            {"keep": decision in ["keep", "true", "yes"]},
-        )
-        normalized["provider"] = "llm_batch"
-        results[index] = normalized
-
-    return results
-
-
 def build_material_event_source_text(item: dict[str, Any], body_limit: int = 12000) -> str:
-    body_text = clean_article_body_for_storage(
-        get_printable_text(item.get("_body_text", "")),
+    text = clean_article_body_for_storage(
+        get_printable_text(item.get("_text", "")),
         article_title=get_printable_text(item.get("title", "")),
     )
 
     if body_limit and body_limit > 0:
-        body_text = body_text[:body_limit]
+        text = text[:body_limit]
 
-    return body_text.strip()
+    return text.strip()
 
 
 def count_removed_noise_chars(entries: Any) -> int:
@@ -409,7 +332,7 @@ def analyze_material_event_body_quality(
     body_limit: int = 12000,
 ) -> dict[str, Any]:
 
-    raw_body = get_printable_text(item.get("_body_text", ""))
+    raw_body = get_printable_text(item.get("_text", ""))
     removed_during_check = []
     cleaned_body = clean_article_body_for_storage(
         raw_body,
@@ -484,12 +407,12 @@ def build_deterministic_body_quality_result(
 
 def analyze_simple_market_wrap(item: dict[str, Any]) -> dict[str, Any]:
 
-    body_text = build_material_event_source_text(item=item, body_limit=12000)
-    has_index = bool(MARKET_INDEX_PATTERN.search(body_text))
-    has_movement = bool(MARKET_MOVEMENT_PATTERN.search(body_text))
-    observation_count = len(MARKET_OBSERVATION_PATTERN.findall(body_text))
-    has_verified_event = bool(VERIFIED_NON_PRICE_EVENT_PATTERN.search(body_text))
-    has_relation_event_signal = bool(MATERIAL_RELATION_SURFACE_PATTERN.search(body_text))
+    text = build_material_event_source_text(item=item, body_limit=12000)
+    has_index = bool(MARKET_INDEX_PATTERN.search(text))
+    has_movement = bool(MARKET_MOVEMENT_PATTERN.search(text))
+    observation_count = len(MARKET_OBSERVATION_PATTERN.findall(text))
+    has_verified_event = bool(VERIFIED_NON_PRICE_EVENT_PATTERN.search(text))
+    has_relation_event_signal = bool(MATERIAL_RELATION_SURFACE_PATTERN.search(text))
     is_simple_market_wrap = (
         has_index and has_movement and not has_verified_event and not has_relation_event_signal
     )
@@ -537,37 +460,25 @@ def build_deterministic_material_event_result(
     ) or build_deterministic_market_wrap_result(item)
 
 
-def build_material_relation_schema_text() -> str:
+def build_material_predicate_schema_text() -> str:
+    """PREDICATE_DICT 온톨로지를 필터 프롬프트용 항목 목록으로 렌더링한다."""
 
-    return "\n".join(
-        f"{predicate}:{'/'.join(entity_types['subject'])}>{'/'.join(entity_types['object'])}"
-        for predicate, entity_types in MATERIAL_RELATION_SCHEMA.items()
-    )
+    lines = []
 
+    for name in sorted(PREDICATE_DICT):
+        spec = PREDICATE_DICT[name]
+        arguments = list(spec["arguments"].values())
+        subject_types = "/".join(arguments[0]["types"])
+        object_types = "/".join(arguments[1]["types"])
+        line = f"- {name} ({subject_types} > {object_types}): {spec['description']}"
 
-def build_material_event_context(pipeline_input: dict[str, Any] | None) -> str:
-    if not pipeline_input:
-        return load_material_event_prompt_text("material_event_default_context.txt")
+        if len(arguments) > 2:
+            requirement = "mandatory" if arguments[2].get("required") else "optional"
+            line += f" (item: {'/'.join(arguments[2]['types'])} [{requirement}])"
 
-    theme_name = pipeline_input.get("theme_name", "")
-    theme_description = pipeline_input.get("theme_description", "")
-    companies = pipeline_input.get("companies", [])
+        lines.append(line)
 
-    company_lines = []
-
-    for company in companies:
-        company_lines.append(
-            f"- {company.get('company_name', '')}"
-            f"({company.get('stock_code', '')}): "
-            f"{company.get('inclusion_reason', '')}"
-        )
-
-    return render_material_event_prompt(
-        "material_event_context.txt",
-        theme_name=str(theme_name),
-        theme_description=str(theme_description),
-        company_lines="\n".join(company_lines),
-    )
+    return "\n".join(lines)
 
 
 @lru_cache
@@ -585,54 +496,13 @@ def build_material_event_policy_text() -> str:
     return load_material_event_prompt_text("material_event_policy.txt")
 
 
-def build_llm_material_event_prompt(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, body_limit: int = 12000
-) -> str:
-    source_text = build_material_event_source_text(item, body_limit)
-    context_text = build_material_event_context(pipeline_input)
-    policy_text = build_material_event_policy_text()
-    relation_schema_text = build_material_relation_schema_text()
-    title = get_printable_text(item.get("title", ""))
-    description = get_printable_text(item.get("description", ""))
-
+def build_llm_material_event_prompt(item: dict[str, Any], body_limit: int = 12000) -> str:
     return render_material_event_prompt(
         "material_event_single.txt",
-        policy_text=policy_text,
-        relation_schema_text=relation_schema_text,
-        impact_channels="|".join(sorted(MATERIAL_IMPACT_CHANNELS)),
-        context_text=context_text,
-        title=title,
-        description=description,
-        source_text=source_text,
-    )
-
-
-def build_batch_llm_material_event_prompt(
-    items: list[dict[str, Any]], pipeline_input: dict[str, Any] | None, body_limit: int = 12000
-) -> str:
-    context_text = build_material_event_context(pipeline_input)
-    policy_text = build_material_event_policy_text()
-    relation_schema_text = build_material_relation_schema_text()
-    articles_text = []
-
-    for index, item in enumerate(items):
-        articles_text.append(
-            render_material_event_prompt(
-                "material_event_article.txt",
-                index=str(index),
-                title=get_printable_text(item.get("title", "")),
-                description=get_printable_text(item.get("description", "")),
-                source_text=build_material_event_source_text(item, body_limit),
-            )
-        )
-
-    return render_material_event_prompt(
-        "material_event_batch.txt",
-        policy_text=policy_text,
-        relation_schema_text=relation_schema_text,
-        last_index=str(len(items) - 1),
-        context_text=context_text,
-        articles_text="\n".join(articles_text),
+        policy_text=build_material_event_policy_text(),
+        relation_schema_text=build_material_predicate_schema_text(),
+        title=get_printable_text(item.get("title", "")),
+        source_text=build_material_event_source_text(item, body_limit),
     )
 
 
@@ -646,53 +516,22 @@ def normalize_llm_boolean(value: Any) -> bool:
 def normalize_llm_material_event_result(
     parsed: dict[str, Any],
 ) -> dict[str, Any]:
-    keep = parsed.get("keep")
-
-    if keep is None:
-        keep = parsed.get("is_market_moving_event", False)
-
-    keep = normalize_llm_boolean(keep)
+    keep = normalize_llm_boolean(parsed.get("keep"))
     gate_keys = ("has_relation", "is_material", "is_confirmed")
+    # 게이트·관계 값을 결과에 보존해 drop/keep 근거를 사후 추적할 수 있게 한다.
+    gates = {key: normalize_llm_boolean(parsed[key]) for key in gate_keys if key in parsed}
 
-    if any(key in parsed for key in gate_keys):
-        keep = keep and all(normalize_llm_boolean(parsed.get(key, False)) for key in gate_keys)
+    if gates:
+        keep = keep and all(gates.get(key, False) for key in gate_keys)
+
+    relation = parsed.get("relation")
 
     return {
         "keep": keep,
         "provider": "llm",
+        "gates": gates,
+        "relation": relation if isinstance(relation, dict) else None,
     }
-
-
-def normalize_batch_llm_material_event_results(
-    parsed: dict[str, Any],
-    expected_count: int,
-) -> dict[int, dict[str, Any]]:
-    results = parsed.get("results", [])
-
-    if not isinstance(results, list):
-        return {}
-
-    normalized_results = {}
-
-    for default_index, result_item in enumerate(results):
-        if not isinstance(result_item, dict):
-            continue
-
-        try:
-            index = int(result_item.get("index", default_index))
-        except (TypeError, ValueError):
-            continue
-
-        if index < 0 or index >= expected_count:
-            continue
-
-        normalized = normalize_llm_material_event_result(
-            result_item,
-        )
-        normalized["provider"] = "llm_batch"
-        normalized_results[index] = normalized
-
-    return normalized_results
 
 
 def build_safe_keep_result(provider: str = "llm_error") -> dict[str, Any]:
@@ -719,7 +558,7 @@ def build_llm_failure_result(
 
 
 def build_bedrock_converse_request(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+    item: dict[str, Any], filter_config: dict[str, Any]
 ) -> tuple[str, str, str, dict[str, Any]]:
     model_id = str(filter_config.get("bedrock_model") or "")
 
@@ -731,12 +570,13 @@ def build_bedrock_converse_request(
         load_material_event_prompt_text("material_event_single_system.txt"),
         build_llm_material_event_prompt(
             item=item,
-            pipeline_input=pipeline_input,
             body_limit=int(filter_config.get("body_limit") or 12000),
         ),
         {
             "temperature": 0.0,
-            "maxTokens": int(filter_config.get("max_tokens") or 80),
+            # relation 객체가 keep보다 먼저 출력되므로, 폴백이 너무 작으면 절단 시
+            # JSON 파싱 실패 → 일괄 drop으로 이어진다. 넉넉히 둔다.
+            "maxTokens": int(filter_config.get("max_tokens") or 256),
         },
     )
 
@@ -755,11 +595,10 @@ def parse_bedrock_material_event_response(
 
 
 def judge_material_event_with_bedrock(
-    item: dict[str, Any], pipeline_input: dict[str, Any] | None, filter_config: dict[str, Any]
+    item: dict[str, Any], filter_config: dict[str, Any]
 ) -> dict[str, Any]:
     model_id, system_text, user_text, inference_config = build_bedrock_converse_request(
         item=item,
-        pipeline_input=pipeline_input,
         filter_config=filter_config,
     )
     client = get_bedrock_client(
@@ -778,96 +617,42 @@ def judge_material_event_with_bedrock(
 
 async def judge_material_event_with_bedrock_async(
     item: dict[str, Any],
-    pipeline_input: dict[str, Any] | None,
     filter_config: dict[str, Any],
 ) -> dict[str, Any]:
     # boto3는 동기 클라이언트라 to_thread로 감싸 asyncio.Semaphore 동시성만 활용한다.
     return await asyncio.to_thread(
         judge_material_event_with_bedrock,
         item,
-        pipeline_input,
         filter_config,
     )
 
 
-def judge_material_events_batch_with_bedrock(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    filter_config: dict[str, Any],
-) -> dict[int, dict[str, Any]]:
-    model_id = str(filter_config.get("bedrock_model") or "")
-    region = str(filter_config.get("bedrock_region") or "")
-
-    if not model_id:
-        raise RuntimeError("Bedrock batch 이벤트 필터 설정이 비어있음(모델 ID 필요)")
-
-    client = get_bedrock_client(region, int(filter_config.get("bedrock_timeout") or 300))
-    response = client.converse(
-        modelId=model_id,
-        system=[{"text": load_material_event_prompt_text("material_event_batch_system.txt")}],
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "text": build_batch_llm_material_event_prompt(
-                            items=items,
-                            pipeline_input=pipeline_input,
-                            body_limit=int(filter_config.get("body_limit") or 12000),
-                        )
-                    }
-                ],
-            }
-        ],
-        inferenceConfig={
-            "temperature": 0.0,
-            "maxTokens": int(filter_config.get("max_tokens") or 80) * max(len(items), 1),
-        },
-    )
-    raw_response = extract_bedrock_text(response)
-    parsed = parse_batch_keep_from_text(
-        text=raw_response,
-        expected_count=len(items),
-    )
-
-    if not parsed:
-        logging.warning(f"Bedrock batch 이벤트 필터 응답 파싱 실패: {raw_response[:500]}")
-        raise RuntimeError("Bedrock batch 이벤트 필터 JSON 파싱 실패")
-
-    return parsed
-
-
 def judge_material_event_with_llm(
     item: dict[str, Any],
-    pipeline_input: dict[str, Any] | None = None,
     filter_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     filter_config = filter_config or get_material_event_filter_config()
 
     return judge_material_event_with_bedrock(
         item=item,
-        pipeline_input=pipeline_input,
         filter_config=filter_config,
     )
 
 
-def judge_material_events_batch_with_llm(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    filter_config: dict[str, Any] | None = None,
-) -> dict[int, dict[str, Any]]:
-    filter_config = filter_config or get_material_event_filter_config()
+def log_llm_material_event_drop(item: dict[str, Any], result: dict[str, Any]) -> None:
+    if result.get("keep"):
+        return
 
-    return judge_material_events_batch_with_bedrock(
-        items=items,
-        pipeline_input=pipeline_input,
-        filter_config=filter_config,
+    logging.info(
+        "LLM 이벤트 필터 drop: title=%s, gates=%s, relation=%s",
+        get_printable_text(item.get("title", "")),
+        result.get("gates"),
+        result.get("relation"),
     )
 
 
 def build_material_event_analysis_for_item(
     item: dict[str, Any],
-    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
     filter_config: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -884,11 +669,12 @@ def build_material_event_analysis_for_item(
         return build_safe_keep_result(provider="llm_disabled")
 
     try:
-        return judge_material_event_with_llm(
+        result = judge_material_event_with_llm(
             item=item,
-            pipeline_input=pipeline_input,
             filter_config=filter_config or {},
         )
+        log_llm_material_event_drop(item, result)
+        return result
     except Exception as e:
         title = get_printable_text(item.get("title", ""))
         fail_open = bool((filter_config or {}).get("fail_open", False))
@@ -904,14 +690,12 @@ def build_material_event_analysis_for_item(
 
 def build_material_event_analyses_sequential(
     items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
     filter_config: dict[str, Any] | None,
 ) -> dict[int, dict[str, Any]]:
     return {
         index: build_material_event_analysis_for_item(
             item=item,
-            pipeline_input=pipeline_input,
             use_llm=use_llm,
             filter_config=filter_config,
         )
@@ -921,7 +705,6 @@ def build_material_event_analyses_sequential(
 
 async def build_material_event_analysis_for_item_async(
     item: dict[str, Any],
-    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
     filter_config: dict[str, Any] | None,
     semaphore: asyncio.Semaphore,
@@ -940,11 +723,12 @@ async def build_material_event_analysis_for_item_async(
 
     try:
         async with semaphore:
-            return await judge_material_event_with_bedrock_async(
+            result = await judge_material_event_with_bedrock_async(
                 item=item,
-                pipeline_input=pipeline_input,
                 filter_config=filter_config or {},
             )
+        log_llm_material_event_drop(item, result)
+        return result
     except Exception as e:
         title = get_printable_text(item.get("title", ""))
         fail_open = bool((filter_config or {}).get("fail_open", False))
@@ -960,7 +744,6 @@ async def build_material_event_analysis_for_item_async(
 
 async def build_material_event_analyses_async(
     items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
     use_llm: bool,
     filter_config: dict[str, Any] | None,
     max_concurrency: int,
@@ -969,7 +752,6 @@ async def build_material_event_analyses_async(
     tasks = [
         build_material_event_analysis_for_item_async(
             item=item,
-            pipeline_input=pipeline_input,
             use_llm=use_llm,
             filter_config=filter_config,
             semaphore=semaphore,
@@ -979,84 +761,6 @@ async def build_material_event_analyses_async(
     results = await asyncio.gather(*tasks)
 
     return {index: analysis for index, analysis in enumerate(results)}
-
-
-def build_material_event_analyses_batch(
-    items: list[dict[str, Any]],
-    pipeline_input: dict[str, Any] | None,
-    use_llm: bool,
-    filter_config: dict[str, Any] | None,
-    batch_size: int,
-) -> dict[int, dict[str, Any]]:
-    if not use_llm:
-        return build_material_event_analyses_sequential(
-            items=items,
-            pipeline_input=pipeline_input,
-            use_llm=False,
-            filter_config=filter_config,
-        )
-
-    analyses = {}
-    batch_size = max(int(batch_size or 1), 1)
-
-    for batch_start in range(0, len(items), batch_size):
-        batch_items = items[batch_start : batch_start + batch_size]
-        llm_items = []
-        llm_local_indexes = []
-
-        for local_index, item in enumerate(batch_items):
-            deterministic_result = build_deterministic_material_event_result(
-                item=item,
-                body_limit=int((filter_config or {}).get("body_limit") or 12000),
-            )
-
-            if deterministic_result:
-                analyses[batch_start + local_index] = deterministic_result
-                continue
-
-            llm_items.append(item)
-            llm_local_indexes.append(local_index)
-
-        if not llm_items:
-            continue
-
-        try:
-            batch_results = judge_material_events_batch_with_llm(
-                items=llm_items,
-                pipeline_input=pipeline_input,
-                filter_config=filter_config,
-            )
-        except Exception as e:
-            logging.warning(
-                f"LLM batch 이벤트 필터 실패로 단건 재시도: "
-                f"batch_start={batch_start}, error={type(e).__name__}: {e}"
-            )
-            batch_results = {}
-
-        for llm_index, (local_index, item) in enumerate(
-            zip(
-                llm_local_indexes,
-                llm_items,
-                strict=True,
-            )
-        ):
-            global_index = batch_start + local_index
-            analysis = batch_results.get(llm_index)
-
-            if not analysis:
-                analysis = build_material_event_analysis_for_item(
-                    item=item,
-                    pipeline_input=pipeline_input,
-                    use_llm=True,
-                    filter_config=filter_config,
-                )
-
-                if analysis.get("provider") == "llm":
-                    analysis["provider"] = "llm_single_retry"
-
-            analyses[global_index] = analysis
-
-    return analyses
 
 
 def split_items_by_material_event_result(
@@ -1090,13 +794,9 @@ def split_items_by_material_event_result(
 
 def filter_material_event_news(
     items: list[dict[str, Any]],
-    min_score: int = 0,
-    pipeline_input: dict[str, Any] | None = None,
     use_llm: bool | None = None,
-    min_confidence: float | None = None,
     mode: str = "sequential",
     max_concurrency: int | None = None,
-    batch_size: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
     filter_config = get_material_event_filter_config()
@@ -1107,33 +807,20 @@ def filter_material_event_news(
     if max_concurrency is None:
         max_concurrency = int(filter_config.get("max_concurrency", 3))
 
-    if batch_size is None:
-        batch_size = int(filter_config.get("batch_size", 3))
-
     mode = (mode or "sequential").lower()
 
     if mode == "async":
         analyses = asyncio.run(
             build_material_event_analyses_async(
                 items=items,
-                pipeline_input=pipeline_input,
                 use_llm=bool(use_llm),
                 filter_config=filter_config,
                 max_concurrency=max_concurrency,
             )
         )
-    elif mode == "batch":
-        analyses = build_material_event_analyses_batch(
-            items=items,
-            pipeline_input=pipeline_input,
-            use_llm=bool(use_llm),
-            filter_config=filter_config,
-            batch_size=batch_size,
-        )
     else:
         analyses = build_material_event_analyses_sequential(
             items=items,
-            pipeline_input=pipeline_input,
             use_llm=bool(use_llm),
             filter_config=filter_config,
         )

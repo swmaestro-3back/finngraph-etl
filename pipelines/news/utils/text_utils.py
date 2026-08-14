@@ -1240,19 +1240,19 @@ def shorten_article_body_for_analysis(
     if context_window is None:
         context_window = DEFAULT_COMPANY_CONTEXT_WINDOW
 
-    body_text = get_printable_text(item.get("_body_text", ""))
+    text = get_printable_text(item.get("_text", ""))
 
-    if not body_text:
+    if not text:
         return ""
 
     parts = []
 
-    front_body = get_front_sentences(text=body_text, max_chars=front_limit)
+    front_body = get_front_sentences(text=text, max_chars=front_limit)
 
     if front_body:
         parts.append(front_body)
 
-    lowered_body = clean_text(body_text)
+    lowered_body = clean_text(text)
 
     company_names = []
 
@@ -1290,8 +1290,8 @@ def get_article_text(item: dict[str, Any], pipeline_input: dict[str, Any] | None
     description = clean_text(item.get("description", ""))
 
     if pipeline_input:
-        body_text = shorten_article_body_for_analysis(item=item, pipeline_input=pipeline_input)
+        text = shorten_article_body_for_analysis(item=item, pipeline_input=pipeline_input)
     else:
-        body_text = clean_text(item.get("_body_text", ""))[:DEFAULT_ARTICLE_BODY_FRONT_LIMIT]
+        text = clean_text(item.get("_text", ""))[:DEFAULT_ARTICLE_BODY_FRONT_LIMIT]
 
-    return f"{title} {title} {description} {body_text}".strip()
+    return f"{title} {title} {description} {text}".strip()
