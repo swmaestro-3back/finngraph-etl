@@ -28,13 +28,14 @@ from pipelines.stocks.models import StockSymbol
 
 pytestmark = pytest.mark.integration
 
-# 운영 데이터와 섞이지 않도록 테스트 전용 시장 구분값. 정리(cleanup) 기준이기도 하다.
-# companies.market에도 그대로 복사되므로 양쪽을 같은 조건으로 지울 수 있다.
+# 운영 데이터와 섞이지 않도록 stocks는 테스트 전용 시장 구분값으로 격리한다.
+# companies에는 market이 없으므로(시장은 종목 속성) 테스트 ticker 집합으로 식별·정리한다.
 TEST_MARKET = "PYTEST_COMPANIES"
 
 COMMON_SYMBOL = "999901"
 PREFERRED_SYMBOL = "999902"
 ETP_SYMBOL = "999903"
+TEST_TICKERS = [COMMON_SYMBOL, PREFERRED_SYMBOL, ETP_SYMBOL]
 
 
 def _stock(ticker: str, name: str, **flags: bool) -> StockSymbol:
@@ -65,11 +66,11 @@ def _companies() -> list[dict]:
                 """
                 SELECT ticker, name, country, is_listed
                   FROM companies
-                 WHERE market = :market
+                 WHERE ticker = ANY(:tickers)
                  ORDER BY ticker
                 """
             ),
-            {"market": TEST_MARKET},
+            {"tickers": TEST_TICKERS},
         )
         return [dict(row._mapping) for row in rows]
 
@@ -91,10 +92,10 @@ def _aliases() -> set[str]:
                 SELECT a.alias
                   FROM company_aliases AS a
                   JOIN companies AS c ON c.id = a.company_id
-                 WHERE c.market = :market
+                 WHERE c.ticker = ANY(:tickers)
                 """
             ),
-            {"market": TEST_MARKET},
+            {"tickers": TEST_TICKERS},
         )
         return {row.alias for row in rows}
 
@@ -109,7 +110,8 @@ def _cleanup():
                 text("DELETE FROM stocks WHERE market = :market"), {"market": TEST_MARKET}
             )
             session.execute(
-                text("DELETE FROM companies WHERE market = :market"), {"market": TEST_MARKET}
+                text("DELETE FROM companies WHERE ticker = ANY(:tickers)"),
+                {"tickers": TEST_TICKERS},
             )
 
     purge()

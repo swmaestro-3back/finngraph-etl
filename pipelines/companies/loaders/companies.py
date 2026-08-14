@@ -21,8 +21,8 @@ ALIAS_SOURCE_KIS_MASTER = "KIS_MASTER"
 # WHERE delisted_at IS NULL을 그대로 적어 추론시킨다.
 UPSERT_LISTED_COMPANIES_SQL = text(
     """
-    INSERT INTO companies (ticker, name, market, country, is_listed, created_at, updated_at)
-    SELECT s.ticker, s.name, s.market, 'KR', true, now(), now()
+    INSERT INTO companies (ticker, name, country, is_listed, created_at, updated_at)
+    SELECT s.ticker, s.name, 'KR', true, now(), now()
       FROM stocks AS s
      WHERE s.is_active
        AND NOT s.preferred_stock
@@ -31,7 +31,6 @@ UPSERT_LISTED_COMPANIES_SQL = text(
        AND BTRIM(s.name) <> ''
     ON CONFLICT (ticker) WHERE delisted_at IS NULL DO UPDATE SET
       name = EXCLUDED.name,
-      market = EXCLUDED.market,
       country = EXCLUDED.country,
       is_listed = EXCLUDED.is_listed,
       updated_at = now()
