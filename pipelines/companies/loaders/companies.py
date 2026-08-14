@@ -22,7 +22,7 @@ ALIAS_SOURCE_KIS_MASTER = "KIS_MASTER"
 UPSERT_LISTED_COMPANIES_SQL = text(
     """
     INSERT INTO companies (ticker, name, market, country, is_listed, created_at, updated_at)
-    SELECT s.symbol, s.name, s.market, 'KR', true, now(), now()
+    SELECT s.ticker, s.name, s.market, 'KR', true, now(), now()
       FROM stocks AS s
      WHERE s.is_active
        AND NOT s.preferred_stock
@@ -52,7 +52,7 @@ LINK_STOCKS_TO_COMPANIES_SQL = text(
        SET company_id = c.id,
            updated_at = now()
       FROM companies AS c
-     WHERE c.ticker = s.symbol
+     WHERE c.ticker = s.ticker
        AND c.delisted_at IS NULL
        AND s.is_active
        AND s.company_id IS DISTINCT FROM c.id
@@ -76,7 +76,7 @@ INSERT_COMPANY_ALIASES_SQL = text(
        AND s.company_id IS NOT NULL
        AND BTRIM(s.name) <> ''
      UNION
-    SELECT s.company_id, s.symbol, NULL::text, :source
+    SELECT s.company_id, s.ticker, NULL::text, :source
       FROM stocks AS s
      WHERE s.is_active
        AND s.company_id IS NOT NULL

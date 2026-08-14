@@ -390,11 +390,11 @@ def fetch_kospi_kosdaq_symbols() -> list[StockSymbol]:
 
 def fetch_stock_master_symbols(specs: tuple[MarketMasterSpec, ...]) -> list[StockSymbol]:
     synced_at = now_kst()
-    symbols: list[StockSymbol] = []
+    tickers: list[StockSymbol] = []
     for spec in specs:
         content = _download_master_file(spec.url)
-        symbols.extend(parse_master_content(content, spec, synced_at=synced_at))
-    return symbols
+        tickers.extend(parse_master_content(content, spec, synced_at=synced_at))
+    return tickers
 
 
 def parse_master_content(
@@ -423,17 +423,17 @@ def parse_master_row(
     part1 = row[: len(row) - suffix_length]
     fields = _split_fixed_width(row[-suffix_length:], spec.suffix_widths)
 
-    symbol = part1[:9].strip().zfill(6)
+    ticker = part1[:9].strip().zfill(6)
     standard_code = part1[9:21].strip()
     name = part1[21:].strip()
-    if not symbol or not standard_code or not name:
-        raise ValueError(f"{spec.market} master row missing required symbol fields.")
+    if not ticker or not standard_code or not name:
+        raise ValueError(f"{spec.market} master row missing required ticker fields.")
 
     # KIS 공식 필드 이름을 키로 전체 속성을 보존한다(요구사항 미확정 대비 — 컬럼 승격은 추후 판단).
     raw_attributes = dict(zip(spec.field_names, fields, strict=True))
 
     return StockSymbol(
-        symbol=symbol,
+        ticker=ticker,
         standard_code=standard_code,
         name=name,
         market=spec.market,

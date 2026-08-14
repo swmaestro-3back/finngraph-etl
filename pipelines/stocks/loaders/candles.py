@@ -13,11 +13,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from pipelines.common.types import DailyCandle, MinuteCandle, PeriodCandle
-from pipelines.stocks.loaders.symbols import fetch_active_stock_ids
+from pipelines.stocks.loaders.tickers import fetch_active_stock_ids
 
 UPSERT_DAILY_CANDLE_SQL = text(
     """
-    INSERT INTO stock_daily_candles (
+    INSERT INTO daily_candles (
       stock_id, trade_date, open, high, low, close, volume, trade_value, source, updated_at
     )
     VALUES (
@@ -30,7 +30,7 @@ UPSERT_DAILY_CANDLE_SQL = text(
       close = EXCLUDED.close,
       volume = EXCLUDED.volume,
       -- 거래대금은 원천에 따라 없을 수 있다. NULL로 덮어써서 기존 값을 지우지 않는다.
-      trade_value = COALESCE(EXCLUDED.trade_value, stock_daily_candles.trade_value),
+      trade_value = COALESCE(EXCLUDED.trade_value, daily_candles.trade_value),
       source = EXCLUDED.source,
       updated_at = now()
     """
@@ -58,7 +58,7 @@ UPSERT_PERIOD_CANDLE_SQL = text(
 SELECT_LATEST_DAILY_CANDLE_DATES_SQL = text(
     """
     SELECT stock_id, MAX(trade_date) AS latest
-      FROM stock_daily_candles
+      FROM daily_candles
      GROUP BY stock_id
     """
 )
@@ -82,7 +82,7 @@ def upsert_daily_candles(session: Session, candles: list[DailyCandle], source: s
     stock_ids = fetch_active_stock_ids(session)
     payload = [
         {
-            "stock_id": stock_ids[candle.symbol],
+            "stock_id": stock_ids[candle.ticker],
             "trade_date": candle.trade_date,
             "open": candle.open,
             "high": candle.high,
@@ -93,7 +93,7 @@ def upsert_daily_candles(session: Session, candles: list[DailyCandle], source: s
             "source": source,
         }
         for candle in candles
-        if candle.symbol in stock_ids
+        if candle.ticker in stock_ids
     ]
     if not payload:
         return 0
@@ -117,7 +117,7 @@ def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
     stock_ids = fetch_active_stock_ids(session)
     payload = [
         {
-            "stock_id": stock_ids[candle.symbol],
+            "stock_id": stock_ids[candle.ticker],
             "period": candle.period,
             "base_date": candle.base_date,
             "open": candle.open,
@@ -128,7 +128,7 @@ def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
             "trade_value": candle.trade_value,
         }
         for candle in candles
-        if candle.symbol in stock_ids
+        if candle.ticker in stock_ids
     ]
     if not payload:
         return 0

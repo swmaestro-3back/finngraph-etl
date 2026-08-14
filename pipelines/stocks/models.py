@@ -9,7 +9,7 @@ class StockSymbol:
     """KOSPI/KOSDAQ 종목 마스터 데이터.
 
     Attributes:
-        symbol (str): 단축코드. 예: "005930".
+        ticker (str): 단축코드. 예: "005930".
         standard_code (str): 표준코드. KIS master의 표준코드 값.
         name (str): 종목명.
         market (str): 시장 구분. "KOSPI" 또는 "KOSDAQ".
@@ -36,7 +36,7 @@ class StockSymbol:
             (오프셋이 밀리면 값이 눈에 띄게 이상해진다)을 위한 것이다.
     """
 
-    symbol: str
+    ticker: str
     standard_code: str
     name: str
     market: str

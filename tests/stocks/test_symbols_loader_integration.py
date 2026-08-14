@@ -7,7 +7,7 @@
 검증 대상은 두 가지다.
 
 1. 종목코드 재사용 — 상장폐지된 종목과 같은 단축코드로 신규 상장이 들어와도 두 회사가
-   서로 다른 행으로 공존해야 한다. 예전 구조(symbol PK)에서는 upsert가 옛 회사 행을
+   서로 다른 행으로 공존해야 한다. 예전 구조(ticker PK)에서는 upsert가 옛 회사 행을
    덮어써서 이름·상장일이 새 회사 것으로 바뀌었다.
 
 2. 일시 누락 후 재등장 — 하루 master에서 빠졌다가 다시 나타난 종목은 새 행이 아니라
@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.database import session_scope
-from pipelines.stocks.loaders.symbols import sync_symbols
+from pipelines.stocks.loaders.tickers import sync_symbols
 from pipelines.stocks.models import StockSymbol
 
 pytestmark = pytest.mark.integration
@@ -36,7 +36,7 @@ NEW_CODE = "KR7999999002"
 
 def _make(standard_code: str, name: str, listed_on: date) -> StockSymbol:
     return StockSymbol(
-        symbol=SYMBOL,
+        ticker=SYMBOL,
         standard_code=standard_code,
         name=name,
         market=TEST_MARKET,
@@ -50,7 +50,7 @@ def _rows() -> list[dict]:
         result = session.execute(
             text(
                 """
-                SELECT standard_code, name, symbol, is_active, listed_date
+                SELECT standard_code, name, ticker, is_active, listed_date
                   FROM stocks
                  WHERE market = :market
                  ORDER BY standard_code
@@ -102,13 +102,13 @@ def test_reused_symbol_creates_separate_row() -> None:
 
 def test_missing_then_reappearing_symbol_reuses_row() -> None:
     """일시적으로 master에서 빠졌다 돌아온 종목은 새 행이 아니라 기존 행이 되살아난다."""
-    symbol = _make(OLD_CODE, "종목A", date(2000, 5, 1))
+    ticker = _make(OLD_CODE, "종목A", date(2000, 5, 1))
     with session_scope() as session:
-        sync_symbols(session, [symbol])
+        sync_symbols(session, [ticker])
 
     # master에서 빠진 날 — 같은 시장의 다른 종목만 들어온다
     other = StockSymbol(
-        symbol="999998",
+        ticker="999998",
         standard_code="KR7999998003",
         name="다른종목",
         market=TEST_MARKET,
@@ -120,7 +120,7 @@ def test_missing_then_reappearing_symbol_reuses_row() -> None:
 
     # 다시 나타난 날
     with session_scope() as session:
-        sync_symbols(session, [symbol, other])
+        sync_symbols(session, [ticker, other])
 
     rows = [row for row in _rows() if row["standard_code"] == OLD_CODE]
     assert len(rows) == 1, "재등장 시 행이 늘어나면 안 된다"

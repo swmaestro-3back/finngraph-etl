@@ -23,7 +23,7 @@ from sqlalchemy import text
 
 from pipelines.common.database import session_scope
 from pipelines.companies.loaders.companies import sync_listed_companies
-from pipelines.stocks.loaders.symbols import sync_symbols
+from pipelines.stocks.loaders.tickers import sync_symbols
 from pipelines.stocks.models import StockSymbol
 
 pytestmark = pytest.mark.integration
@@ -37,19 +37,19 @@ PREFERRED_SYMBOL = "999902"
 ETP_SYMBOL = "999903"
 
 
-def _stock(symbol: str, name: str, **flags: bool) -> StockSymbol:
+def _stock(ticker: str, name: str, **flags: bool) -> StockSymbol:
     return StockSymbol(
-        symbol=symbol,
-        standard_code=f"KR7{symbol}001",
+        ticker=ticker,
+        standard_code=f"KR7{ticker}001",
         name=name,
         market=TEST_MARKET,
         **flags,
     )
 
 
-def _load_stocks(*symbols: StockSymbol) -> None:
+def _load_stocks(*tickers: StockSymbol) -> None:
     with session_scope() as session:
-        sync_symbols(session, list(symbols))
+        sync_symbols(session, list(tickers))
 
 
 def _sync() -> tuple[int, int, int]:
@@ -77,10 +77,10 @@ def _companies() -> list[dict]:
 def _stock_links() -> dict[str, int | None]:
     with session_scope() as session:
         rows = session.execute(
-            text("SELECT symbol, company_id FROM stocks WHERE market = :market"),
+            text("SELECT ticker, company_id FROM stocks WHERE market = :market"),
             {"market": TEST_MARKET},
         )
-        return {row.symbol: row.company_id for row in rows}
+        return {row.ticker: row.company_id for row in rows}
 
 
 def _aliases() -> set[str]:
