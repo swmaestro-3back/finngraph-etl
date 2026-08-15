@@ -14,7 +14,7 @@ from decimal import Decimal
 from pipelines.common.logging import get_logger
 from pipelines.common.retry import retry_external_call
 from pipelines.common.types import DailyCandle
-from pipelines.stocks.models import StockSymbol
+from pipelines.stocks.models import StockTicker
 
 logger = get_logger(__name__)
 
@@ -28,7 +28,7 @@ _COLUMN_ALIASES = {
 }
 
 
-def fetch_symbols() -> list[StockSymbol]:
+def fetch_tickers() -> list[StockTicker]:
     """FDR 종목 목록.
 
     종목 마스터의 원천은 KIS master다. FDR 목록은 상장폐지·관리종목 이력 보조용이며,

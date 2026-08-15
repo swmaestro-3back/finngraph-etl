@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 
 @dataclass(frozen=True)
-class StockSymbol:
+class StockTicker:
     """KOSPI/KOSDAQ 종목 마스터 데이터.
 
     Attributes:
@@ -58,7 +58,7 @@ class StockSymbol:
 
 
 @dataclass(frozen=True)
-class SymbolSyncResult:
+class TickerSyncResult:
     """종목 마스터 동기화 결과."""
 
     upserted_count: int

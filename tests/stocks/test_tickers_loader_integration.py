@@ -1,6 +1,6 @@
 """stocks 로더 통합 테스트 — 종목코드 재사용·재등장 시나리오.
 
-실제 Postgres에 붙어 `sync_symbols`의 upsert/비활성 SQL이 의도대로 동작하는지 검증한다.
+실제 Postgres에 붙어 `sync_tickers`의 upsert/비활성 SQL이 의도대로 동작하는지 검증한다.
 `integration` 마커가 붙어 CI unit-test job에서는 제외되고 db-integration job에서만 실행된다.
 로컬은 `docker compose up -d db` 후 `pytest -m integration`.
 
@@ -22,21 +22,21 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.database import session_scope
-from pipelines.stocks.loaders.tickers import sync_symbols
-from pipelines.stocks.models import StockSymbol
+from pipelines.stocks.loaders.tickers import sync_tickers
+from pipelines.stocks.models import StockTicker
 
 pytestmark = pytest.mark.integration
 
 # 운영 데이터와 섞이지 않도록 테스트 전용 시장 구분값. 정리(cleanup) 기준이기도 하다.
 TEST_MARKET = "PYTEST_KOSPI"
-SYMBOL = "999999"
+TICKER = "999999"
 OLD_CODE = "KR7999999001"
 NEW_CODE = "KR7999999002"
 
 
-def _make(standard_code: str, name: str, listed_on: date) -> StockSymbol:
-    return StockSymbol(
-        ticker=SYMBOL,
+def _make(standard_code: str, name: str, listed_on: date) -> StockTicker:
+    return StockTicker(
+        ticker=TICKER,
         standard_code=standard_code,
         name=name,
         market=TEST_MARKET,
@@ -74,16 +74,16 @@ def _cleanup():
     purge()
 
 
-def test_reused_symbol_creates_separate_row() -> None:
+def test_reused_ticker_creates_separate_row() -> None:
     """상장폐지 후 같은 코드로 재상장되면 두 회사가 별개 행으로 남아야 한다."""
     old = _make(OLD_CODE, "옛회사", date(1990, 1, 1))
     with session_scope() as session:
-        sync_symbols(session, [old])
+        sync_tickers(session, [old])
 
     # 다음 날 master: 옛 종목이 사라지고 같은 단축코드로 새 종목이 등장
     new = _make(NEW_CODE, "새회사", date(2026, 8, 4))
     with session_scope() as session:
-        sync_symbols(session, [new])
+        sync_tickers(session, [new])
 
     rows = _rows()
     assert len(rows) == 2, f"두 회사가 공존해야 한다: {rows}"
@@ -96,31 +96,31 @@ def test_reused_symbol_creates_separate_row() -> None:
     assert by_code[NEW_CODE]["name"] == "새회사"
     assert by_code[NEW_CODE]["is_active"] is True
 
-    # 활성 행은 하나뿐이어야 한다 (stocks_active_symbol_uk)
+    # 활성 행은 하나뿐이어야 한다 (stocks_active_ticker_uk)
     assert sum(1 for row in rows if row["is_active"]) == 1
 
 
-def test_missing_then_reappearing_symbol_reuses_row() -> None:
+def test_missing_then_reappearing_ticker_reuses_row() -> None:
     """일시적으로 master에서 빠졌다 돌아온 종목은 새 행이 아니라 기존 행이 되살아난다."""
     ticker = _make(OLD_CODE, "종목A", date(2000, 5, 1))
     with session_scope() as session:
-        sync_symbols(session, [ticker])
+        sync_tickers(session, [ticker])
 
     # master에서 빠진 날 — 같은 시장의 다른 종목만 들어온다
-    other = StockSymbol(
+    other = StockTicker(
         ticker="999998",
         standard_code="KR7999998003",
         name="다른종목",
         market=TEST_MARKET,
     )
     with session_scope() as session:
-        sync_symbols(session, [other])
+        sync_tickers(session, [other])
 
     assert {row["standard_code"]: row["is_active"] for row in _rows()}[OLD_CODE] is False
 
     # 다시 나타난 날
     with session_scope() as session:
-        sync_symbols(session, [ticker, other])
+        sync_tickers(session, [ticker, other])
 
     rows = [row for row in _rows() if row["standard_code"] == OLD_CODE]
     assert len(rows) == 1, "재등장 시 행이 늘어나면 안 된다"
