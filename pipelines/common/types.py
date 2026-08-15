@@ -13,13 +13,13 @@ class DailyCandle:
     적재 시점에 loader가 한다 — 원천마다 stocks를 다시 조회하지 않게 하려는 것이다.
 
     Attributes:
-        symbol (str): 단축코드.
+        ticker (str): 단축코드.
         trade_date (date): 거래일.
         volume (int): 거래량(주).
         trade_value (int | None): 거래대금(원). FDR은 제공하지 않아 None이 될 수 있다.
     """
 
-    symbol: str
+    ticker: str
     trade_date: date
     open: Decimal
     high: Decimal
@@ -38,7 +38,7 @@ class MinuteCandle:
             시작 시각이다. 09:00 봉은 09:00:00~09:00:59 구간을 뜻한다.
     """
 
-    symbol: str
+    ticker: str
     ts: datetime
     open: Decimal
     high: Decimal
@@ -56,7 +56,7 @@ class PeriodCandle:
         base_date (date): 해당 기간의 마지막 거래일. KIS가 그렇게 준다.
     """
 
-    symbol: str
+    ticker: str
     period: str
     base_date: date
     open: Decimal

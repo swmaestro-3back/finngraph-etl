@@ -33,17 +33,17 @@ CHART_PAGE_SIZE = 100
 
 
 def fetch_daily_candles(
-    symbol: str,
+    ticker: str,
     start: date,
     end: date,
     client: KisClient | None = None,
 ) -> list[DailyCandle]:
     """KIS 기간별시세로 일봉을 가져온다. 당일·최근 구간 갱신용이다."""
 
-    rows = _fetch_chart_rows(symbol, "D", start, end, client)
+    rows = _fetch_chart_rows(ticker, "D", start, end, client)
     candles = [
         DailyCandle(
-            symbol=symbol,
+            ticker=ticker,
             trade_date=parsed_date,
             open=open_,
             high=high,
@@ -58,7 +58,7 @@ def fetch_daily_candles(
 
 
 def fetch_period_candles(
-    symbol: str,
+    ticker: str,
     period: str,
     start: date,
     end: date,
@@ -67,7 +67,7 @@ def fetch_period_candles(
     """주봉·월봉을 가져온다.
 
     Args:
-        symbol (str): 단축코드.
+        ticker (str): 단축코드.
         period (str): 'W'(주) 또는 'M'(월).
         start (date): 시작일(포함).
         end (date): 종료일(포함).
@@ -80,10 +80,10 @@ def fetch_period_candles(
     if period not in ("W", "M"):
         raise ValueError(f"period는 'W' 또는 'M'이어야 한다: {period!r}")
 
-    rows = _fetch_chart_rows(symbol, period, start, end, client)
+    rows = _fetch_chart_rows(ticker, period, start, end, client)
     candles = [
         PeriodCandle(
-            symbol=symbol,
+            ticker=ticker,
             period=period,
             base_date=parsed_date,
             open=open_,
@@ -102,7 +102,7 @@ def fetch_period_candles(
 
 
 def _fetch_chart_rows(
-    symbol: str,
+    ticker: str,
     period: str,
     start: date,
     end: date,
@@ -120,7 +120,7 @@ def _fetch_chart_rows(
             CHART_TR_ID,
             {
                 "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_ISCD": ticker,
                 "FID_INPUT_DATE_1": start.strftime("%Y%m%d"),
                 "FID_INPUT_DATE_2": cursor_end.strftime("%Y%m%d"),
                 "FID_PERIOD_DIV_CODE": period,

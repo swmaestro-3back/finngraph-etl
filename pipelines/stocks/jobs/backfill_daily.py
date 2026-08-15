@@ -18,7 +18,7 @@ from pipelines.common.logging import get_logger
 from pipelines.common.time import now_kst
 from pipelines.stocks.extractors.finance_data_reader import fetch_daily_candles
 from pipelines.stocks.loaders.candles import fetch_latest_daily_candle_dates, upsert_daily_candles
-from pipelines.stocks.loaders.symbols import fetch_serviceable_stocks
+from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
 
 logger = get_logger(__name__)
 
@@ -47,18 +47,18 @@ def run(limit: int | None = None) -> None:
 
     for chunk in chunked(targets, CHUNK_SIZE):
         candles = []
-        for stock_id, symbol in chunk:
+        for stock_id, ticker in chunk:
             start = _start_date(latest_dates.get(stock_id), earliest)
             if start > today:
                 continue
 
             try:
-                candles.extend(fetch_daily_candles(symbol, start, today))
+                candles.extend(fetch_daily_candles(ticker, start, today))
             except Exception:
                 # 한 종목의 실패가 배치 전체를 죽이면 안 된다. 남은 종목을 계속 처리하고
                 # 실패 목록만 모아 마지막에 보고한다.
-                logger.exception("일봉 수집 실패: symbol=%s start=%s", symbol, start)
-                failed.append(symbol)
+                logger.exception("일봉 수집 실패: ticker=%s start=%s", ticker, start)
+                failed.append(ticker)
 
         if not candles:
             continue

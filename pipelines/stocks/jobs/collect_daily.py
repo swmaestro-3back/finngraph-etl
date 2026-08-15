@@ -19,7 +19,7 @@ from pipelines.common.logging import get_logger
 from pipelines.common.time import now_kst
 from pipelines.stocks.extractors.kis import fetch_daily_candles, fetch_period_candles
 from pipelines.stocks.loaders.candles import upsert_daily_candles, upsert_period_candles
-from pipelines.stocks.loaders.symbols import fetch_serviceable_stocks
+from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
 
 logger = get_logger(__name__)
 
@@ -46,12 +46,12 @@ def run(limit: int | None = None) -> None:
 
     for chunk in chunked(targets, CHUNK_SIZE):
         candles = []
-        for _, symbol in chunk:
+        for _, ticker in chunk:
             try:
-                candles.extend(fetch_daily_candles(symbol, start, today, client=client))
+                candles.extend(fetch_daily_candles(ticker, start, today, client=client))
             except Exception:
-                logger.exception("일봉 갱신 실패: symbol=%s", symbol)
-                failed.append(symbol)
+                logger.exception("일봉 갱신 실패: ticker=%s", ticker)
+                failed.append(ticker)
 
         if candles:
             with session_scope() as session:
@@ -84,15 +84,15 @@ def run_period(limit: int | None = None, lookback_days: int | None = None) -> No
 
     for chunk in chunked(targets, CHUNK_SIZE):
         candles = []
-        for _, symbol in chunk:
+        for _, ticker in chunk:
             for period in PERIODS:
                 try:
                     candles.extend(
-                        fetch_period_candles(symbol, period, start, today, client=client)
+                        fetch_period_candles(ticker, period, start, today, client=client)
                     )
                 except Exception:
-                    logger.exception("기간봉 수집 실패: symbol=%s period=%s", symbol, period)
-                    failed.append(f"{symbol}:{period}")
+                    logger.exception("기간봉 수집 실패: ticker=%s period=%s", ticker, period)
+                    failed.append(f"{ticker}:{period}")
 
         if candles:
             with session_scope() as session:

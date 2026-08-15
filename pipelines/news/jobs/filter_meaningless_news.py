@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from pipelines.news.config import get_news_settings
 from pipelines.news.loaders.news_repository import (
     extract_news_ids_from_removed_items,
     fetch_unchecked_news_items,
@@ -9,14 +10,15 @@ from pipelines.news.loaders.news_repository import (
 )
 from pipelines.news.transformers.material_event_filter import filter_material_event_news
 
-DEFAULT_MAX_ITEMS_PER_RUN = 300
-
 
 def judge_unchecked_news(
-    limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
+    limit: int | None = None,
     mode: str = "sequential",
     max_concurrency: int | None = None,
 ) -> dict[str, Any]:
+
+    if limit is None:
+        limit = get_news_settings().news_llm_max_items_per_run
 
     source_news = fetch_unchecked_news_items(limit=limit)
 
@@ -50,7 +52,7 @@ def mark_material_results(
 
 def run(
     apply: bool = True,
-    limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
+    limit: int | None = None,
     mode: str = "sequential",
     max_concurrency: int | None = None,
 ) -> dict[str, Any]:

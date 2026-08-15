@@ -3,13 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 
 try:
-    from airflow.decorators import dag, task
+    from airflow.sdk import Asset, dag, task
 except ImportError:
+    Asset = None
     dag = None
     task = None
 
 
 if dag and task:
+    # 종목 마스터 확정 신호. companies_sync_master가 구독한다.
+    stocks_master_synced = Asset("etl://stocks/master")
 
     @dag(
         dag_id="stocks_sync_master",
@@ -20,7 +23,7 @@ if dag and task:
         tags=["stocks", "master"],
     )
     def stocks_sync_master():
-        @task(retries=2)
+        @task(retries=2, outlets=[stocks_master_synced])
         def sync_master() -> None:
             from pipelines.stocks.jobs.sync_stock_master import run
 

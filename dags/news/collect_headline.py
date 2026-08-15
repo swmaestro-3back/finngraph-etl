@@ -4,14 +4,16 @@ from datetime import timedelta
 
 try:
     import pendulum
-    from airflow.sdk import dag, task
+    from airflow.sdk import Asset, dag, task
 except ImportError:
     pendulum = None
+    Asset = None
     dag = None
     task = None
 
 
 if dag and task:
+    news_collected = Asset("etl://news/collected")
 
     @dag(
         dag_id="news_collect_headline",
@@ -22,7 +24,7 @@ if dag and task:
         tags=["news"],
     )
     def news_collect_headline():
-        @task(retries=2, retry_delay=timedelta(minutes=5))
+        @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_collected])
         def collect_headline() -> None:
             from pipelines.news.jobs.collect_headline import run
 

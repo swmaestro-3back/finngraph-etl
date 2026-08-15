@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 
 try:
-    from airflow.decorators import dag, task
+    from airflow.sdk import Asset, dag, task
 except ImportError:
+    Asset = None
     dag = None
     task = None
 
@@ -14,9 +15,8 @@ if dag and task:
     @dag(
         dag_id="companies_sync_master",
         start_date=datetime(2026, 1, 1),
-        # 종목 마스터 동기화(stocks_sync_master, 평일 08:00) 이후 실행.
-        # stocks를 읽어 법인 축으로 옮기는 작업이라 선행 DAG가 끝난 뒤여야 한다.
-        schedule="30 8 * * 1-5",
+        # stocks를 읽어 법인 축으로 옮기는 작업이라 종목 마스터 확정 직후 기동한다.
+        schedule=Asset("etl://stocks/master"),
         catchup=False,
         max_active_runs=1,
         tags=["companies", "master"],
@@ -28,6 +28,14 @@ if dag and task:
 
             run()
 
-        sync_master()
+        # 마스터 확정 직후 Neo4j에 상장사(name↔ticker)를 시드한다.
+        # 테마 검증·적재와 삼중항 종목코드 채움이 이 시드를 전제로 동작한다.
+        @task(retries=2)
+        def seed_graph() -> None:
+            from pipelines.companies.jobs.seed_graph import run
+
+            run()
+
+        sync_master() >> seed_graph()
 
     companies_sync_master()

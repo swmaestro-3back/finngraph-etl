@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from pipelines.news.config import get_news_settings
 from pipelines.news.loaders.news_repository import (
     fetch_triplets_for_news_ids,
     fetch_unsummarized_news_items,
@@ -9,14 +10,15 @@ from pipelines.news.loaders.news_repository import (
 )
 from pipelines.news.transformers.summarizer import summarize_news_items
 
-DEFAULT_MAX_ITEMS_PER_RUN = 10
-
 
 def summarize_unsummarized_news(
-    limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
+    limit: int | None = None,
     mode: str = "async",
     max_concurrency: int | None = None,
 ) -> dict[str, Any]:
+
+    if limit is None:
+        limit = get_news_settings().news_llm_max_items_per_run
 
     source_news = fetch_unsummarized_news_items(limit=limit)
 
@@ -46,7 +48,7 @@ def save_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
 
 def run(
     apply: bool = True,
-    limit: int = DEFAULT_MAX_ITEMS_PER_RUN,
+    limit: int | None = None,
     mode: str = "async",
     max_concurrency: int | None = None,
 ) -> dict[str, Any]:

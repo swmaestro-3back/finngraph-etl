@@ -14,7 +14,7 @@ from decimal import Decimal
 from pipelines.common.logging import get_logger
 from pipelines.common.retry import retry_external_call
 from pipelines.common.types import DailyCandle
-from pipelines.stocks.models import StockSymbol
+from pipelines.stocks.models import StockTicker
 
 logger = get_logger(__name__)
 
@@ -28,7 +28,7 @@ _COLUMN_ALIASES = {
 }
 
 
-def fetch_symbols() -> list[StockSymbol]:
+def fetch_tickers() -> list[StockTicker]:
     """FDR 종목 목록.
 
     종목 마스터의 원천은 KIS master다. FDR 목록은 상장폐지·관리종목 이력 보조용이며,
@@ -41,11 +41,11 @@ def fetch_symbols() -> list[StockSymbol]:
 
 
 @retry_external_call()
-def fetch_daily_candles(symbol: str, start: date, end: date) -> list[DailyCandle]:
+def fetch_daily_candles(ticker: str, start: date, end: date) -> list[DailyCandle]:
     """[start, end] 구간의 일봉을 가져온다.
 
     Args:
-        symbol (str): 단축코드.
+        ticker (str): 단축코드.
         start (date): 시작일(포함).
         end (date): 종료일(포함).
 
@@ -55,14 +55,14 @@ def fetch_daily_candles(symbol: str, start: date, end: date) -> list[DailyCandle
 
     import FinanceDataReader as fdr
 
-    frame = fdr.DataReader(symbol, start.isoformat(), end.isoformat())
+    frame = fdr.DataReader(ticker, start.isoformat(), end.isoformat())
     if frame is None or frame.empty:
         return []
 
     columns = {str(name).strip().lower(): name for name in frame.columns}
     missing = [key for key in _COLUMN_ALIASES if key not in columns]
     if missing:
-        raise ValueError(f"FDR 응답에 필요한 컬럼이 없다: symbol={symbol} missing={missing}")
+        raise ValueError(f"FDR 응답에 필요한 컬럼이 없다: ticker={ticker} missing={missing}")
 
     candles: list[DailyCandle] = []
     for index, row in frame.iterrows():
@@ -74,7 +74,7 @@ def fetch_daily_candles(symbol: str, start: date, end: date) -> list[DailyCandle
 
         candles.append(
             DailyCandle(
-                symbol=symbol,
+                ticker=ticker,
                 trade_date=index.date() if hasattr(index, "date") else index,
                 open=Decimal(str(values["open"])),
                 high=Decimal(str(values["high"])),

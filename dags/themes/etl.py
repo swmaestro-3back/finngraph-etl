@@ -47,6 +47,12 @@ if dag and task:
 
             asyncio.run(_load(validated_path))
 
+        @task(retries=2)
+        def load_rdb(validated_path: str) -> None:
+            from pipelines.themes.jobs.load_rdb import run
+
+            run(validated_path)
+
         reset = reset_themes()
 
         # SOURCE별 task를 생성하고 reset 이후 병렬 실행되도록 fan-out
@@ -56,7 +62,9 @@ if dag and task:
         ]
         reset >> extracted
 
-        load_themes(validate_themes(extracted))
+        validated = validate_themes(extracted)
+        load_themes(validated)
+        load_rdb(validated)
 
-    # 최종 실행 흐름: reset -> extract(judal -> naver -> antwinner) -> validate -> load
+    # 최종 실행 흐름: reset -> extract(소스 병렬) -> validate -> (load_neo4j ∥ load_rdb)
     themes_pipeline()

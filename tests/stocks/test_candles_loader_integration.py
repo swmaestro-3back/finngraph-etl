@@ -22,24 +22,24 @@ from pipelines.stocks.loaders.candles import (
     upsert_daily_candles,
     upsert_period_candles,
 )
-from pipelines.stocks.loaders.symbols import sync_symbols
-from pipelines.stocks.models import StockSymbol
+from pipelines.stocks.loaders.tickers import sync_tickers
+from pipelines.stocks.models import StockTicker
 
 pytestmark = pytest.mark.integration
 
 TEST_MARKET = "PYTEST_CANDLES"
-SYMBOL = "999801"
-UNKNOWN_SYMBOL = "999899"
+TICKER = "999801"
+UNKNOWN_TICKER = "999899"
 
 
 def _load_stock() -> int:
     with session_scope() as session:
-        sync_symbols(
+        sync_tickers(
             session,
             [
-                StockSymbol(
-                    symbol=SYMBOL,
-                    standard_code=f"KR7{SYMBOL}001",
+                StockTicker(
+                    ticker=TICKER,
+                    standard_code=f"KR7{TICKER}001",
                     name="테스트캔들",
                     market=TEST_MARKET,
                 )
@@ -47,14 +47,14 @@ def _load_stock() -> int:
         )
     with session_scope() as session:
         return session.execute(
-            text("SELECT id FROM stocks WHERE symbol = :symbol"), {"symbol": SYMBOL}
+            text("SELECT id FROM stocks WHERE ticker = :ticker"), {"ticker": TICKER}
         ).scalar()
 
 
 def _daily(trade_date: date, close: str, trade_value: int | None = None) -> DailyCandle:
     price = Decimal(close)
     return DailyCandle(
-        symbol=SYMBOL,
+        ticker=TICKER,
         trade_date=trade_date,
         open=price,
         high=price,
@@ -71,13 +71,13 @@ def _rows() -> list[dict]:
             text(
                 """
                 SELECT c.trade_date, c.close, c.trade_value, c.source
-                  FROM stock_daily_candles AS c
+                  FROM daily_candles AS c
                   JOIN stocks AS s ON s.id = c.stock_id
-                 WHERE s.symbol = :symbol
+                 WHERE s.ticker = :ticker
                  ORDER BY c.trade_date
                 """
             ),
-            {"symbol": SYMBOL},
+            {"ticker": TICKER},
         )
         return [dict(row._mapping) for row in rows]
 
@@ -110,21 +110,21 @@ def test_daily_candles_are_keyed_by_stock_id() -> None:
             text(
                 """
                 SELECT c.stock_id
-                  FROM stock_daily_candles AS c
+                  FROM daily_candles AS c
                   JOIN stocks AS s ON s.id = c.stock_id
-                 WHERE s.symbol = :symbol AND c.trade_date = :d
+                 WHERE s.ticker = :ticker AND c.trade_date = :d
                 """
             ),
-            {"symbol": SYMBOL, "d": date(2026, 8, 7)},
+            {"ticker": TICKER, "d": date(2026, 8, 7)},
         ).scalar()
     assert stored == stock_id
 
 
-def test_unknown_symbol_is_skipped() -> None:
+def test_unknown_ticker_is_skipped() -> None:
     """적재되지 않은 종목의 봉은 조용히 버린다 — 외래키 오류로 배치를 죽이지 않는다."""
     _load_stock()
     unknown = DailyCandle(
-        symbol=UNKNOWN_SYMBOL,
+        ticker=UNKNOWN_TICKER,
         trade_date=date(2026, 8, 7),
         open=Decimal("1"),
         high=Decimal("1"),
@@ -192,7 +192,7 @@ def test_period_candles_separate_week_and_month() -> None:
     price = Decimal("100")
     candles = [
         PeriodCandle(
-            symbol=SYMBOL,
+            ticker=TICKER,
             period=period,
             base_date=date(2026, 8, 7),
             open=price,
@@ -215,10 +215,10 @@ def test_period_candles_separate_week_and_month() -> None:
                 """
                 SELECT count(*) FROM stock_period_candles AS c
                   JOIN stocks AS s ON s.id = c.stock_id
-                 WHERE s.symbol = :symbol
+                 WHERE s.ticker = :ticker
                 """
             ),
-            {"symbol": SYMBOL},
+            {"ticker": TICKER},
         ).scalar()
 
     assert count == 2
