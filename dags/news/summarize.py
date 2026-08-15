@@ -5,9 +5,10 @@ from typing import Any
 
 try:
     import pendulum
-    from airflow.sdk import dag, task
+    from airflow.sdk import Asset, dag, task
 except ImportError:
     pendulum = None
+    Asset = None
     dag = None
     task = None
 
@@ -17,7 +18,7 @@ if dag and task:
     @dag(
         dag_id="news_summarize",
         start_date=pendulum.datetime(2026, 1, 1, tz="Asia/Seoul"),
-        schedule="0 * * * *",
+        schedule=Asset("etl://news/relations"),
         catchup=False,
         max_active_runs=1,
         tags=["news"],

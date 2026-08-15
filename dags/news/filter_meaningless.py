@@ -5,19 +5,21 @@ from typing import Any
 
 try:
     import pendulum
-    from airflow.sdk import dag, task
+    from airflow.sdk import Asset, dag, task
 except ImportError:
     pendulum = None
+    Asset = None
     dag = None
     task = None
 
 
 if dag and task:
+    news_filtered = Asset("etl://news/filtered")
 
     @dag(
         dag_id="news_filter_meaningless",
         start_date=pendulum.datetime(2026, 1, 1, tz="Asia/Seoul"),
-        schedule="0 * * * *",
+        schedule=Asset("etl://news/collected"),
         catchup=False,
         max_active_runs=1,
         tags=["news"],
@@ -38,7 +40,7 @@ if dag and task:
                 "dropped": result["dropped"],
             }
 
-        @task(retries=3, retry_delay=timedelta(minutes=2))
+        @task(retries=3, retry_delay=timedelta(minutes=2), outlets=[news_filtered])
         def mark(judged: dict[str, Any]) -> None:
             from pipelines.news.jobs.filter_meaningless_news import mark_material_results
 
