@@ -56,6 +56,10 @@ class NewsSettings(BaseSettings):
     news_llm_body_limit: int = Field(default=12000, validation_alias="NEWS_LLM_BODY_LIMIT")
     news_llm_max_tokens: int = Field(default=512, validation_alias="NEWS_LLM_MAX_TOKENS")
     news_llm_max_concurrency: int = Field(default=4, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
+    news_llm_max_items_per_run: int = Field(
+        default=100,
+        validation_alias="NEWS_LLM_MAX_ITEMS_PER_RUN",
+    )
 
     @field_validator("anchor_host", mode="after")
     @classmethod
@@ -70,10 +74,7 @@ class NewsSettings(BaseSettings):
     @field_validator("anchor_categories", mode="before")
     @classmethod
     def _parse_categories(cls, value: object) -> dict[int, str]:
-        """`{"101": "경제"}` JSON 문자열을 `{101: "경제"}`로 파싱한다.
 
-        미설정·빈 문자열은 빈 dict. 형식 오류는 즉시 드러나도록 예외를 올린다.
-        """
         if value is None or value == "":
             return {}
 
