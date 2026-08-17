@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-# 시드 원천: 활성 보통주만. companies upsert와 같은 필터(수집 범위 ≠ 제공 범위).
+# 시드 원천: is_active인 활성 보통주만. companies upsert와 같은 필터(수집 범위 ≠ 제공 범위).
 SELECT_LISTED_COMMON_STOCKS_SQL = text(
     """
     SELECT s.name, s.ticker, s.market

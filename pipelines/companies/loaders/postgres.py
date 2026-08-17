@@ -9,12 +9,11 @@ ALIAS_SOURCE_KIS_MASTER = "KIS_MASTER"
 
 # 국내 상장 법인 upsert
 #
-# 원천이 KIS master 파일이 아니라 이미 적재된 stocks다. 마스터 파싱은 SCRUM-55의
-# stocks의 sync_master가 끝낸 상태이므로, 여기서는 그 결과를 법인 축으로 옮기기만 한다.
-# 파일을 두 번 파싱하지 않으니 두 job이 같은 스냅샷을 볼 수 있다.
+# 원천이 KIS master 파일이 아니라 이미 적재된 stocks다.
+# 마스터파일 파싱은 이미 stocks의 sync_master가 끝낸 상태이므로,
+# 여기서는 그 결과를 company 축으로 옮기기만 한다.
 #
-# 우선주·ETP·SPAC를 제외하는 이유: 법인 단위가 아니다. 삼성전자우는 삼성전자와
-# 같은 법인이고, ETF·ETN·스팩은 애초에 사업을 하는 법인이 아니다. 이들은
+# 우선주·ETP·SPAC는 제외한다.
 # stocks에는 남아 있고 company_id만 NULL로 둔다(수집 범위 ≠ 제공 범위).
 #
 # conflict target이 부분 유니크 인덱스(companies_active_ticker_uk)라 인덱스 조건인

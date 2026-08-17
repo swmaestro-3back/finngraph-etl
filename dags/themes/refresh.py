@@ -3,16 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 try:
-    from airflow.sdk import Asset, dag, task
+    from airflow.sdk import dag, task
 except ImportError:
-    Asset = None
     dag = None
     task = None
 
 SOURCES: tuple[str, ...] = ("naver", "judal")
 
 if dag and task:
-    themes_rdb_loaded = Asset("etl://themes/rdb")
 
     @dag(
         dag_id="themes_refresh",
@@ -49,7 +47,7 @@ if dag and task:
 
             run(validated_path)
 
-        @task(outlets=[themes_rdb_loaded])
+        @task
         def load_rdb(validated_path: str) -> None:
             from pipelines.themes.jobs.load_rdb import run
 
