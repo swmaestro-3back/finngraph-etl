@@ -21,11 +21,17 @@ airflow.db
 airflow.cfg
 logs/
 
-# 테마 로컬 크롤링 저장 위치(테스트용)
-pipelines/themes/data/*
-docs/
-prompts/
+# Claude
+CLAUDE.md
+AGENTS.md
 .claude/
 .bkit/
-AGENTS.md
-CLAUDE.md
+
+# 로컬 테스트 데이터 푸시 방지용
+pipelines/themes/data/*
+tests/triples/*
+
+# 프롬프트 및 온톨로지 푸시 방지용
+docs/
+pipelines/triples/ontology
+prompts/
