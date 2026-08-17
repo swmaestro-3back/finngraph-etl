@@ -47,6 +47,8 @@ x-airflow-common: &airflow-common
       condition: service_healthy
     neo4j:
       condition: service_healthy
+    neo4j-init:
+      condition: service_completed_successfully
 
 services:
   db:
@@ -84,6 +86,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  neo4j-init:
+    image: neo4j:5
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      NEO4J_USERNAME: ${NEO4J_USERNAME:?NEO4J_USERNAME 을 .env 에 설정하세요}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 를 .env 에 설정하세요}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:?NEO4J_DATABASE 를 .env 에 설정하세요}
+    volumes:
+      - ./migrations/neo4j:/migrations:ro
+    # $$는 compose가 자기 변수로 해석하지 않고 컨테이너 셸에 넘기라는 이스케이프다.
+    # 비밀번호를 argv가 아닌 환경변수로 넘겨 `ps`·compose 로그에 노출되지 않게 한다.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        for migration in /migrations/*.cypher; do
+          echo "running migration $$migration"
+          cypher-shell -a bolt://neo4j:7687 \
+            -u "$$NEO4J_USERNAME" -p "$$NEO4J_PASSWORD" -d "$$NEO4J_DATABASE" \
+            -f "$$migration"
+        done
+    restart: "no"
 
   # Airflow 메타데이터 전용 DB. ETL 데이터(db, timescale)와 수명주기/백업 정책을 분리한다.
   airflow-db:

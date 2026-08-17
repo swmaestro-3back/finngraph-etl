@@ -9,12 +9,6 @@ logger = get_logger(__name__)
 
 MIN_ROWS_SAFETY = 1
 
-# name이 병렬 MERGE·시드의 유일 키이므로 유니크 제약으로 중복 생성을 원천 차단한다.
-ENSURE_NAME_CONSTRAINT_CYPHER = """
-CREATE CONSTRAINT company_name_uk IF NOT EXISTS
-FOR (c:Company) REQUIRE c.name IS UNIQUE
-"""
-
 # 사명 변경·코드 재사용 정리: 이번 배치의 ticker를 다른 name 노드가 쥐고 있으면 자격 회수.
 # 노드·간선은 남긴다(과거 뉴스 관계 보존) — 상장사 자격(ticker·시장 라벨)만 거둔다.
 RECLAIM_RENAMED_CYPHER = """
@@ -58,7 +52,6 @@ async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:
 
     tickers = [row["ticker"] for row in rows]
 
-    await neo4j_database.execute(ENSURE_NAME_CONSTRAINT_CYPHER)
     await neo4j_database.execute(RECLAIM_RENAMED_CYPHER, {"rows": rows})
     await neo4j_database.execute(UPSERT_COMPANIES_CYPHER, {"rows": rows})
     await neo4j_database.execute(RECLAIM_DELISTED_CYPHER, {"tickers": tickers})
