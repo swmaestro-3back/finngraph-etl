@@ -11,7 +11,7 @@ dags/
 ├── news/       # 뉴스 수집 · 필터 · 요약
 ├── stocks/     # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 집계
 ├── themes/     # 테마 크롤링 · 뉴스 연결
-└── triplets/   # 트리플 추출
+└── triples/   # 트리플 추출
 ```
 
 > 단, 폴더 구조는 **소스코드 정리용**이다. 
@@ -35,7 +35,7 @@ dags/
 | news | `news/summarize.py` | `news_summarize` | `news` | Asset `etl://news/relations` |
 | themes | `themes/refresh.py` | `themes_refresh` | `themes` | `0 0 * * *` (자정) |
 | themes | `themes/link_news.py` | `themes_link_news` | `themes` | Asset `etl://news/relations` |
-| triplets | `triplets/extract.py` | `triplets_extract` | `triplets` | Asset `etl://news/filtered` |
+| triples | `triples/extract.py` | `triples_extract` | `triples` | Asset `etl://news/filtered` |
 
 ## 독립실행 Crons
 
@@ -71,7 +71,7 @@ flowchart LR
     NCH[news_collect_headline] --> A_COL(["etl://news/collected"])
     NCK[news_collect_keyword_search] --> A_COL
     A_COL --> NFM[news_filter_meaningless] --> A_FIL(["etl://news/filtered"])
-    A_FIL --> TE[triplets_extract] --> A_REL(["etl://news/relations"]) --> NS[news_summarize]
+    A_FIL --> TE[triples_extract] --> A_REL(["etl://news/relations"]) --> NS[news_summarize]
 
     %% ===== themes =====
     A_REL --> TLN[themes_link_news]
@@ -133,6 +133,6 @@ flowchart LR
 
 ### Tag 관련 규칙
 - **태그는 도메인(폴더명) 하나만 사용한다.**
-  - `["news"]`, `["stocks"]`, `["themes"]`, `["triplets"]`, `["health"]`
+  - `["news"]`, `["stocks"]`, `["themes"]`, `["triples"]`, `["health"]`
 - 태그는 **여러 DAG가 공유하며 사용하는 것이므로** 세부 동작명은 넣지 않는다.
   - 세부 동작명은 이미 `dag_id`에 담겨 있어 중복이고, 한 번만 쓰이는 태그가 늘어나 UI만 지저분해지기 때문이다.

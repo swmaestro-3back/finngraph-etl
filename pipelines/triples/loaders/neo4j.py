@@ -1,4 +1,4 @@
-"""삼중항관계 Neo4j 적재.
+"""트리플관계 Neo4j 적재.
 
 읽기(ticker 참조 조회)는 `references/graph.py`, 엣지 분해 규칙은
 `edges.py`에 있다.
@@ -9,20 +9,20 @@ from __future__ import annotations
 from collections import defaultdict
 
 from pipelines.common.clients.neo4j import neo4j_database
-from pipelines.triplets.edges import edge_specs
-from pipelines.triplets.models import Triplet
+from pipelines.triples.edges import edge_specs
+from pipelines.triples.models import Triple
 
 # 간선 누적 최대 개수
 # 넘어갈 경우 FIFO로 동작
 _MAX_PROVENANCE = 10
 
 
-async def upsert_triplets(news_id: str, triplets: list[Triplet]) -> None:
-    """추출된 삼중항관계를 Neo4j에 반영
+async def upsert_triples(news_id: str, triples: list[Triple]) -> None:
+    """추출된 트리플관계를 Neo4j에 반영
 
-    1. 3rd Argument인 Item을 가진 술어는 하나의 삼중항관계를 두 개의 삼중항관계로 분해
-    2. 동일한 news_id에서 동일한 삼중항관계가 추가되는 경우에는 배척
-    3. 동일한 삼중항관계에 대해서는 총 _MAX_PROVENANCE 개수만큼만 저장가능
+    1. 3rd Argument인 Item을 가진 술어는 하나의 트리플관계를 두 개의 트리플관계로 분해
+    2. 동일한 news_id에서 동일한 트리플관계가 추가되는 경우에는 배척
+    3. 동일한 트리플관계에 대해서는 총 _MAX_PROVENANCE 개수만큼만 저장가능
        (그 이후부터는 FIFO 전략으로 관리)
     4. 하나의 간선이 추가될때, first_mentioned_at, last_mentioned_at, mention_count등
        메타데이터가 저장된다.
@@ -34,8 +34,8 @@ async def upsert_triplets(news_id: str, triplets: list[Triplet]) -> None:
     # Eager를 끼워 모든 row의 is_dup을 먼저 평가한다) 배치 내 중복은 여기서 걸러야 한다.
     grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     seen_edges: set[tuple[str, str, str, str, str]] = set()
-    for triplet in triplets:
-        for subject_label, subject_name, rel, object_label, object_name in edge_specs(triplet):
+    for triple in triples:
+        for subject_label, subject_name, rel, object_label, object_name in edge_specs(triple):
             edge_key = (subject_label, subject_name, rel, object_label, object_name)
             if edge_key in seen_edges:
                 continue
@@ -44,7 +44,7 @@ async def upsert_triplets(news_id: str, triplets: list[Triplet]) -> None:
                 {
                     "subject_name": subject_name,
                     "object_name": object_name,
-                    "source_sentence": triplet.source_sentence,
+                    "source_sentence": triple.source_sentence,
                 }
             )
 

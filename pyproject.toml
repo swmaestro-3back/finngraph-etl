@@ -62,8 +62,8 @@ known-first-party = ["pipelines", "tests", "dags"]
 # 테스트에 하드코딩된 기사 원문 등 긴 문자열 데이터는 줄길이 제한에서 제외한다.
 "tests/**" = ["E501"]
 # 프롬프트/온톨로지의 서술형 프롬프트·사전 데이터도 긴 문자열이라 줄길이 제한에서 제외한다.
-"pipelines/triplets/extractors/prompts/**" = ["E501"]
-"pipelines/triplets/ontology/**" = ["E501"]
+"pipelines/triples/extractors/prompts/**" = ["E501"]
+"pipelines/triples/ontology/**" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

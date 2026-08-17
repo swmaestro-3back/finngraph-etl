@@ -13,7 +13,7 @@ from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-from pipelines.triplets.ontology.predicate_dict import PREDICATE_DICT
+from pipelines.triples.ontology.predicate_dict import PREDICATE_DICT
 
 MIN_ARTICLE_BODY_CHARS = 40
 NOISE_DOMINATED_BODY_MAX_CHARS = 240

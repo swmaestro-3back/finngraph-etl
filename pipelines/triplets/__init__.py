@@ -1,1 +1,0 @@
-"""Triplet extraction ETL pipeline."""

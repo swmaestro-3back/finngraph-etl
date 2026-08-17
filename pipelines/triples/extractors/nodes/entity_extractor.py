@@ -1,7 +1,7 @@
 from flashtext import KeywordProcessor
 
-from pipelines.triplets.models import Entity, EntityLabel
-from pipelines.triplets.ontology.gazetteers import (
+from pipelines.triples.models import Entity, EntityLabel
+from pipelines.triples.ontology.gazetteers import (
     COMMODITY_DICT,
     COMPANY_DICT,
     COUNTRY_DICT,

@@ -463,13 +463,13 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
     return result
 
 
-def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any]]:
+def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
     """
-    Triplet ETL에서 사용
-    삼중항관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
+    Triple ETL에서 사용
+    트리플관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
 
     필터링되어 유효한 뉴스라고 판별난 is_material=True
-    + 삼중항추출 안된 것 relation_extracted IS NULL
+    + 트리플추출 안된 것 relation_extracted IS NULL
     """
 
     query = """
@@ -492,15 +492,15 @@ def fetch_unprocessed_triplet_news_items(limit: int = 100) -> list[dict[str, Any
 
 
 def mark_news_relation_extracted(
-    has_triplets_ids: list[int], no_triplets_ids: list[int]
+    has_triples_ids: list[int], no_triples_ids: list[int]
 ) -> dict[str, int]:
     """
-    Triplet ETL에서 호출
-    삼중항관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
+    Triple ETL에서 호출
+    트리플관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
     """
 
-    unique_true = sorted({int(news_id) for news_id in has_triplets_ids if news_id})
-    unique_false = sorted({int(news_id) for news_id in no_triplets_ids if news_id})
+    unique_true = sorted({int(news_id) for news_id in has_triples_ids if news_id})
+    unique_false = sorted({int(news_id) for news_id in no_triples_ids if news_id})
 
     if not unique_true and not unique_false:
         return {"true_count": 0, "false_count": 0}
@@ -773,7 +773,7 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
 
 
 def insert_news_relations(news_id: int, rows: list[dict[str, Any]]) -> int:
-    """추출된 삼중항을 news_relations에 멱등 저장한다.
+    """추출된 트리플을 news_relations에 멱등 저장한다.
 
     UNIQUE(news_id, subject_name, relation, object_name)로 재추출 시 ON CONFLICT DO NOTHING.
     rows 항목 형식: {subject_name, subject_type, subject_code, relation,
@@ -820,10 +820,10 @@ def insert_news_relations(news_id: int, rows: list[dict[str, Any]]) -> int:
     return inserted_count
 
 
-def fetch_triplets_for_news_ids(
+def fetch_triples_for_news_ids(
     news_ids: list[int],
 ) -> dict[int, list[tuple[str, str, str]]]:
-    """뉴스 id별 삼중항 `(subject_name, relation, object_name)` 목록을 조회한다."""
+    """뉴스 id별 트리플 `(subject_name, relation, object_name)` 목록을 조회한다."""
 
     unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
 
@@ -837,15 +837,15 @@ def fetch_triplets_for_news_ids(
         ORDER BY news_id ASC, id ASC;
     """
 
-    triplets_by_news: dict[int, list[tuple[str, str, str]]] = {}
+    triples_by_news: dict[int, list[tuple[str, str, str]]] = {}
 
     with session_scope() as session:
         rows = session.execute(text(query), {"ids": unique_ids}).fetchall()
 
     for news_id, subject_name, relation, object_name in rows:
-        triplets_by_news.setdefault(int(news_id), []).append((subject_name, relation, object_name))
+        triples_by_news.setdefault(int(news_id), []).append((subject_name, relation, object_name))
 
-    return triplets_by_news
+    return triples_by_news
 
 
 def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:

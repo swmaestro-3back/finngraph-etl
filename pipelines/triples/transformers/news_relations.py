@@ -1,14 +1,14 @@
-"""삼중항 → news_relations 테이블 행 변환."""
+"""트리플 → news_relations 테이블 행 변환."""
 
 from __future__ import annotations
 
-from pipelines.triplets.edges import binary_edges
-from pipelines.triplets.models import Entity, Triplet
-from pipelines.triplets.references.graph import fetch_company_tickers
+from pipelines.triples.edges import binary_edges
+from pipelines.triples.models import Entity, Triple
+from pipelines.triples.references.graph import fetch_company_tickers
 
 
-async def build_news_relation_rows(triplets: list[Triplet]) -> list[dict]:
-    """삼중항을 news_relations 테이블 행(dict) 목록으로 변환한다.
+async def build_news_relation_rows(triples: list[Triple]) -> list[dict]:
+    """트리플을 news_relations 테이블 행(dict) 목록으로 변환한다.
 
     1. Neo4j 적재와 동일하게 binary_edges로 이항 엣지 분해 (item 술어는 2개로 분해)
     2. 동일 (subject_name, relation, object_name) 엣지는 배치 내에서 중복 제거
@@ -19,8 +19,8 @@ async def build_news_relation_rows(triplets: list[Triplet]) -> list[dict]:
 
     edges: list[tuple[Entity, str, Entity]] = []
     seen: set[tuple[str, str, str]] = set()
-    for triplet in triplets:
-        for subject, rel, obj in binary_edges(triplet):
+    for triple in triples:
+        for subject, rel, obj in binary_edges(triple):
             edge_key = (subject.text, rel, obj.text)
             if edge_key in seen:
                 continue

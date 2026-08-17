@@ -1,9 +1,9 @@
 from typing import TypedDict
 
-from pipelines.triplets.models import (
+from pipelines.triples.models import (
     Entity,
     RelationFrame,
-    Triplet,
+    Triple,
 )
 
 
@@ -12,5 +12,5 @@ class GraphState(TypedDict, total=False):
     article: str
     entities: list[Entity]
     relations: list[RelationFrame]
-    triplets: list[Triplet]
-    triplet_stats: dict
+    triples: list[Triple]
+    triple_stats: dict

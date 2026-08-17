@@ -13,7 +13,7 @@ from pipelines.common.clients.neo4j import neo4j_database
 async def fetch_company_tickers(names: list[str]) -> dict[str, str]:
     """KRX 상장 기업명 목록에 대한 ticker를 Neo4j에서 한 번에 조회한다.
 
-    삼중항 추출로 만들어지는 Company 노드는 name만 가지지만, 정규화 단계에서 표면형을
+    트리플 추출로 만들어지는 Company 노드는 name만 가지지만, 정규화 단계에서 표면형을
     KRX 사전 정식명으로 재작성하므로 시드된 (:Company:KOSPI|KOSDAQ {name, ticker}) 노드와
     name이 일치한다. 상장사가 아니면 매핑에 담기지 않아 code는 NULL로 남는다.
     """

@@ -1,21 +1,21 @@
 from typing import get_args
 
-from pipelines.triplets.models import Entity, RelationFrame, TenseLabel, Triplet
-from pipelines.triplets.ontology.predicate_dict import PREDICATE_DICT
+from pipelines.triples.models import Entity, RelationFrame, TenseLabel, Triple
+from pipelines.triples.ontology.predicate_dict import PREDICATE_DICT
 
 
-class TripletBuilder:
+class TripleBuilder:
     def __init__(self):
         self._predicate_dict: dict = PREDICATE_DICT
 
-    def filter(self, relation_frames: list[RelationFrame]) -> list[Triplet]:
+    def filter(self, relation_frames: list[RelationFrame]) -> list[Triple]:
         """
-        삼중항관계 중복제거
+        트리플관계 중복제거
         """
-        triples: list[Triplet] = []
+        triples: list[Triple] = []
         seen: set[str] = set()
         for frame in relation_frames:
-            triple = self._filter_triplets(frame)
+            triple = self._filter_triples(frame)
             if triple is None:
                 continue
             key = triple.model_dump_json()
@@ -25,7 +25,7 @@ class TripletBuilder:
             triples.append(triple)
         return triples
 
-    def _filter_triplets(self, frame: RelationFrame) -> Triplet | None:
+    def _filter_triples(self, frame: RelationFrame) -> Triple | None:
         # 조건 1: 부정 표현 프레임 제거
         if frame.is_negated:
             return None
@@ -61,7 +61,7 @@ class TripletBuilder:
             if not item_types or frame.item.label in item_types:
                 item = frame.item
 
-        return Triplet(
+        return Triple(
             subject=frame.subject,
             predicate=frame.predicate,
             object=frame.object,
@@ -70,7 +70,7 @@ class TripletBuilder:
         )
 
     def stats(self, relation_frames: list[RelationFrame]) -> dict:
-        """삼중항 필터링 통계를 반환한다 (디버깅·평가용)."""
+        """트리플 필터링 통계를 반환한다 (디버깅·평가용)."""
         total = len(relation_frames)
         negated = sum(1 for f in relation_frames if f.is_negated)
         not_in_dict = sum(

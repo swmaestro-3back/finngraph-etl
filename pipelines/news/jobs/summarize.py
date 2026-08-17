@@ -4,7 +4,7 @@ from typing import Any
 
 from pipelines.news.config import get_news_settings
 from pipelines.news.loaders.news_repository import (
-    fetch_triplets_for_news_ids,
+    fetch_triples_for_news_ids,
     fetch_unsummarized_news_items,
     save_news_summaries,
 )
@@ -23,10 +23,10 @@ def summarize_unsummarized_news(
     source_news = fetch_unsummarized_news_items(limit=limit)
 
     if source_news:
-        triplets_by_news = fetch_triplets_for_news_ids([item["_news_id"] for item in source_news])
+        triples_by_news = fetch_triples_for_news_ids([item["_news_id"] for item in source_news])
 
         for item in source_news:
-            item["_triplets"] = triplets_by_news.get(item["_news_id"], [])
+            item["_triples"] = triples_by_news.get(item["_news_id"], [])
 
     results = summarize_news_items(
         items=source_news,

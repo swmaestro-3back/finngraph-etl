@@ -2,29 +2,29 @@ import asyncio
 
 from langgraph.graph import END, StateGraph
 
-from pipelines.triplets.extractors.nodes.entity_extractor import EntityExtractor
-from pipelines.triplets.extractors.nodes.relation_extractor import RelationExtractor
-from pipelines.triplets.extractors.nodes.triplet_builder import TripletBuilder
-from pipelines.triplets.extractors.state import GraphState
-from pipelines.triplets.models import Entity
+from pipelines.triples.extractors.nodes.entity_extractor import EntityExtractor
+from pipelines.triples.extractors.nodes.relation_extractor import RelationExtractor
+from pipelines.triples.extractors.nodes.triple_builder import TripleBuilder
+from pipelines.triples.extractors.state import GraphState
+from pipelines.triples.models import Entity
 
 
 class GraphRunner:
     def __init__(self):
         self.entity_extractor = EntityExtractor()
         self._relation_extractor = RelationExtractor()
-        self._triplet_builder = TripletBuilder()
+        self._triple_builder = TripleBuilder()
         self._graph = self._compile_graph(
             self.entity_extractor,
             self._relation_extractor,
-            self._triplet_builder,
+            self._triple_builder,
         )
 
     def _compile_graph(
         self,
         entity_extractor: EntityExtractor,
         relation_extractor: RelationExtractor,
-        triplet_builder: TripletBuilder,
+        triple_builder: TripleBuilder,
     ):
 
         async def normalize_article(state: GraphState) -> dict:
@@ -58,11 +58,11 @@ class GraphRunner:
             relations = await relation_extractor.label(state["article"], state["entities"])
             return {"relations": relations}
 
-        async def build_triplets(state: GraphState) -> dict:
+        async def build_triples(state: GraphState) -> dict:
             relations = state["relations"]
             return {
-                "triplets": triplet_builder.filter(relations),
-                "triplet_stats": triplet_builder.stats(relations),
+                "triples": triple_builder.filter(relations),
+                "triple_stats": triple_builder.stats(relations),
             }
 
         workflow = StateGraph(GraphState)
@@ -70,14 +70,14 @@ class GraphRunner:
         workflow.add_node("normalizer", normalize_article)
         workflow.add_node("entity_extractor", extract_entities)
         workflow.add_node("relation_extractor", extract_relations)
-        workflow.add_node("triplet_builder", build_triplets)
+        workflow.add_node("triple_builder", build_triples)
 
         workflow.set_entry_point("normalizer")
 
         workflow.add_edge("normalizer", "entity_extractor")
         workflow.add_edge("entity_extractor", "relation_extractor")
-        workflow.add_edge("relation_extractor", "triplet_builder")
-        workflow.add_edge("triplet_builder", END)
+        workflow.add_edge("relation_extractor", "triple_builder")
+        workflow.add_edge("triple_builder", END)
 
         return workflow.compile()
 

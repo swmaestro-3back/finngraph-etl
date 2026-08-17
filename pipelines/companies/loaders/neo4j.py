@@ -26,10 +26,10 @@ SET old.name = row.name
 #   전  (없음)
 #   후  (:Company:KOSPI {name: "두산로보틱스", ticker: "454910"})
 #
-# 예2) ticker 부여 — 뉴스에서 삼중항이 이름만으로 만들어 둔 노드
+# 예2) ticker 부여 — 뉴스에서 트리플이 이름만으로 만들어 둔 노드
 #   전  (:Company {name: "삼성전자"})-[:SUPPLIES]->(:Company {name: "애플"})
 #   후  (:Company:KOSPI {name: "삼성전자", ticker: "005930"})-[:SUPPLIES]->(:Company)
-#       이 단계가 없으면 삼중항 code 조회(references/graph.py)가 계속 NULL로 남는다.
+#       이 단계가 없으면 트리플 code 조회(references/graph.py)가 계속 NULL로 남는다.
 #
 # 예3) 시장 이전 — KOSDAQ에서 KOSPI로
 #   전  (:Company:KOSDAQ {name: "에코프로비엠", ticker: "247540"})

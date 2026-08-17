@@ -29,7 +29,7 @@ if dag and task:
             run()
 
         # 마스터 확정 직후 Neo4j에 상장사(name↔ticker)를 시드한다.
-        # 테마 검증·적재와 삼중항 종목코드 채움이 이 시드를 전제로 동작한다.
+        # 테마 검증·적재와 트리플 종목코드 채움이 이 시드를 전제로 동작한다.
         @task(retries=2)
         def seed_graph() -> None:
             from pipelines.companies.jobs.seed_graph import run

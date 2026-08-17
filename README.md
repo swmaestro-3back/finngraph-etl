@@ -1,6 +1,6 @@
 # finngraph-etl
 
-뉴스·기업·주가·테마·삼중항관계 데이터를 수집 > 가공 > 적재하는 Airflow 기반 ETL 파이프라인.
+뉴스·기업·주가·테마·트리플관계 데이터를 수집 > 가공 > 적재하는 Airflow 기반 ETL 파이프라인.
 
 ## Structure
 
@@ -12,7 +12,7 @@ finngraph-etl/
 │   ├── news/             # 뉴스 수집 · 필터 · 요약
 │   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계
 │   ├── themes/           # 테마 크롤링
-│   └── triplets/         # 삼중항(관계) 추출
+│   └── triples/          # 트리플(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
 │   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
@@ -21,7 +21,7 @@ finngraph-etl/
 │   ├── stocks/           # 주식 및 주가 ETL
 │   ├── news/             # 뉴스 ETL
 │   ├── themes/           # 테마 ETL
-│   └── triplets/         # 삼중항관계 ETL
+│   └── triples/          # 트리플관계 ETL
 ├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
@@ -47,18 +47,18 @@ Airflow 3.3(LocalExecutor) 스택을 docker compose 프로파일로 띄운다. �
 # 환경변수 설정
 cp .env.example .env
 
-# 최초 1회 (또는 의존성/Dockerfile 변경된 경우)
 # 이미지 빌드
+# 최초 1회 수행 (또는 의존성/Dockerfile 변경된 경우)
 docker compose --profile airflow build
 
-# airflow 관련 스택 기동
+# Airflow 관련 스택 기동
 docker compose --profile airflow up -d  
 
 # Airflow 컨테이너 중지
 docker compose --profile airflow down
 
 # Airflow 컨테이너 중지 및 볼륨(메타DB/로그)까지 삭제
-docker compose --profice airflow down -v
+docker compose --profile airflow down -v
 ```
 
 - Airflow Web UI는 `http://localhost:8080`로 접속한다.

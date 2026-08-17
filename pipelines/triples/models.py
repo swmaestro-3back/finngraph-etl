@@ -128,8 +128,8 @@ class RelationFrame(BaseModel):
     )
 
 
-# Triplet (확정 삼중항)
-class Triplet(BaseModel):
+# Triple (확정 트리플)
+class Triple(BaseModel):
     subject: Entity = Field(description="주체")
     predicate: str = Field(description="술어 원형")
     object: Entity = Field(description="객체")
