@@ -7,20 +7,22 @@
 ```text
 finngraph-etl/
 ├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
+│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드
 │   ├── health/           # 운영 헬스체크
 │   ├── news/             # 뉴스 수집 · 필터 · 요약
-│   ├── stocks/           # 주가 캔들 수집 · 집계
+│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계
 │   ├── themes/           # 테마 크롤링
 │   └── triplets/         # 삼중항(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
 │   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
 │   │   └── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   ├── companies/        # 법인 ETL
 │   ├── stocks/           # 주식 및 주가 ETL
 │   ├── news/             # 뉴스 ETL
 │   ├── themes/           # 테마 ETL
 │   └── triplets/         # 삼중항관계 ETL
-├── migrations/           # DB migration
+├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
 ```
@@ -89,10 +91,8 @@ docker compose --profice airflow down -v
 ## Running Neo4j locally
 
 ```bash
-# Neo4j 컨테이너만 실행
-docker compose up -d neo4j
-
-# Neo4j 컨테이너 중지
+# Neo4j 컨테이너 + migrations 스키마 베이스라인 적용
+docker compose up -d neo4j neo4j-init
 
 # Neo4j 컨테이너 중지 및 볼륨까지 삭제
 docker compose down -v

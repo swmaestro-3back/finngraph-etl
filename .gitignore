@@ -1,6 +1,6 @@
 .DS_Store
 .env
-.env.news
+.env.*
 .venv/
 __pycache__/
 *.py[cod]

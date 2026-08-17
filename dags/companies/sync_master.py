@@ -19,12 +19,12 @@ if dag and task:
         schedule=Asset("etl://stocks/master"),
         catchup=False,
         max_active_runs=1,
-        tags=["companies", "master"],
+        tags=["companies"],
     )
     def companies_sync_master():
         @task(retries=2)
         def sync_master() -> None:
-            from pipelines.companies.jobs.sync_company_master import run
+            from pipelines.companies.jobs.sync_master import run
 
             run()
 

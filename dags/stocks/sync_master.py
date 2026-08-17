@@ -20,12 +20,12 @@ if dag and task:
         schedule="0 8 * * 1-5",
         catchup=False,
         max_active_runs=1,
-        tags=["stocks", "master"],
+        tags=["stocks"],
     )
     def stocks_sync_master():
         @task(retries=2, outlets=[stocks_master_synced])
         def sync_master() -> None:
-            from pipelines.stocks.jobs.sync_stock_master import run
+            from pipelines.stocks.jobs.sync_master import run
 
             run()
 
