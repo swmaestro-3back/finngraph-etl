@@ -5,7 +5,7 @@ import re
 from pipelines.common.logging import get_logger
 from pipelines.themes.models import Company, Theme
 from pipelines.themes.references.graph import (
-    fetch_company_ticker_by_names,
+    fetch_company_info_by_tickers,
     fetch_theme_stock_map,
     theme_exists,
 )
@@ -20,27 +20,28 @@ MIN_CONTAINMENT_NAME_LENGTH = 2
 async def validate_company(themes: list[Theme]) -> list[Theme]:
     """
     크롤링한 COMPANY 데이터와 Neo4j의 COMPANY 데이터와 일치하는지 대조하여 검증한다.
+    (Neo4j의 데이터를 기준으로 검증)
 
-    1. name의 기업이 Neo4j에 없으면 해당 종목 제외
-    2. name은 있으나 크롤링한 ticker와 Neo4j의 ticker가 다르면 해당 종목 제외
+    1. ticker의 기업이 Neo4j에 없으면 해당 종목 제외
+    2. ticker는 있으나 크롤링한 name과 Neo4j의 name이 다르면 해당 종목 제외
     """
-    names = {c.name for theme in themes for c in theme.companies}
-    name_to_ticker = await fetch_company_ticker_by_names(list(names))
+    tickers = {c.ticker for theme in themes for c in theme.companies}
+    ticker_to_name = await fetch_company_info_by_tickers(list(tickers))
 
     for theme in themes:
         resolved = []
         for c in theme.companies:
-            ticker = name_to_ticker.get(c.name)
-            if ticker is None:
-                logger.warning("[%s] '%s' Neo4j에 존재하지 않아 제외합니다.", theme.name, c.name)
+            name = ticker_to_name.get(c.ticker)
+            if name is None:
+                logger.warning("[%s] '%s' Neo4j에 존재하지 않아 제외합니다.", theme.name, c.ticker)
                 continue
-            if c.ticker != ticker:
+            if c.name != name:
                 logger.warning(
-                    "[%s] '%s' ticker 불일치 (크롤링=%s, Neo4j=%s) 제외합니다.",
+                    "[%s] '%s' 기업명 불일치 (크롤링=%s, Neo4j=%s) 제외합니다.",
                     theme.name,
-                    c.name,
                     c.ticker,
-                    ticker,
+                    c.name,
+                    name,
                 )
                 continue
             resolved.append(c)

@@ -40,16 +40,20 @@ RETURN t.name AS theme_name, coalesce(t.description, '') AS description,
     return {r["theme_name"]: set(r["tickers"]) for r in records}
 
 
-async def fetch_company_ticker_by_names(names: list[str]) -> dict[str, str]:
-    """기업명 → ticker. 크롤링한 ticker가 옳은지 대조하는 데 쓴다."""
+async def fetch_company_info_by_tickers(tickers: list[str]) -> dict[str, str]:
+    """ticker → 기업명. 크롤링한 기업명이 옳은지 대조하는 데 쓴다.
+
+    ticker를 키로 잡는 이유: 사명은 바뀌어도 ticker는 유지되므로(`loaders/neo4j.py`의
+    사명 변경 처리 참고) 그래프와 크롤링 결과를 잇는 안정적인 식별자다.
+    """
 
     records = await neo4j_database.execute(
         """
-UNWIND $names AS name
-MATCH (c:Company {name: name})
+UNWIND $tickers AS ticker
+MATCH (c:Company {ticker: ticker})
 WHERE c:KOSPI OR c:KOSDAQ
-RETURN c.name AS name, c.ticker AS ticker
+RETURN c.ticker AS ticker, c.name AS name
 """,
-        parameters={"names": names},
+        parameters={"tickers": tickers},
     )
-    return {r["name"]: r["ticker"] for r in records}
+    return {r["ticker"]: r["name"] for r in records}
