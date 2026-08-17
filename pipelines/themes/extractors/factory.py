@@ -1,3 +1,9 @@
+"""소스 이름 → Extractor 구현 생성.
+
+소스 목록 자체는 `pipelines.themes.sources.SOURCES`가 단일 출처다.
+소스를 추가할 때는 거기와 이 팩토리 두 곳을 함께 고친다.
+"""
+
 from __future__ import annotations
 
 from pipelines.themes.extractors.antwinner import AntWinnerExtractor

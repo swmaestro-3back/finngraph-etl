@@ -3,8 +3,12 @@ from __future__ import annotations
 import re
 
 from pipelines.common.logging import get_logger
-from pipelines.themes.crud import fetch_company_ticker_by_names, fetch_theme_stock_map, theme_exists
 from pipelines.themes.models import Company, Theme
+from pipelines.themes.references.graph import (
+    fetch_company_ticker_by_names,
+    fetch_theme_stock_map,
+    theme_exists,
+)
 
 logger = get_logger(__name__)
 
