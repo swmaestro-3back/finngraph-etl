@@ -10,7 +10,7 @@ from pipelines.news.loaders.news_repository import (
     insert_news_relations,
     mark_news_relation_extracted,
 )
-from pipelines.triplets.graph.workflow import GraphRunner
+from pipelines.triplets.extractors.workflow import GraphRunner
 from pipelines.triplets.loaders.neo4j import upsert_triplets
 from pipelines.triplets.transformers.news_relations import build_news_relation_rows
 

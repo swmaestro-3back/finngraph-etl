@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pipelines.triplets.edges import binary_edges
-from pipelines.triplets.graph.models import Entity, Triplet
+from pipelines.triplets.models import Entity, Triplet
 from pipelines.triplets.references.graph import fetch_company_tickers
 
 

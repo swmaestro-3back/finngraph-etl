@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 
 try:
@@ -25,9 +24,9 @@ if dag and task:
 
         @task(retries=1, retry_delay=timedelta(minutes=10), outlets=[news_relations_updated])
         def extract_and_load() -> dict[str, int]:
-            from pipelines.triplets.jobs.extract_triplets import extract_unprocessed_triplets
+            from pipelines.triplets.jobs.extract_triplets import run
 
-            return asyncio.run(extract_unprocessed_triplets())
+            return run()
 
         extract_and_load()
 

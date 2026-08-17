@@ -7,17 +7,17 @@ from pipelines.common.clients.bedrock import (
     get_bedrock_client,
 )
 from pipelines.common.config import get_settings
-from pipelines.triplets.graph.models import (
-    Entity,
-    RawRelationList,
-    RelationFrame,
-)
-from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
-from pipelines.triplets.graph.prompts.relation_extraction import (
+from pipelines.triplets.extractors.prompts.relation_extraction import (
     FEW_SHOT_MESSAGES,
     SYSTEM_MESSAGE,
     build_user_message,
 )
+from pipelines.triplets.models import (
+    Entity,
+    RawRelationList,
+    RelationFrame,
+)
+from pipelines.triplets.ontology.predicate_dict import PREDICATE_DICT
 
 settings = get_settings()
 

@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
+from pipelines.triplets.ontology.predicate_dict import PREDICATE_DICT
 
 _PREDICATE_DICT: dict = PREDICATE_DICT
 

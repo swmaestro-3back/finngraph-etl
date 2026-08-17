@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.triplets.edges import edge_specs
-from pipelines.triplets.graph.models import Triplet
+from pipelines.triplets.models import Triplet
 
 # 간선 누적 최대 개수
 # 넘어갈 경우 FIFO로 동작

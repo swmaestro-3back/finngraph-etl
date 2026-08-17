@@ -14,7 +14,7 @@ import uuid
 from langchain_core.tracers.langchain import wait_for_all_tracers
 
 from pipelines.common.clients.neo4j import neo4j_database
-from pipelines.triplets.graph.workflow import GraphRunner
+from pipelines.triplets.extractors.workflow import GraphRunner
 from pipelines.triplets.loaders.neo4j import upsert_triplets
 from tests.triplets.seed_db import seed
 

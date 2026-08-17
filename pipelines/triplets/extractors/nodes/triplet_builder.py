@@ -1,7 +1,7 @@
 from typing import get_args
 
-from pipelines.triplets.graph.models import Entity, RelationFrame, TenseLabel, Triplet
-from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
+from pipelines.triplets.models import Entity, RelationFrame, TenseLabel, Triplet
+from pipelines.triplets.ontology.predicate_dict import PREDICATE_DICT
 
 
 class TripletBuilder:

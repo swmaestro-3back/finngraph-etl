@@ -2,11 +2,11 @@ import asyncio
 
 from langgraph.graph import END, StateGraph
 
-from pipelines.triplets.graph.models import Entity
-from pipelines.triplets.graph.nodes.entity_extractor import EntityExtractor
-from pipelines.triplets.graph.nodes.relation_extractor import RelationExtractor
-from pipelines.triplets.graph.nodes.triplet_builder import TripletBuilder
-from pipelines.triplets.graph.state import GraphState
+from pipelines.triplets.extractors.nodes.entity_extractor import EntityExtractor
+from pipelines.triplets.extractors.nodes.relation_extractor import RelationExtractor
+from pipelines.triplets.extractors.nodes.triplet_builder import TripletBuilder
+from pipelines.triplets.extractors.state import GraphState
+from pipelines.triplets.models import Entity
 
 
 class GraphRunner:

@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from pipelines.triplets.graph.models import (
+from pipelines.triplets.models import (
     Entity,
     RelationFrame,
     Triplet,

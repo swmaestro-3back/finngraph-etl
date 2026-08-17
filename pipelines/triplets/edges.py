@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import get_args
 
-from pipelines.triplets.graph.models import Entity, EntityLabel, Triplet
-from pipelines.triplets.graph.ontology.predicate_dict import PREDICATE_DICT
+from pipelines.triplets.models import Entity, EntityLabel, Triplet
+from pipelines.triplets.ontology.predicate_dict import PREDICATE_DICT
 
 # NER 태그를 Neo4j Label 태그로 변환
 # (COMPANY → Company, COUNTRY → Country)
