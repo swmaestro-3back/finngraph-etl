@@ -14,6 +14,8 @@ finngraph-etl/
 │   └── triplets/         # 삼중항(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
+│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
+│   │   └── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
 │   ├── stocks/           # 주식 및 주가 ETL
 │   ├── news/             # 뉴스 ETL
 │   ├── themes/           # 테마 ETL
@@ -25,11 +27,14 @@ finngraph-etl/
 
 ## 컨벤션
 
-- `dags/`에는 DAG 정의만 둡니다.
-- 실제 ETL 로직은 `pipelines/{domain}/jobs/`에 둡니다.
-- 외부 데이터 조회는 `extractors/`, 변환은 `transformers/`, 저장은 `loaders/`가 담당합니다.
-- 여러 도메인에서 공유하는 코드는 `pipelines/common/`에 둡니다.
-- Airflow task는 job 함수를 호출하고, job 함수가 extract-transform-load 흐름을 조립합니다.
+- `dags/`에는 DAG 정의만 둡니다. Airflow를 아는 코드는 여기까지고, `pipelines/` 아래로는
+  Airflow가 존재하지 않습니다.
+- Airflow task 하나당 `pipelines/{domain}/jobs/` 파일 하나를 두고, 진입점 함수 이름은 `run`,
+  파일명은 `task_id`와 같게 맞춥니다. job은 조립만 하고 로직을 갖지 않습니다.
+- task를 나누는 기준은 **재시도 경계**입니다 — "여기가 깨졌을 때 앞 단계를 다시 돌리고
+  싶은가?"에 아니라고 답하면 태스크를 나눕니다. DAG를 나누는 기준은 **트리거**입니다.
+  스케줄이나 Asset이 다르면 태스크가 하나뿐이어도 별개 DAG입니다.
+- ETL 파이프라인에서 데이터 수집 및 추출은 `extractors/`, 저장 전 데이터 전처리 작업은 `transformers/`, 스토리지 데이터 저장은 `loaders/`가 담당합니다.
 
 ## Running Airflow locally
 
@@ -51,7 +56,7 @@ docker compose --profile airflow up -d
 docker compose --profile airflow down
 
 # Airflow 컨테이너 중지 및 볼륨(메타DB/로그)까지 삭제
-dockre compose --profice airflow down -v
+docker compose --profice airflow down -v
 ```
 
 - Airflow Web UI는 `http://localhost:8080`로 접속한다.

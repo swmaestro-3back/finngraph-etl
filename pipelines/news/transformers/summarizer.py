@@ -8,7 +8,7 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-from pipelines.common.bedrock import extract_bedrock_text, get_bedrock_client
+from pipelines.common.clients.bedrock import extract_bedrock_text, get_bedrock_client
 from pipelines.common.config import get_settings
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,

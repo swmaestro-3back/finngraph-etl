@@ -21,8 +21,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from pipelines.common.database import session_scope
-from pipelines.companies.loaders.companies import sync_listed_companies
+from pipelines.common.clients.postgres import session_scope
+from pipelines.companies.loaders.postgres import sync_listed_companies
 from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import StockTicker
 

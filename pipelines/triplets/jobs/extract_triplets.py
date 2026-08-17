@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
-from pipelines.common.neo4j import neo4j_database
 from pipelines.news.loaders.news_repository import (
     fetch_unprocessed_triplet_news_items,
     insert_news_relations,
     mark_news_relation_extracted,
 )
-from pipelines.triplets.crud import build_news_relation_rows, upsert_triplets
 from pipelines.triplets.graph.workflow import GraphRunner
+from pipelines.triplets.loaders.neo4j import upsert_triplets
+from pipelines.triplets.transformers.news_relations import build_news_relation_rows
 
 logger = get_logger(__name__)
 

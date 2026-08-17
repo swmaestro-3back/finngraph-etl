@@ -15,8 +15,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
-from pipelines.common.database import session_scope
-from pipelines.common.types import DailyCandle, PeriodCandle
+from pipelines.common.clients.postgres import session_scope
 from pipelines.stocks.loaders.candles import (
     fetch_latest_daily_candle_dates,
     upsert_daily_candles,
@@ -24,6 +23,7 @@ from pipelines.stocks.loaders.candles import (
 )
 from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import StockTicker
+from pipelines.stocks.types import DailyCandle, PeriodCandle
 
 pytestmark = pytest.mark.integration
 

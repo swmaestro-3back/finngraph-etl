@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from pipelines.common.database import session_scope
+from pipelines.common.clients.postgres import session_scope
 from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
     normalize_url_for_duplicate,

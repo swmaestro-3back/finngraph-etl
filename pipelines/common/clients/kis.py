@@ -34,8 +34,8 @@ import requests
 
 from pipelines.common.config import Settings, get_settings
 from pipelines.common.logging import get_logger
-from pipelines.common.rate_limit import FixedWindowRateLimiter
-from pipelines.common.retry import retry_external_call
+from pipelines.common.utils.rate_limit import FixedWindowRateLimiter
+from pipelines.common.utils.retry import retry_external_call
 
 logger = get_logger(__name__)
 

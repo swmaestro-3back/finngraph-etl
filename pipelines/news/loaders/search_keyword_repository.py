@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from pipelines.common.database import session_scope
+from pipelines.common.clients.postgres import session_scope
 
 
 def fetch_active_search_keywords(limit: int = 50) -> list[dict[str, Any]]:

@@ -12,8 +12,8 @@ from datetime import date
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from pipelines.common.types import DailyCandle, MinuteCandle, PeriodCandle
 from pipelines.stocks.loaders.tickers import fetch_active_stock_ids
+from pipelines.stocks.types import DailyCandle, MinuteCandle, PeriodCandle
 
 UPSERT_DAILY_CANDLE_SQL = text(
     """

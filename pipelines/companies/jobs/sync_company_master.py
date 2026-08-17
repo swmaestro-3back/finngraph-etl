@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pipelines.common.database import session_scope
+from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.companies.loaders.companies import sync_listed_companies
+from pipelines.companies.loaders.postgres import sync_listed_companies
 
 logger = get_logger(__name__)
 

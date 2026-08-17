@@ -21,7 +21,7 @@ from datetime import date
 import pytest
 from sqlalchemy import text
 
-from pipelines.common.database import session_scope
+from pipelines.common.clients.postgres import session_scope
 from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import StockTicker
 

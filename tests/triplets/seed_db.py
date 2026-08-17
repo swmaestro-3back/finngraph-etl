@@ -7,7 +7,7 @@ seed()를 진입점으로 노출한다. DB에 노드가 하나라도 있으면 �
 import json
 from pathlib import Path
 
-from pipelines.common.neo4j import neo4j_database
+from pipelines.common.clients.neo4j import neo4j_database
 
 SEED_DIR = Path(__file__).resolve().parent / "data" / "seed"
 

@@ -2,28 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-
+from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
-from pipelines.common.neo4j import neo4j_database
 
 logger = get_logger(__name__)
 
 MIN_ROWS_SAFETY = 1
-
-# 시드 원천: 활성 보통주만. companies upsert와 같은 필터(수집 범위 ≠ 제공 범위).
-SELECT_LISTED_COMMON_STOCKS_SQL = text(
-    """
-    SELECT s.name, s.ticker, s.market
-      FROM stocks AS s
-     WHERE s.is_active
-       AND NOT s.preferred_stock
-       AND NOT s.etp
-       AND NOT s.spac
-       AND BTRIM(s.name) <> ''
-    """
-)
 
 # name이 병렬 MERGE·시드의 유일 키이므로 유니크 제약으로 중복 생성을 원천 차단한다.
 ENSURE_NAME_CONSTRAINT_CYPHER = """
@@ -60,11 +44,6 @@ REMOVE c.ticker, c:KOSPI, c:KOSDAQ
 """
 
 COUNT_SEEDED_CYPHER = "MATCH (c:Company) WHERE c.ticker IS NOT NULL RETURN count(c) AS seeded"
-
-
-def fetch_listed_common_stocks(session: Session) -> list[dict[str, Any]]:
-    rows = session.execute(SELECT_LISTED_COMMON_STOCKS_SQL).all()
-    return [{"name": row.name, "ticker": row.ticker, "market": row.market} for row in rows]
 
 
 async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:

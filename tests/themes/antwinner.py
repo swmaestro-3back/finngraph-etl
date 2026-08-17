@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from pipelines.common.http import http_client
+from pipelines.common.clients.http import http_client
 from pipelines.themes.extractors import AntWinnerExtractor
 
 

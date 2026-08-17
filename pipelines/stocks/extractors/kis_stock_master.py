@@ -5,7 +5,7 @@ from datetime import date, datetime
 from io import BytesIO
 from zipfile import ZipFile
 
-from pipelines.common.time import now_kst
+from pipelines.common.utils.time import now_kst
 from pipelines.stocks.models import StockTicker
 
 KOSPI_MASTER_URL = "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip"

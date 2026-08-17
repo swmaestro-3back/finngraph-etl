@@ -71,11 +71,15 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - name: Install apache-airflow (constraints 고정)
-        # DAG 파일은 pipelines를 task 함수 안에서 import하므로 파싱에는 airflow만 있으면 된다.
+        # 무거운 import(extractor, DB 클라이언트)는 task 함수 안에서 하므로 파싱에 프로젝트
+        # 런타임 의존성은 필요 없다. 다만 DAG가 fan-out 개수를 정하려면 파싱 시점에
+        # pipelines.themes.sources 같은 의존성 없는 상수 모듈은 읽어야 하므로,
+        # 프로젝트를 --no-deps로 얹어 경로만 잡아준다.
         # airflow는 의존성이 많아 공식 constraints 파일로 버전을 고정해 재현성을 확보한다.
         run: |
           CONSTRAINTS="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
           python -m pip install "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINTS}"
+          python -m pip install -e . --no-deps
       - name: Validate DAGs
         run: python scripts/validate_dags.py
 
@@ -105,7 +109,7 @@ jobs:
       DB_NAME: etl
       DB_USER: etl
       DB_PASSWORD: etl
-      # common.database(psycopg v3 + SQLAlchemy)용.
+      # common.clients.postgres(psycopg v3 + SQLAlchemy)용.
       DATABASE_URL: postgresql+psycopg://etl:etl@localhost:5432/etl
     steps:
       - uses: actions/checkout@v4

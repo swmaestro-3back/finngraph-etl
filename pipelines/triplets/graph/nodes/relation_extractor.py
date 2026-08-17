@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 
-from pipelines.common.bedrock import (
+from pipelines.common.clients.bedrock import (
     extract_bedrock_text,
     get_bedrock_client,
 )
