@@ -4,7 +4,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from pipelines.common.http import http_client
+from pipelines.common.clients.http import http_client
 from pipelines.common.logging import get_logger
 from pipelines.themes.extractors.base import BaseExtractor
 from pipelines.themes.models import Company, Theme

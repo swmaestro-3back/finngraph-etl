@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 
-from pipelines.common.time import KST
+from pipelines.common.utils.time import KST
 from pipelines.stocks.extractors.kis_stock_master import (
     KOSDAQ_SPEC,
     KOSPI_SPEC,

@@ -13,7 +13,7 @@ import unittest
 from contextlib import nullcontext
 from pathlib import Path
 
-from pipelines.common.kis import CachedToken, FileTokenStore, KisClient
+from pipelines.common.clients.kis import CachedToken, FileTokenStore, KisClient
 
 APP_KEY = "appkey-1"
 

@@ -27,7 +27,7 @@ if dag and task:
 
         @task(retries=1, retry_delay=timedelta(minutes=10))
         def summarize() -> dict[str, Any]:
-            from pipelines.news.jobs.summarize_news import summarize_unsummarized_news
+            from pipelines.news.jobs.summarize import summarize_unsummarized_news
 
             result = summarize_unsummarized_news(mode="async")
 
@@ -39,7 +39,7 @@ if dag and task:
 
         @task(retries=3, retry_delay=timedelta(minutes=2))
         def save(summarized: dict[str, Any]) -> None:
-            from pipelines.news.jobs.summarize_news import save_summaries
+            from pipelines.news.jobs.summarize import save_summaries
 
             save_summaries(summarized["rows"])
 

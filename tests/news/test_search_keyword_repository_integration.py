@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from pipelines.common.database import session_scope
+from pipelines.common.clients.postgres import session_scope
 
 pytestmark = pytest.mark.integration
 

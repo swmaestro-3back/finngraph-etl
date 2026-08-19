@@ -907,7 +907,7 @@ wheels = [
 ]
 
 [[package]]
-name = "etl-platform"
+name = "finngraph-etl"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

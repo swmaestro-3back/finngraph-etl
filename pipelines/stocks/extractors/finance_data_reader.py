@@ -12,9 +12,9 @@ from datetime import date
 from decimal import Decimal
 
 from pipelines.common.logging import get_logger
-from pipelines.common.retry import retry_external_call
-from pipelines.common.types import DailyCandle
+from pipelines.common.utils.retry import retry_external_call
 from pipelines.stocks.models import StockTicker
+from pipelines.stocks.types import DailyCandle
 
 logger = get_logger(__name__)
 

@@ -208,7 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_news_relations_object_code
   ON news_relations (object_code) WHERE object_code IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_news_relations_subject_name ON news_relations (subject_name);
 CREATE INDEX IF NOT EXISTS idx_news_relations_object_name  ON news_relations (object_name);
-CREATE INDEX IF NOT EXISTS idx_news_relations_triplet
+CREATE INDEX IF NOT EXISTS idx_news_relations_triple
   ON news_relations (subject_name, relation, object_name);
 CREATE INDEX IF NOT EXISTS idx_news_relations_news ON news_relations (news_id);
 

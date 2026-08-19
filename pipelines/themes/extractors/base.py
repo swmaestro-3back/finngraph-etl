@@ -12,7 +12,17 @@ from pipelines.themes.models import Company, Theme
 
 logger = get_logger(__name__)
 
-_DATA_ROOT = Path(__file__).parents[1] / "data"
+# parents[1]은 `pipelines/themes` — 이 파일이 extractors/ 아래에 있어 한 단계 올라간다.
+# .gitignore가 `pipelines/themes/data/*`를 고정하므로 위치가 어긋나면 산출물이 커밋된다.
+DATA_ROOT = Path(__file__).parents[1] / "data"
+
+
+def today_folder() -> Path:
+    """`pipelines/themes/data/{YYYYMMDD}`를 만들고 반환한다."""
+
+    folder = DATA_ROOT / date.today().strftime("%Y%m%d")
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 class BaseExtractor(ABC):
@@ -61,9 +71,7 @@ class BaseExtractor(ABC):
         Returns:
             저장된 파일의 절대 경로(Path).
         """
-        folder = _DATA_ROOT / date.today().strftime("%Y%m%d")
-        folder.mkdir(parents=True, exist_ok=True)
-        output = folder / f"{self.source_name}.json"
+        output = today_folder() / f"{self.source_name}.json"
         output.write_text(
             json.dumps([t.model_dump() for t in themes], ensure_ascii=False, indent=2),
             encoding="utf-8",

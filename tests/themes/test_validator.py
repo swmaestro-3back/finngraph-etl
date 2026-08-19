@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pipelines.themes.validator import (
+from pipelines.themes.transformers.validator import (
     _find_duplicate_name,
     _is_name_contained,
     _normalize_name,

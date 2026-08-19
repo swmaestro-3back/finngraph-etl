@@ -1,35 +1,42 @@
 # finngraph-etl
 
-뉴스·기업·주가·테마·삼중항관계 데이터를 수집 > 가공 > 적재하는 Airflow 기반 ETL 파이프라인.
+뉴스·기업·주가·테마·트리플관계 데이터를 수집 > 가공 > 적재하는 Airflow 기반 ETL 파이프라인.
 
 ## Structure
 
 ```text
 finngraph-etl/
 ├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
+│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드
 │   ├── health/           # 운영 헬스체크
 │   ├── news/             # 뉴스 수집 · 필터 · 요약
-│   ├── stocks/           # 주가 캔들 수집 · 집계
+│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계
 │   ├── themes/           # 테마 크롤링
-│   └── triplets/         # 삼중항(관계) 추출
+│   └── triples/          # 트리플(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
+│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
+│   │   └── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   ├── companies/        # 법인 ETL
 │   ├── stocks/           # 주식 및 주가 ETL
 │   ├── news/             # 뉴스 ETL
 │   ├── themes/           # 테마 ETL
-│   └── triplets/         # 삼중항관계 ETL
-├── migrations/           # DB migration
+│   └── triples/          # 트리플관계 ETL
+├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
 ```
 
 ## 컨벤션
 
-- `dags/`에는 DAG 정의만 둡니다.
-- 실제 ETL 로직은 `pipelines/{domain}/jobs/`에 둡니다.
-- 외부 데이터 조회는 `extractors/`, 변환은 `transformers/`, 저장은 `loaders/`가 담당합니다.
-- 여러 도메인에서 공유하는 코드는 `pipelines/common/`에 둡니다.
-- Airflow task는 job 함수를 호출하고, job 함수가 extract-transform-load 흐름을 조립합니다.
+- `dags/`에는 DAG 정의만 둡니다. Airflow를 아는 코드는 여기까지고, `pipelines/` 아래로는
+  Airflow가 존재하지 않습니다.
+- Airflow task 하나당 `pipelines/{domain}/jobs/` 파일 하나를 두고, 진입점 함수 이름은 `run`,
+  파일명은 `task_id`와 같게 맞춥니다. job은 조립만 하고 로직을 갖지 않습니다.
+- task를 나누는 기준은 **재시도 경계**입니다 — "여기가 깨졌을 때 앞 단계를 다시 돌리고
+  싶은가?"에 아니라고 답하면 태스크를 나눕니다. DAG를 나누는 기준은 **트리거**입니다.
+  스케줄이나 Asset이 다르면 태스크가 하나뿐이어도 별개 DAG입니다.
+- ETL 파이프라인에서 데이터 수집 및 추출은 `extractors/`, 저장 전 데이터 전처리 작업은 `transformers/`, 스토리지 데이터 저장은 `loaders/`가 담당합니다.
 
 ## Running Airflow locally
 
@@ -40,18 +47,18 @@ Airflow 3.3(LocalExecutor) 스택을 docker compose 프로파일로 띄운다. �
 # 환경변수 설정
 cp .env.example .env
 
-# 최초 1회 (또는 의존성/Dockerfile 변경된 경우)
 # 이미지 빌드
+# 최초 1회 수행 (또는 의존성/Dockerfile 변경된 경우)
 docker compose --profile airflow build
 
-# airflow 관련 스택 기동
+# Airflow 관련 스택 기동
 docker compose --profile airflow up -d  
 
 # Airflow 컨테이너 중지
 docker compose --profile airflow down
 
 # Airflow 컨테이너 중지 및 볼륨(메타DB/로그)까지 삭제
-dockre compose --profice airflow down -v
+docker compose --profile airflow down -v
 ```
 
 - Airflow Web UI는 `http://localhost:8080`로 접속한다.
@@ -84,10 +91,8 @@ dockre compose --profice airflow down -v
 ## Running Neo4j locally
 
 ```bash
-# Neo4j 컨테이너만 실행
-docker compose up -d neo4j
-
-# Neo4j 컨테이너 중지
+# Neo4j 컨테이너 + migrations 스키마 베이스라인 적용
+docker compose up -d neo4j neo4j-init
 
 # Neo4j 컨테이너 중지 및 볼륨까지 삭제
 docker compose down -v

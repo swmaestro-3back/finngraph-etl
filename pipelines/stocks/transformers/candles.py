@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pipelines.common.types import MinuteCandle
+from pipelines.stocks.types import MinuteCandle
 
 
 def aggregate_1m_to_5m(candles: list[MinuteCandle]) -> list[MinuteCandle]:

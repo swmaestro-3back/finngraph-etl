@@ -1,6 +1,6 @@
 """KIS 시세 수집.
 
-인증·레이트리밋은 `pipelines.common.kis.KisClient`가 담당하고, 여기서는 엔드포인트별
+인증·레이트리밋은 `pipelines.common.clients.kis.KisClient`가 담당하고, 여기서는 엔드포인트별
 파라미터와 응답 파싱만 한다.
 
 분봉(inquire-time-itemchartprice)은 이번 범위 밖이다. 장중 주기 실행이라 운영 성격이
@@ -19,9 +19,9 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from pipelines.common.kis import KisClient, get_kis_client
+from pipelines.common.clients.kis import KisClient, get_kis_client
 from pipelines.common.logging import get_logger
-from pipelines.common.types import DailyCandle, PeriodCandle
+from pipelines.stocks.types import DailyCandle, PeriodCandle
 
 logger = get_logger(__name__)
 

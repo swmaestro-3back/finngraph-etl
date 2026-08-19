@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from airflow.sdk import Asset, dag, task
@@ -19,14 +19,15 @@ if dag and task:
         catchup=False,
         max_active_runs=1,
         tags=["themes"],
+        default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
     )
     def themes_link_news():
-        @task(retries=2)
-        def link_news_themes() -> None:
-            from pipelines.themes.jobs.link_news_themes import run
+        @task
+        def link_news() -> None:
+            from pipelines.themes.jobs.link_news import run
 
             run()
 
-        link_news_themes()
+        link_news()
 
     themes_link_news()

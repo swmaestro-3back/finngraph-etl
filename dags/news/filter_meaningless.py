@@ -28,7 +28,7 @@ if dag and task:
 
         @task(retries=1, retry_delay=timedelta(minutes=10))
         def judge() -> dict[str, Any]:
-            from pipelines.news.jobs.filter_meaningless_news import judge_unchecked_news
+            from pipelines.news.jobs.filter_meaningless import judge_unchecked_news
 
             result = judge_unchecked_news(mode="async")
 
@@ -42,7 +42,7 @@ if dag and task:
 
         @task(retries=3, retry_delay=timedelta(minutes=2), outlets=[news_filtered])
         def mark(judged: dict[str, Any]) -> None:
-            from pipelines.news.jobs.filter_meaningless_news import mark_material_results
+            from pipelines.news.jobs.filter_meaningless import mark_material_results
 
             mark_material_results(judged["kept_ids"], judged["dropped_ids"])
 
