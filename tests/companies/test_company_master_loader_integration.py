@@ -9,10 +9,13 @@
 1. 보통주는 법인이 된다 — companies에 행이 생기고 stocks.company_id가 연결되며
    종목명과 단축코드가 모두 별칭으로 들어간다.
 
-2. 우선주·ETP·SPAC는 법인이 아니다 — 삼성전자우는 삼성전자와 같은 법인이고 ETF는
+2. 주권(증권그룹구분코드 'ST')이 아니면 법인이 아니다 — 수익증권·리츠 같은 비주권은
+   플래그가 모두 비어 있어 플래그 필터만으로는 통과해 버린다.
+
+3. 우선주·ETP·SPAC는 법인이 아니다 — 삼성전자우는 삼성전자와 같은 법인이고 ETF는
    애초에 사업을 하는 법인이 아니다. companies에 들어가지 않고 company_id도 NULL로 남는다.
 
-3. 재실행이 멱등이다 — 매일 도는 job이라 두 번째 실행에서 법인·별칭이 늘거나
+4. 재실행이 멱등이다 — 매일 도는 job이라 두 번째 실행에서 법인·별칭이 늘거나
    연결이 다시 갱신되면 안 된다.
 """
 
@@ -35,15 +38,26 @@ TEST_MARKET = "PYTEST_COMPANIES"
 COMMON_TICKER = "999901"
 PREFERRED_TICKER = "999902"
 ETP_TICKER = "999903"
-TEST_TICKERS = [COMMON_TICKER, PREFERRED_TICKER, ETP_TICKER]
+FUND_TICKER = "999904"
+TEST_TICKERS = [COMMON_TICKER, PREFERRED_TICKER, ETP_TICKER, FUND_TICKER]
+
+# 증권그룹구분코드. 'ST'가 주권이고 'BC'는 수익증권(공모펀드)이다.
+SECURITY_GROUP_STOCK = "ST"
+SECURITY_GROUP_BENEFICIARY_CERT = "BC"
 
 
-def _stock(ticker: str, name: str, **flags: bool) -> StockTicker:
+def _stock(
+    ticker: str,
+    name: str,
+    security_group: str = SECURITY_GROUP_STOCK,
+    **flags: bool,
+) -> StockTicker:
     return StockTicker(
         ticker=ticker,
         standard_code=f"KR7{ticker}001",
         name=name,
         market=TEST_MARKET,
+        security_group=security_group,
         **flags,
     )
 
@@ -157,6 +171,30 @@ def test_preferred_and_etp_are_not_companies() -> None:
 
     # 법인에 연결되지 않은 종목의 이름은 별칭으로도 들어가지 않는다.
     assert "테스트전자우" not in _aliases()
+
+
+def test_non_stock_security_groups_are_not_companies() -> None:
+    """주권이 아닌 종목은 플래그가 비어 있어도 법인이 되지 않는다.
+
+    수익증권·리츠 등은 preferred_stock/etp/spac가 모두 false라 플래그 필터를 통과한다.
+    증권그룹구분코드를 보지 않으면 '한투한미핵심성장포커스2(A)' 같은 공모펀드가
+    법인으로 올라간다(실제로 올라갔었다).
+    """
+    _load_stocks(
+        _stock(COMMON_TICKER, "테스트전자"),
+        _stock(FUND_TICKER, "테스트증권투자신탁", security_group=SECURITY_GROUP_BENEFICIARY_CERT),
+    )
+
+    _sync()
+
+    assert [row["ticker"] for row in _companies()] == [COMMON_TICKER], (
+        "주권 한 종목만 법인이 되어야 한다"
+    )
+
+    links = _stock_links()
+    assert links[COMMON_TICKER] is not None
+    assert links[FUND_TICKER] is None
+    assert "테스트증권투자신탁" not in _aliases()
 
 
 def test_rerun_is_idempotent() -> None:

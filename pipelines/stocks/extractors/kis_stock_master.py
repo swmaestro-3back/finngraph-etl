@@ -315,6 +315,8 @@ class MarketMasterSpec:
     Attributes:
         market (str): 시장 구분. "KOSPI" 또는 "KOSDAQ".
         url (str): KIS master zip 다운로드 URL.
+        security_group_index (int): fields 배열에서 증권그룹구분코드 필드 위치.
+            KOSPI는 "그룹코드", KOSDAQ은 "증권그룹구분코드"로 이름이 다르지만 둘 다 맨 앞이다.
         suffix_widths (list[int]): row 뒤쪽 고정폭 필드들의 길이 목록.
         field_names (list[str]): suffix_widths와 1:1 대응하는 KIS 공식 필드 이름 목록.
         trading_suspended_index (int): fields 배열에서 거래정지 여부 필드 위치.
@@ -331,6 +333,7 @@ class MarketMasterSpec:
 
     market: str
     url: str
+    security_group_index: int
     suffix_widths: list[int]
     field_names: list[str]
     trading_suspended_index: int
@@ -352,6 +355,7 @@ class MarketMasterSpec:
 KOSPI_SPEC = MarketMasterSpec(
     market="KOSPI",
     url=KOSPI_MASTER_URL,
+    security_group_index=0,
     suffix_widths=KOSPI_WIDTHS,
     field_names=KOSPI_FIELD_NAMES,
     trading_suspended_index=34,
@@ -369,6 +373,7 @@ KOSPI_SPEC = MarketMasterSpec(
 KOSDAQ_SPEC = MarketMasterSpec(
     market="KOSDAQ",
     url=KOSDAQ_MASTER_URL,
+    security_group_index=0,
     suffix_widths=KOSDAQ_WIDTHS,
     field_names=KOSDAQ_FIELD_NAMES,
     trading_suspended_index=29,
@@ -437,6 +442,7 @@ def parse_master_row(
         standard_code=standard_code,
         name=name,
         market=spec.market,
+        security_group=fields[spec.security_group_index].strip().upper() or None,
         is_active=True,
         raw_attributes=raw_attributes,
         listed_date=_parse_date(fields[spec.listed_date_index]),

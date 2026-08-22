@@ -21,6 +21,7 @@ class KisStockMasterTest(unittest.TestCase):
             standard_code="KR7005930003",
             name="Samsung",
             values={
+                KOSPI_SPEC.security_group_index: "ST",
                 KOSPI_SPEC.listed_date_index: "19750611",
                 KOSPI_SPEC.trading_suspended_index: "N",
                 KOSPI_SPEC.delisting_trade_index: "N",
@@ -40,6 +41,7 @@ class KisStockMasterTest(unittest.TestCase):
         self.assertEqual(ticker.standard_code, "KR7005930003")
         self.assertEqual(ticker.name, "Samsung")
         self.assertEqual(ticker.market, "KOSPI")
+        self.assertEqual(ticker.security_group, "ST")
         listed_date = ticker.listed_date.isoformat() if ticker.listed_date else None
         self.assertEqual(listed_date, "1975-06-11")
         self.assertFalse(ticker.trading_suspended)
