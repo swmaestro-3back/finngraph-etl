@@ -17,9 +17,9 @@ _ENV_DEFAULTS = {
     # DB 접속 (news 로더는 psycopg(3)로 직접 연결)
     "DB_HOST": "localhost",
     "DB_PORT": "15432",
-    "DB_NAME": "etl",
-    "DB_USER": "etl",
-    "DB_PASSWORD": "etl",
+    "DB_NAME": "finngraph",
+    "DB_USER": "threeback",
+    "DB_PASSWORD": "12345678",
     # 키워드 검색 config 상수(import 시점 int 캐스팅). 로더 테스트와 무관하지만 import 통과에 필요.
     "SEARCH_DISPLAY": "1",
     "MAX_PAGES": "1",

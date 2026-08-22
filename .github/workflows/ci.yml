@@ -92,13 +92,13 @@ jobs:
       postgres:
         image: timescale/timescaledb:latest-pg16
         env:
-          POSTGRES_USER: etl
-          POSTGRES_PASSWORD: etl
-          POSTGRES_DB: etl
+          POSTGRES_USER: threeback
+          POSTGRES_PASSWORD: 12345678
+          POSTGRES_DB: finngraph
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U etl -d etl"
+          --health-cmd "pg_isready -U threeback -d finngraph"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -106,11 +106,11 @@ jobs:
       # news 로더(psycopg2 직접 연결)용. conftest 기본값(15432)을 서비스 포트로 덮어씀.
       DB_HOST: localhost
       DB_PORT: "5432"
-      DB_NAME: etl
-      DB_USER: etl
-      DB_PASSWORD: etl
+      DB_NAME: finngraph
+      DB_USER: threeback
+      DB_PASSWORD: "12345678"
       # common.clients.postgres(psycopg v3 + SQLAlchemy)용.
-      DATABASE_URL: postgresql+psycopg://etl:etl@localhost:5432/etl
+      DATABASE_URL: postgresql+psycopg://threeback:12345678@localhost:5432/finngraph
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -130,12 +130,12 @@ jobs:
         #
         # news 테이블은 tests/news/conftest.py 가 최소 스키마를 직접 만든다.
         env:
-          PGPASSWORD: etl
+          PGPASSWORD: "12345678"
         run: |
-          psql -h localhost -U etl -d etl -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
+          psql -h localhost -U threeback -d finngraph -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
           for migration in migrations/versions/*.sql; do
             echo "running migration $migration"
-            psql -h localhost -U etl -d etl -v ON_ERROR_STOP=1 -f "$migration"
+            psql -h localhost -U threeback -d finngraph -v ON_ERROR_STOP=1 -f "$migration"
           done
       - name: pytest (integration만)
         run: uv run pytest -m integration

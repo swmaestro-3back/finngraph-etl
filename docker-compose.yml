@@ -27,9 +27,12 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # 컨테이너 안에서는 호스트 포트(localhost:15432)가 아니라 compose 네트워크의 db:5432로 접속한다.
-    DATABASE_URL: postgresql+psycopg://etl:etl@db:5432/etl
+    DATABASE_URL: postgresql+psycopg://${ETL_DB_USER:-threeback}:${ETL_DB_PASSWORD:-12345678}@db:5432/${ETL_DB_NAME:-finngraph}
     DB_HOST: db
     DB_PORT: "5432"
+    DB_NAME: ${ETL_DB_NAME:-finngraph}
+    DB_USER: ${ETL_DB_USER:-threeback}
+    DB_PASSWORD: ${ETL_DB_PASSWORD:-12345678}
     # 컨테이너 안에서는 호스트 포트(localhost:7687)가 아니라 compose 네트워크의 neo4j:7687로 접속한다.
     NEO4J_URI: bolt://neo4j:7687
     BEDROCK_REGION: ${BEDROCK_REGION:-}
@@ -54,9 +57,9 @@ services:
   db:
     image: timescale/timescaledb:latest-pg16
     environment:
-      POSTGRES_USER: threeback
-      POSTGRES_PASSWORD: 12345678
-      POSTGRES_DB: finngraph
+      POSTGRES_USER: ${ETL_DB_USER:-threeback}
+      POSTGRES_PASSWORD: ${ETL_DB_PASSWORD:-12345678}
+      POSTGRES_DB: ${ETL_DB_NAME:-finngraph}
     ports:
       - "${ETL_DB_PORT:-15432}:5432"
     volumes:
@@ -64,7 +67,7 @@ services:
       - ./docker/db/initdb:/docker-entrypoint-initdb.d:ro
       - ./migrations/versions:/migrations/versions:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U etl -d etl"]
+      test: ["CMD-SHELL", "pg_isready -U ${ETL_DB_USER:-threeback} -d ${ETL_DB_NAME:-finngraph}"]
       interval: 5s
       timeout: 5s
       retries: 10
