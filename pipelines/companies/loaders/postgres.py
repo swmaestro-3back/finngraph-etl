@@ -14,9 +14,6 @@ ALIAS_SOURCE_KIS_MASTER = "KIS_MASTER"
 # 만들었는데, "법인이 아닌 것"을 플래그로 열거하는 방식이라 목록에 없는 종류가 새어 들어왔다
 # — 공모펀드(F701…)와 신주인수권(J…WR)이 우선주·ETP·스팩 어디에도 걸리지 않아 107건이 쌓였다.
 #
-# 이름은 여기서 채운다. DART 법인명은 "(주)…" 표기라 종목명과 다르다.
-# 시장 구분은 stocks.market 이 들고 있어 companies 에 복제하지 않는다.
-#
 # delisted_at을 지우는 이유: 폐지됐다 다시 거래되면 활성 상태로 되돌려야 한다. 활성 ticker
 # 부분 유니크(companies_active_ticker_uk)와 종목 연결이 모두 이 컬럼을 조건으로 쓴다. 안 지우면
 # 행이 남아 있는데도 양쪽 모두에서 안 보여, stocks.company_id가 붙지 않고 재무·개요가 통째로
@@ -84,6 +81,9 @@ MARK_DELISTED_SQL = text(
 # 법인 행은 delisted_at이 채워져 조인에서 빠진다. 종목코드가 재사용되어 다른 법인이
 # 같은 단축코드를 갖게 되면, 활성 법인 쪽으로만 붙는다.
 #
+# upsert와 같은 주권('ST') 조건을 다시 건다. 없으면 종목코드가 겹치는 비주권 종목이
+# 활성 법인에 다시 붙어, 정리해둔 연결이 다음 동기화에서 조용히 되살아난다.
+#
 # IS DISTINCT FROM으로 이미 같은 법인을 가리키는 행은 건드리지 않는다. updated_at이
 # 매일 무의미하게 갱신되는 것을 막고, linked_count가 "실제로 바뀐 수"를 뜻하게 된다.
 LINK_STOCKS_TO_COMPANIES_SQL = text(
@@ -95,6 +95,7 @@ LINK_STOCKS_TO_COMPANIES_SQL = text(
      WHERE c.ticker = s.ticker
        AND c.delisted_at IS NULL
        AND s.is_active
+       AND s.security_group = 'ST'
        AND s.company_id IS DISTINCT FROM c.id
     """
 )

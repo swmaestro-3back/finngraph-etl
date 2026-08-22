@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
     database_url: str = Field(
-        default="postgresql+psycopg://etl:etl@localhost:15432/etl",
+        default="postgresql+psycopg://threeback:12345678@localhost:15432/finngraph",
         validation_alias="DATABASE_URL",
     )
 

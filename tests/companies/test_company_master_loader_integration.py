@@ -53,12 +53,18 @@ TEST_SYMBOLS = (COMMON_SYMBOL, PREFERRED_SYMBOL, ETP_SYMBOL, UNKNOWN_SYMBOL)
 CORP_CODES = {ticker: f"99{ticker}" for ticker in TEST_SYMBOLS}
 
 
-def _stock(ticker: str, name: str, **flags: bool) -> StockTicker:
+def _stock(
+    ticker: str,
+    name: str,
+    security_group: str = SECURITY_GROUP_STOCK,
+    **flags: bool,
+) -> StockTicker:
     return StockTicker(
         ticker=ticker,
         standard_code=f"KR7{ticker}001",
         name=name,
         market=TEST_MARKET,
+        security_group=security_group,
         **flags,
     )
 

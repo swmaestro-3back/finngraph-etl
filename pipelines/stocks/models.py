@@ -13,6 +13,10 @@ class StockTicker:
         standard_code (str): 표준코드. KIS master의 표준코드 값.
         name (str): 종목명.
         market (str): 시장 구분. "KOSPI" 또는 "KOSDAQ".
+        security_group (str | None): 증권그룹구분코드. 주권은 "ST"이고 수익증권("BC"),
+            리츠("RT"), 신주인수권("SR"/"SW"), 예탁증서("DR"), 외국주권("FS") 등이 따로 온다.
+            ETF/ETN은 etp 플래그로도 걸러지지만 그 밖의 비(非)주권은 이 코드로만 구분된다.
+            법인 이관 대상을 "ST"로 한정하는 데 쓴다.
         is_active (bool): 현재 수집 대상 master에 존재하는지 여부.
         listed_date (date | None): 상장일.
         trading_suspended (bool): 거래정지 여부.
@@ -40,6 +44,7 @@ class StockTicker:
     standard_code: str
     name: str
     market: str
+    security_group: str | None = None
     is_active: bool = True
     listed_date: date | None = None
     trading_suspended: bool = False
