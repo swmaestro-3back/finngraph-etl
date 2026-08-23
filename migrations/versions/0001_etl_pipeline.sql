@@ -48,13 +48,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS company_financials_uk
 CREATE INDEX IF NOT EXISTS company_financials_lookup_idx
     ON company_financials (company_id, period_type, fiscal_yymm DESC);
 
--- ── companies ───────────────────────────────────────────────────────────────
---
--- 업종명은 FDR KRX-DESC 가 준다. DART 기업개황에는 업종 **코드**만 있고 이름이 없어서
--- industry_code 로는 화면에 쓸 수 없다. 기업 설명 폴백(INDUSTRY_FALLBACK)의 재료이기도 하다.
-
-ALTER TABLE companies ADD COLUMN IF NOT EXISTS industry_name TEXT;
-
 -- ── 수급·배당 ───────────────────────────────────────────────────────────────
 --
 -- 재수집 시 갱신 시각을 남긴다. 외국인 보유율(foreign_ratio)은 순매수와 원천이 달라
