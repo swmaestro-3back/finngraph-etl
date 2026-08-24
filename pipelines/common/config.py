@@ -48,6 +48,7 @@ class Settings(BaseSettings):
         default="https://opendart.fss.or.kr/api",
         validation_alias="DART_BASE_URL",
     )
+    # 공식 한도는 분당 1,000회다. 여유를 두고 초당 10회로 잡는다.
     dart_rate_limit_per_second: int = Field(
         default=10,
         validation_alias="DART_RATE_LIMIT_PER_SECOND",
@@ -58,7 +59,12 @@ class Settings(BaseSettings):
         default=100,
         validation_alias="DART_FINANCIAL_BATCH_SIZE",
     )
+    # 사업연도 몇 개를 받을지. 법인·연도당 CFS/OFS 2회라 늘리면 호출 수가 비례해 는다.
     dart_financial_years: int = Field(default=3, validation_alias="DART_FINANCIAL_YEARS")
+    company_financial_batch_size: int = Field(
+        default=300,
+        validation_alias="COMPANY_FINANCIAL_BATCH_SIZE",
+    )
 
     # === disclosures: 단일판매ㆍ공급계약체결 공시 ===
     # 백필 소급 연수와 일별 갱신 시 되짚어볼 구간. 근거는 STOCK_DAILY_* 와 같다 — 짧으면
@@ -112,27 +118,6 @@ class Settings(BaseSettings):
     neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
     neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
-
-    dart_api_key: str = Field(default="", validation_alias="DART_API_KEY")
-    dart_base_url: str = Field(
-        default="https://opendart.fss.or.kr/api",
-        validation_alias="DART_BASE_URL",
-    )
-    # OpenDART 공식 한도는 분당 1,000회다. 여유를 두고 초당 10회로 잡는다.
-    dart_rate_limit_per_second: int = Field(
-        default=10, validation_alias="DART_RATE_LIMIT_PER_SECOND"
-    )
-    company_financial_batch_size: int = Field(
-        default=300,
-        validation_alias="COMPANY_FINANCIAL_BATCH_SIZE",
-    )
-    dart_profile_batch_size: int = Field(default=200, validation_alias="DART_PROFILE_BATCH_SIZE")
-    dart_financial_batch_size: int = Field(
-        default=100,
-        validation_alias="DART_FINANCIAL_BATCH_SIZE",
-    )
-    # 사업연도 몇 개를 받을지. 법인·연도당 CFS/OFS 2회라 늘리면 호출 수가 비례해 는다.
-    dart_financial_years: int = Field(default=3, validation_alias="DART_FINANCIAL_YEARS")
 
 
 @lru_cache

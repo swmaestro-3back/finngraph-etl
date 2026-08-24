@@ -19,9 +19,6 @@ CREATE TABLE IF NOT EXISTS companies (
     ceo_name           TEXT,
     country            TEXT NOT NULL,
     industry_code      TEXT,
-    -- 업종명은 FDR KRX-DESC 가 준다. DART 기업개황에는 업종 **코드**만 있고 이름이 없어서
-    -- industry_code 로는 화면에 쓸 수 없다. 기업 설명 폴백(INDUSTRY_FALLBACK)의 재료이기도 하다.
-    industry_name      TEXT,
     established_on     DATE,
     fiscal_month       TEXT,
     homepage           TEXT,
@@ -311,17 +308,7 @@ CREATE TABLE IF NOT EXISTS news_themes (
 CREATE INDEX IF NOT EXISTS idx_news_themes_theme ON news_themes (theme_id);
 CREATE INDEX IF NOT EXISTS idx_news_themes_news  ON news_themes (news_id);
 
-CREATE TABLE IF NOT EXISTS service_companies (
-    company_id BIGINT NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
-    theme_id   BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
-    name       TEXT,   -- 참고용. 식별자는 company_id 다
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (company_id, theme_id)
-);
-
-CREATE INDEX IF NOT EXISTS service_companies_theme_idx ON service_companies (theme_id);
-
+-- ── search_keywords ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS search_keywords (
     id               BIGSERIAL PRIMARY KEY,
     keyword          TEXT NOT NULL UNIQUE,
