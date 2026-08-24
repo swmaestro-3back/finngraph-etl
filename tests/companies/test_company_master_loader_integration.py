@@ -35,7 +35,7 @@ from pipelines.companies.loaders.dart import link_listed_corp_codes
 from pipelines.companies.loaders.postgres import sync_listed_companies
 from pipelines.companies.models import CompanySyncResult, DartCorp
 from pipelines.stocks.loaders.tickers import sync_tickers
-from pipelines.stocks.models import StockTicker
+from pipelines.stocks.models import SECURITY_GROUP_STOCK, StockTicker
 
 pytestmark = pytest.mark.integration
 

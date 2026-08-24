@@ -1,8 +1,8 @@
 """OpenDART 수집.
 
 DART가 KIS로 메울 수 없는 두 구멍을 채운다.
-- **비상장 법인**: KIS에는 아예 없다. DART에는 11만 4천 곳이 있다.
-- **별도(OFS) 재무**: KIS는 연결만 준다. `fs_div`로 갈라 받는다.
+- 비상장 법인: KIS에는 아예 없다. DART에는 11만 4천 곳이 있다.
+- 별도(OFS) 재무: KIS는 연결만 준다. `fs_div`로 갈라 받는다.
 
 corpCode.xml은 30MB 남짓한 단일 XML이라 통째로 파싱하면 메모리를 크게 먹는다.
 iterparse로 한 항목씩 읽고 즉시 버린다.
@@ -129,15 +129,38 @@ def fetch_financial_statements(
     return list(data.get("list") or [])
 
 
-def fetch_annual_report_receipts(
+# 정기공시 중 사업 설명이 실리는 보고서. 셋 다 「II. 사업의 내용 → 1. 사업의 개요」를
+# 같은 서식으로 담는다. 신규 상장사는 첫 사업보고서 전이라 반기·분기만 있고, 사업보고서가
+# 있어도 반기·분기가 더 최신이라 셋을 함께 본다.
+PERIODIC_REPORT_NAMES = ("사업보고서", "반기보고서", "분기보고서")
+
+# 첨부파일만 교체한 공시는 본문이 없거나 감사보고서가 온다. 나머지 접두어는 거르지
+# 않는다 — [기재정정]은 정기공시의 9.4%라 잘못 거르면 손실이 크다.
+SKIP_REPORT_PREFIXES = ("[첨부정정]",)
+
+
+def fetch_periodic_report_receipts(
     corp_code: str,
     start: date,
     end: date,
     client: DartClient | None = None,
 ) -> list[dict[str, Any]]:
-    """정기공시(pblntf_ty=A) 목록에서 사업보고서 접수 정보를 최신순으로 가져온다.
+    """정기공시(pblntf_ty=A) 접수 정보를 최신순으로 가져온다.
 
-    분기·반기보고서도 같은 유형으로 오므로 보고서명으로 사업보고서만 거른다.
+    사업·반기·분기보고서를 모두 담는다. 종류로 우선순위를 두지 않고 접수일 순서를 쓴다 —
+    회사가 무엇을 하는지는 가장 최근 보고서가 가장 정확하다.
+
+    본문이 없는 [첨부정정]은 여기서 뺀다. 남겨 두면 목록 맨 앞을 차지해 조회가 한 번
+    헛돈다.
+
+    Args:
+        corp_code (str): DART 법인 코드.
+        start (date): 조회 시작일.
+        end (date): 조회 종료일.
+        client (DartClient | None): 재사용할 클라이언트.
+
+    Returns:
+        list[dict[str, Any]]: 접수 정보. list.json이 최신순으로 주므로 순서를 유지한다.
     """
 
     client = client or get_dart_client()
@@ -152,9 +175,24 @@ def fetch_annual_report_receipts(
         },
     )
 
-    return [
-        row for row in (data.get("list") or []) if "사업보고서" in str(row.get("report_nm") or "")
-    ]
+    receipts = []
+    for row in data.get("list") or []:
+        name = str(row.get("report_nm") or "")
+        if name.startswith(SKIP_REPORT_PREFIXES):
+            continue
+        if any(kind in name for kind in PERIODIC_REPORT_NAMES):
+            receipts.append(row)
+    return receipts
+
+
+def fetch_document_text(rcept_no: str, client: DartClient | None = None) -> str:
+    """공시 원본 본문 XML을 문자열로 돌려준다.
+
+    본문 선별·디코딩 로직은 DartClient.get_document_text에 있다.
+    """
+
+    client = client or get_dart_client()
+    return client.get_document_text(rcept_no)
 
 
 def _text(element: ElementTree.Element, tag: str) -> str | None:
