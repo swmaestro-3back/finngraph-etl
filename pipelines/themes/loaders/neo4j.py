@@ -47,7 +47,6 @@ async def upsert_themes(themes: list[Theme]) -> None:
 UNWIND $batch AS theme
 MERGE (t:Theme {name: theme.name})
 ON CREATE SET
-    t.id = randomUUID(),
     t.source_theme_id = theme.source_theme_id,
     t.description = theme.description,
     t.source = theme.source
