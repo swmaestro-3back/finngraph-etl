@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
+# 증권그룹구분코드 중 주권. 법인 이관 대상을 이 값으로 한정한다.
+SECURITY_GROUP_STOCK = "ST"
+
 
 @dataclass(frozen=True)
 class StockTicker:
