@@ -1,0 +1,84 @@
+{
+  "id": "20260821900482",
+  "link": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260821900482",
+  "corp_code": "00116408",
+  "corp_name": "동신건설",
+  "stock_code": "025950",
+  "corp_cls": "KOSDAQ",
+  "report_nm": "[기재정정]단일판매ㆍ공급계약체결",
+  "is_correction": true,
+  "rcept_dt": "2026-08-21",
+  "flr_nm": "동신건설",
+  "fields": {
+    "contract_type": "주덕하수관로 정비사업(2단계)",
+    "contract_name": null,
+    "contract_amount": 9245020186,
+    "fixed_amount": 9245020186,
+    "conditional_amount": null,
+    "is_conditional": "미해당",
+    "recent_sales": 50301558593,
+    "sales_ratio": 18.37,
+    "is_large_corp": null,
+    "counterparty": "충북지방조달청",
+    "counterparty_corp_name": null,
+    "counterparty_corp_code": null,
+    "counterparty_stock_code": null,
+    "counterparty_match_rule": null,
+    "counterparty_relation": null,
+    "counterparty_business": null,
+    "counterparty_recent_sales": null,
+    "counterparty_prior_contract": "미해당",
+    "region": "충청북도 충주시",
+    "start_date": "2023-12-20",
+    "end_date": "2026-10-23",
+    "order_date": "2023-12-20",
+    "conditions": {
+      "계약금ㆍ선급금 유무": "무",
+      "대금지급 조건 등": "-"
+    },
+    "supply_method": {
+      "자체생산": "미해당",
+      "외주생산": "미해당",
+      "기타": "-"
+    },
+    "reservation": {
+      "유보기한": "-",
+      "유보사유": "-"
+    },
+    "note": "- 상기 계약금액은 부가가치세 제외금액입니다. - 상기 총 계약금액은 \\18,291,739,000(부가세포함액) 중 당사 지분 55.6%입니다.",
+    "related_disclosures": "2023-12-20 단일판매ㆍ공급계약체결 2025-03-06 단일판매ㆍ공급계약체결 2025-06-18 단일판매ㆍ공급계약체결 2025-12-17 단일판매ㆍ공급계약체결 2026-03-05 단일판매ㆍ공급계약체결 2026-05-06 단일판매ㆍ공급계약체결 2026-07-09 단일판매ㆍ공급계약체결",
+    "correction": {
+      "items": [
+        {
+          "정정항목": "2. 확정 계약금액",
+          "정정전": "9,247,921,716",
+          "정정후": "9,245,020,186"
+        },
+        {
+          "정정항목": "2. 계약금액 총액(원)",
+          "정정전": "9,247,921,716",
+          "정정후": "9,245,020,186"
+        },
+        {
+          "정정항목": "2. 매출액 대비(%)",
+          "정정전": "18.38",
+          "정정후": "18.37"
+        },
+        {
+          "정정항목": "10. 기타 투자판단에 참고할 사항",
+          "정정전": "- 상기 총 계약금액은 \\18,296,248,000(부가세포함액) 중 당사 지분 55.6%입니다.",
+          "정정후": "- 상기 총 계약금액은 \\18,291,739,000(부가세포함액) 중 당사 지분 55.6%입니다."
+        }
+      ],
+      "정정일자": "2026-08-21",
+      "1. 정정관련 공시서류": "단일판매공급계약",
+      "2. 정정관련 공시서류제출일": "2026.07.09",
+      "3. 정정사유": "안전공사 수준평가 맞춤형 컨설팅 결과반영에 의한 계약금액 감액",
+      "4. 정정사항": ""
+    }
+  },
+  "meta": {
+    "fetched_at": "2026-08-22T20:31:41+09:00",
+    "parser_version": 3
+  }
+}

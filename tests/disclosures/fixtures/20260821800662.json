@@ -1,0 +1,52 @@
+{
+  "id": "20260821800662",
+  "link": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260821800662",
+  "corp_code": "00103510",
+  "corp_name": "인지컨트롤스",
+  "stock_code": "023800",
+  "corp_cls": "KOSPI",
+  "report_nm": "단일판매ㆍ공급계약체결",
+  "is_correction": false,
+  "rcept_dt": "2026-08-21",
+  "flr_nm": "인지컨트롤스",
+  "fields": {
+    "contract_type": "기타 판매ㆍ공급계약",
+    "contract_name": "SENSING ASSY 6종(Cell Connection System)",
+    "contract_amount": 475742538388,
+    "fixed_amount": null,
+    "conditional_amount": null,
+    "is_conditional": null,
+    "recent_sales": 717902449045,
+    "sales_ratio": 66.27,
+    "is_large_corp": "미해당",
+    "counterparty": "현대모비스",
+    "counterparty_corp_name": "현대모비스",
+    "counterparty_corp_code": "00164788",
+    "counterparty_stock_code": "012330",
+    "counterparty_match_rule": "original:listed",
+    "counterparty_relation": null,
+    "counterparty_business": null,
+    "counterparty_recent_sales": null,
+    "counterparty_prior_contract": null,
+    "region": null,
+    "start_date": "2028-09-01",
+    "end_date": "2035-12-31",
+    "order_date": "2026-08-20",
+    "conditions": {
+      "계약금ㆍ선급금 유무": "무",
+      "대금지급 조건 등": "매월 납품완료후 100% 지급"
+    },
+    "supply_method": {},
+    "reservation": {
+      "유보사유": "경영상 비밀유지",
+      "유보기한": "2028-09-01"
+    },
+    "note": "- 상기 제품은 전동화차량 배터리에 조립되는 CCS(Cell Connection System)입니다. - 상기 계약금액은 부가가치세 제외 금액입니다. - 상기 계약금액은 계약기간동안의 전체 수량에 KRW 단가를 적용한 금액입니다. - 상기 최근매출액은 2025년 사업연도 연결재무제표 기준입니다. - 계약일자는 고객사로부터 문서를 수령한 일자입니다. - 상기 계약금액, 계약기간등은 진행상황에 따라 변동될 수 있습니다. - 상기 판매·공급지역은 계약 상대방의 요청에 따라 공개를 유보하였습니다.",
+    "related_disclosures": null,
+    "correction": null
+  },
+  "meta": {
+    "fetched_at": "2026-08-22T20:31:41+09:00",
+    "parser_version": 3
+  }
+}
