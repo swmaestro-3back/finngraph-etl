@@ -6,12 +6,13 @@ Airflow DAG 정의 폴더.
 
 ```
 dags/
-├── companies/  # 법인 마스터 파일 동기화 · GraphDB 반영
-├── health/     # 운영 상 헬스체크용
-├── news/       # 뉴스 수집 · 필터 · 요약
-├── stocks/     # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 집계
-├── themes/     # 테마 크롤링 · 뉴스 연결
-└── triples/   # 트리플 추출
+├── companies/    # 법인 마스터 파일 동기화 · GraphDB 반영
+├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
+├── health/       # 운영 상 헬스체크용
+├── news/         # 뉴스 수집 · 필터 · 요약
+├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 집계
+├── themes/       # 테마 크롤링 · 뉴스 연결
+└── triples/     # 트리플 추출
 ```
 
 > 단, 폴더 구조는 **소스코드 정리용**이다. 
@@ -29,6 +30,8 @@ dags/
 | stocks | `stocks/aggregate_candles.py` | `stocks_aggregate_candles` | `stocks` | `*/5 9-16 * * 1-5` (장중 5분) |
 | stocks | `stocks/intraday_1m.py` | `stocks_intraday_1m` | `stocks` | `*/5 9-15 * * 1-5` (장중 5분) |
 | stocks | `stocks/daily_backfill.py` | `stocks_daily_backfill` | `stocks` | 수동 |
+| disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
+| disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | news | `news/collect_headline.py` | `news_collect_headline` | `news` | `*/30 * * * *` (30분) |
 | news | `news/collect_keyword_search.py` | `news_collect_keyword_search` | `news` | `0 * * * *` (매시) |
 | news | `news/filter_meaningless.py` | `news_filter_meaningless` | `news` | Asset `etl://news/collected` |
@@ -49,9 +52,11 @@ flowchart TB
     SDB["stocks_daily_backfill<br/>수동"]
     TR["themes_refresh<br/><code>0 0 * * *</code>"]
     HC["health_check<br/>수동"]
+    DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
+    DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class SDP,SAC,SI1,SDB,TR,HC cron
+    class SDP,SAC,SI1,SDB,TR,HC,DCD,DBF cron
 ```
 
 ## Assets 흐름
@@ -133,6 +138,6 @@ flowchart LR
 
 ### Tag 관련 규칙
 - **태그는 도메인(폴더명) 하나만 사용한다.**
-  - `["news"]`, `["stocks"]`, `["themes"]`, `["triples"]`, `["health"]`
+  - `["news"]`, `["stocks"]`, `["themes"]`, `["triples"]`, `["health"]`, `["disclosures"]`
 - 태그는 **여러 DAG가 공유하며 사용하는 것이므로** 세부 동작명은 넣지 않는다.
   - 세부 동작명은 이미 `dag_id`에 담겨 있어 중복이고, 한 번만 쓰이는 태그가 늘어나 UI만 지저분해지기 때문이다.
