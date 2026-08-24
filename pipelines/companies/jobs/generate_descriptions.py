@@ -1,17 +1,9 @@
 """기업 설명 생성.
 
-정기공시 본문의 「사업의 개요」를 LLM으로 1~2문장 요약한다(description_source=DART_LLM).
+정기공시 본문의 「사업의 개요」를 LLM으로 3~5문장 요약한다(description_source=DART_LLM).
 
-**업종·주요제품 조합 폴백은 두지 않는다.** 예전에는 KRX 목록으로 폴백 문장을 만들었는데,
-정기공시를 사업·반기·분기 전부 최신순으로 보고 본문 없는 [첨부정정]을 걸러내자 361법인이
-모두 본문 경로로 채워졌다. 폴백이 실제로 기여하는 곳이 0이 되었고, 비상장은 KRX 목록에
-없어 애초에 폴백이 닿지 않았다.
-
-국내 상장사에 위키데이터를 쓰지 않는 이유는 커버리지다. 시가총액 2000위권의 한국어 설명
-보유율이 0%이고, 있어도 "company in Seoul, South Korea" 수준이다.
-
-법인당 DART 2회(목록·원문) + LLM 1회라 비싸다. 연 1회 갱신이면 충분하고, 회차마다
-배치 크기만큼만 처리한다.
+법인당 DART 2회 + LLM 1회라 비싸다. 직전 원천의 접수번호를 목록 맨 앞과 대조해, 새
+보고서가 올라온 법인만 다시 만든다.
 """
 
 from __future__ import annotations
@@ -19,7 +11,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.common.config import get_settings
 from pipelines.common.dart import get_dart_client
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
@@ -48,47 +39,76 @@ MAX_RECEIPT_ATTEMPTS = 3
 
 
 def run(limit: int | None = None) -> None:
-    """설명이 없는 법인부터 설명을 만든다."""
-
-    settings = get_settings()
-    batch_size = limit or settings.company_description_batch_size
+    """새 정기공시가 올라온 법인의 설명을 만든다."""
 
     client = get_dart_client()
     today = now_kst().date()
     start = today - timedelta(days=REPORT_LOOKBACK_DAYS)
 
     with session_scope() as session:
-        targets = fetch_description_targets(session, batch_size)
+        targets = fetch_description_targets(session, limit)
 
-    logger.info("기업 설명 생성 시작: 대상 %d법인", len(targets))
+    logger.info("기업 설명 생성 시작: 후보 %d법인", len(targets))
 
     generated = 0
-    skipped: list[str] = []
+    unchanged = 0
+    failed: list[str] = []
 
-    for company_id, name, corp_code in targets:
+    for company_id, name, corp_code, last_rcept_no in targets:
+        try:
+            receipts = fetch_periodic_report_receipts(corp_code, start, today, client=client)
+        except Exception:
+            logger.exception("정기공시 목록 조회 실패: corp_code=%s name=%s", corp_code, name)
+            failed.append(name)
+            continue
+
+        latest = _latest_rcept_no(receipts)
+        if not latest:
+            logger.warning("정기공시 없음: corp_code=%s name=%s", corp_code, name)
+            failed.append(name)
+            continue
+
+        if latest == last_rcept_no:
+            unchanged += 1
+            continue
+
         description = ""
         try:
-            description = _summarize_latest_report(name, corp_code, start, today, client)
+            description = _summarize(name, receipts, client)
         except Exception:
             logger.exception("사업보고서 요약 실패: corp_code=%s name=%s", corp_code, name)
 
+        # 실패하면 접수번호를 옮기지 않는다. 다음 회차에 다시 잡혀야 한다.
         if not description:
-            skipped.append(name)
+            failed.append(name)
             continue
 
         with session_scope() as session:
-            update_description(session, company_id, description, DESCRIPTION_SOURCE_DART_LLM)
+            update_description(
+                session, company_id, description, DESCRIPTION_SOURCE_DART_LLM, latest
+            )
         generated += 1
 
     logger.info(
-        "기업 설명 생성 완료: %d건 생성, %d건 실패 %s",
+        "기업 설명 생성 완료: %d건 생성, %d건 변경없음, %d건 실패 %s",
         generated,
-        len(skipped),
-        skipped[:10],
+        unchanged,
+        len(failed),
+        failed[:10],
     )
 
 
-def _summarize_latest_report(name, corp_code, start, end, client) -> str:
+def _latest_rcept_no(receipts: list[dict]) -> str:
+    """목록 맨 앞(최신) 공시의 접수번호. 없으면 빈 문자열."""
+
+    for receipt in receipts:
+        rcept_no = str(receipt.get("rcept_no") or "").strip()
+        if rcept_no:
+            return rcept_no
+    return ""
+
+
+def _summarize(name: str, receipts: list[dict], client) -> str:
     """최신 정기공시부터 순서대로 시도해 사업 설명을 만든다.
 
     **한 건만 보고 포기하지 않는다.** 맨 앞 공시가 본문을 못 주거나(정정·서식 차이) 사업
@@ -98,8 +118,6 @@ def _summarize_latest_report(name, corp_code, start, end, client) -> str:
     Returns:
         str: 요약문. 시도한 공시에서 모두 발췌를 못 얻으면 빈 문자열.
     """
-
-    receipts = fetch_periodic_report_receipts(corp_code, start, end, client=client)
 
     for receipt in receipts[:MAX_RECEIPT_ATTEMPTS]:
         rcept_no = str(receipt.get("rcept_no") or "").strip()
