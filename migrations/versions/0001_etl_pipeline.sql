@@ -43,21 +43,14 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS description_rcept_no TEXT;
 -- ── service_companies ───────────────────────────────────────────────────────
 --
 -- 수집 대상 목록. 비면 시세·수급·배당·재무 잡의 대상이 전부 0이 된다.
+--
+-- 테마를 담지 않는다. 답하는 질문이 "이 법인을 수집하는가" 하나뿐이고, 테마 소속은
+-- theme_stocks 가 다대다로 이미 들고 있다. 여기에 theme_id 를 두면 두 테마에 걸친
+-- 법인이 두 행이 되어 JOIN 한 번에 같은 종목을 두 번 수집한다.
 
 CREATE TABLE IF NOT EXISTS service_companies (
-    company_id BIGINT NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
-    theme_id   BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
+    company_id BIGINT PRIMARY KEY REFERENCES companies (id) ON DELETE CASCADE,
     name       TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (company_id, theme_id)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS service_companies_theme_idx ON service_companies (theme_id);
-
---     INSERT INTO themes (name) VALUES ('반도체'), ('2차전지') ON CONFLICT DO NOTHING;
---     INSERT INTO service_companies (company_id, theme_id, name)
---     SELECT s.company_id, t.id, c.name
---       FROM stocks s JOIN companies c ON c.id = s.company_id
---       JOIN themes t ON t.name = '반도체'
---      WHERE s.ticker IN ('005930', '000660', ...);

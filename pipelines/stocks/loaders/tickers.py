@@ -118,8 +118,7 @@ DEACTIVATE_MISSING_TICKERS_SQL = (
 # 파일 하나로 끝나는 master에나 적용된다. 재무·수급·배당·분봉은 종목당 API 1회씩이라
 # 전량을 돌면 호출 수가 4,400건이 되고, 그중 1,700건은 화면에 나가지도 않는다.
 #
-# service_companies는 (company_id, theme_id) 복합 PK라 JOIN하면 두 테마에 걸친 법인을
-# 두 번 수집한다. 정렬이 고정이라 상한을 두면 뒤쪽 종목에 순서가 영영 오지 않는다.
+# 정렬이 단축코드 순으로 고정이라 상한을 두면 뒤쪽 종목에 순서가 영영 오지 않는다.
 SELECT_SERVICEABLE_TICKERS_SQL = text(
     """
     SELECT s.id, s.ticker
