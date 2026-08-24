@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pipelines.common.kis import KisClient, get_kis_client
+from pipelines.common.clients.kis import KisClient, get_kis_client
 
 BALANCE_SHEET_PATH = "/uapi/domestic-stock/v1/finance/balance-sheet"
 BALANCE_SHEET_TR_ID = "FHKST66430100"
