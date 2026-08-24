@@ -61,7 +61,7 @@ SELECT_LISTED_COMPANY_SYMBOLS_SQL = text(
 #
 # **service_companies로 대상을 좁힌다.** 1차 MVP는 반도체·2차전지 361법인이라 상장사 전량을
 # 돌 이유가 없다. KIS 재무는 종목코드로 조회하므로 법인 → 종목으로 한 번 내려간다.#
-# **JOIN이 아니라 EXISTS다.** service_companies는 (company_id, theme_id) 복합 PK라
+# JOIN이 아니라 EXISTS다. service_companies는
 # 두 테마에 걸친 법인이 두 행이다(실측 25곳). JOIN하면 그 종목을 두 번 수집한다.
 SELECT_STALE_FINANCIAL_TARGETS_SQL = text(
     """

@@ -53,6 +53,12 @@ if dag and task:
 
             run(validated_path)
 
+        @task
+        def sync_service_companies() -> None:
+            from pipelines.companies.jobs.sync_service_companies import run
+
+            run()
+
         reset = reset_graph()
 
         # SOURCE별 task를 생성하고 reset 이후 병렬 실행되도록 fan-out
@@ -67,7 +73,9 @@ if dag and task:
         # 저장소가 달라 실패 특성도 다르다. 한쪽이 죽어도 다른 쪽은 성공해야 하므로
         # 하나의 태스크로 합치지 않는다.
         load_graph(validated)
-        load_rdb(validated)
+        # 테마 편입이 확정된 뒤에 수집 대상을 넓힌다. 그래프 적재와는 무관하다.
+        load_rdb(validated) >> sync_service_companies()
 
-    # 최종 실행 흐름: reset -> extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb)
+    # 최종 실행 흐름: reset -> extract(소스 병렬) -> validate
+    #                        -> load_graph ∥ (load_rdb -> sync_service_companies)
     themes_refresh()

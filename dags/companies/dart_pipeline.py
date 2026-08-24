@@ -35,11 +35,8 @@ if dag and task:
     @dag(
         dag_id="companies_dart_pipeline",
         start_date=datetime(2026, 1, 1),
-        # 서비스 대상이 361법인으로 좁혀져(service_companies) 한 회차에 거의 다 돈다.
-        # 전량(2,581)일 때는 주 1회로 개요 13주·재무 26주가 걸렸다.
-        #
-        # 매일 03시로 당긴 이유가 하나 더 있다 — **법인 행을 만드는 곳이 이 DAG뿐이라**
-        # 주 1회면 신규 상장이 최대 7일간 company_id 없이 떠 있게 된다.
+        # 법인 행을 만드는 곳이 이 DAG뿐이다. 주 1회면 신규 상장이 최대 7일간
+        # company_id 없이 떠 있는다.
         schedule="0 3 * * *",
         catchup=False,
         max_active_runs=1,
@@ -64,12 +61,6 @@ if dag and task:
 
             run()
 
-        @task(retries=1)
-        def generate_descriptions() -> None:
-            from pipelines.companies.jobs.generate_descriptions import run
-
-            run()
-
-        sync_corp_codes() >> collect_profiles() >> collect_financials() >> generate_descriptions()
+        sync_corp_codes() >> collect_profiles() >> collect_financials()
 
     companies_dart_pipeline()
