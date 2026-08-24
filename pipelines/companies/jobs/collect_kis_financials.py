@@ -7,11 +7,11 @@
 
 from __future__ import annotations
 
-from pipelines.common.batching import chunked
+from pipelines.common.clients.kis import get_kis_client
+from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
-from pipelines.common.database import session_scope
-from pipelines.common.kis import get_kis_client
 from pipelines.common.logging import get_logger
+from pipelines.common.utils.batching import chunked
 from pipelines.companies.extractors.kis_finance import (
     fetch_balance_sheet,
     fetch_financial_ratio,

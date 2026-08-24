@@ -9,15 +9,19 @@ from decimal import Decimal
 class CompanySyncResult:
     """국내 상장 기업 마스터 동기화 결과.
 
+    법인 행을 만드는 단계가 아니므로 삽입 수를 세지 않는다. 세는 것은 상태 변화다.
+
     Attributes:
-        upserted_count (int): companies에 삽입되거나 갱신된 법인 수.
+        listed_count (int): 상장으로 표시되거나 이름·시장이 갱신된 법인 수.
+        delisted_count (int): 활성 종목 목록에서 사라져 상장폐지로 내린 법인 수.
         linked_count (int): stocks.company_id가 새로 연결되거나 바뀐 종목 수.
             이미 같은 법인을 가리키던 종목은 세지 않는다.
         alias_count (int): company_aliases에 새로 추가된 별칭 수.
             이미 있던 별칭은 ON CONFLICT DO NOTHING으로 빠지므로 세지 않는다.
     """
 
-    upserted_count: int
+    listed_count: int
+    delisted_count: int
     linked_count: int
     alias_count: int
 
@@ -59,3 +63,40 @@ class CompanyFinancial:
     roe: Decimal | None = None
     eps: Decimal | None = None
     bps: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class CompanyProfile:
+    """DART 기업개황.
+
+    Attributes:
+        corp_code (str): DART 고유번호 8자리. 이 값으로 companies 행을 찾는다.
+        fiscal_month (str | None): 결산월 'MM'.
+    """
+
+    corp_code: str
+    name: str
+    name_eng: str | None = None
+    ceo_name: str | None = None
+    industry_code: str | None = None
+    established_on: date | None = None
+    fiscal_month: str | None = None
+    homepage: str | None = None
+    address: str | None = None
+
+
+@dataclass(frozen=True)
+class DartCorp:
+    """corpCode.xml 한 행.
+
+    Attributes:
+        stock_code (str | None): KRX 단축코드. 상장 이력이 있는 법인만 갖는다.
+            **상장사 매핑은 이 값으로 한다** — 법인명 매칭은 동명이인 때문에 위험하다.
+        modify_date (date | None): DART 최종변경일.
+    """
+
+    corp_code: str
+    name: str
+    name_eng: str | None = None
+    stock_code: str | None = None
+    modify_date: date | None = None
