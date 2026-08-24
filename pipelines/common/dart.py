@@ -10,6 +10,7 @@ DART는 실패를 HTTP 상태가 아니라 응답 본문의 `status` 필드로 �
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from typing import Any
 
@@ -106,8 +107,50 @@ class DartClient:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 return {name: archive.read(name) for name in archive.namelist()}
         except zipfile.BadZipFile as exc:
-            # 오류일 때는 zip 대신 XML/JSON 본문이 온다.
-            raise DartApiError("", f"zip 응답이 아님: {content[:200]!r}") from exc
+            # 오류일 때는 zip 대신 XML/JSON 본문이 온다. status/message 를 최대한 살려
+            # 호출자가 013/014(없음, 건너뜀)와 020/021(한도, 중단)을 구분하게 한다.
+            status, message = _extract_error(content)
+            raise DartApiError(status, message or f"zip 응답이 아님: {content[:200]!r}") from exc
+
+    def get_document_text(self, rcept_no: str) -> str:
+        """공시 원본(document.xml)에서 본문 XML을 골라 문자열로 돌려준다.
+
+        zip 안에 XML이 여러 개 들어 있고 **접미사 없는 `{rcept_no}.xml`이 본문**이다.
+        나머지는 첨부·감사보고서다. 규칙이 어긋나는 공시도 있어, 정확히 일치하는 이름이
+        없으면 가장 큰 XML을 본문으로 본다(첨부보다 본문이 크다).
+
+        Args:
+            rcept_no (str): 접수번호.
+
+        Returns:
+            str: 본문 문자열. zip에 XML이 없으면 빈 문자열.
+        """
+
+        members = self.get_zip_members("document.xml", {"rcept_no": rcept_no})
+        xml_members = {
+            name: content for name, content in members.items() if name.lower().endswith(".xml")
+        }
+        if not xml_members:
+            return ""
+
+        exact = f"{rcept_no}.xml"
+        if exact in xml_members:
+            content = xml_members[exact]
+        else:
+            name, content = max(xml_members.items(), key=lambda item: len(item[1]))
+            logger.info(
+                "본문 XML 이름 규칙 불일치, 최대 크기 파일 사용: rcept_no=%s file=%s",
+                rcept_no,
+                name,
+            )
+
+        # 공시 원본은 EUC-KR과 UTF-8이 섞여 있다. 선언을 신뢰하지 않고 순서대로 시도한다.
+        for encoding in ("utf-8", "cp949"):
+            try:
+                return content.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return content.decode("utf-8", errors="replace")
 
     @retry_external_call()
     def _get_json(self, path: str, params: dict[str, str], timeout: int) -> dict[str, Any]:
@@ -128,6 +171,18 @@ class DartClient:
         )
         response.raise_for_status()
         return response.content
+
+
+def _extract_error(content: bytes) -> tuple[str, str]:
+    """zip이 아닌 오류 본문에서 (status, message)를 뽑는다. 못 뽑으면 빈 문자열."""
+
+    try:
+        payload = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return "", ""
+    if not isinstance(payload, dict):
+        return "", ""
+    return str(payload.get("status", "")), str(payload.get("message", ""))
 
 
 def get_dart_client() -> DartClient:

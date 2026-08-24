@@ -15,16 +15,12 @@ from typing import Any
 from xml.etree import ElementTree
 
 from pipelines.common.dart import DartClient, get_dart_client
-from pipelines.common.logging import get_logger
 from pipelines.companies.models import CompanyProfile, DartCorp
-
-logger = get_logger(__name__)
 
 CORP_CODE_PATH = "corpCode.xml"
 COMPANY_PATH = "company.json"
 FINANCIAL_PATH = "fnlttSinglAcntAll.json"
 DISCLOSURE_LIST_PATH = "list.json"
-DOCUMENT_PATH = "document.xml"
 
 # 보고서 코드. 11011=사업보고서(연간), 11012=반기, 11013=1분기, 11014=3분기.
 REPORT_CODE_ANNUAL = "11011"
@@ -159,40 +155,6 @@ def fetch_annual_report_receipts(
     return [
         row for row in (data.get("list") or []) if "사업보고서" in str(row.get("report_nm") or "")
     ]
-
-
-def fetch_document_text(rcept_no: str, client: DartClient | None = None) -> str:
-    """공시 원본(document.xml)에서 본문 XML을 골라 문자열로 돌려준다.
-
-    zip 안에 XML이 여러 개 들어 있고 **접미사 없는 `{rcept_no}.xml`이 본문**이다.
-    나머지는 첨부·감사보고서다. 규칙이 어긋나는 공시도 있어, 정확히 일치하는 이름이
-    없으면 가장 큰 XML을 본문으로 본다(첨부보다 본문이 크다).
-    """
-
-    client = client or get_dart_client()
-    members = client.get_zip_members(DOCUMENT_PATH, {"rcept_no": rcept_no})
-    xml_members = {
-        name: content for name, content in members.items() if name.lower().endswith(".xml")
-    }
-    if not xml_members:
-        return ""
-
-    exact = f"{rcept_no}.xml"
-    if exact in xml_members:
-        content = xml_members[exact]
-    else:
-        name, content = max(xml_members.items(), key=lambda item: len(item[1]))
-        logger.info(
-            "본문 XML 이름 규칙 불일치, 최대 크기 파일 사용: rcept_no=%s file=%s", rcept_no, name
-        )
-
-    # 공시 원본은 EUC-KR과 UTF-8이 섞여 있다. 선언을 신뢰하지 않고 순서대로 시도한다.
-    for encoding in ("utf-8", "cp949"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return content.decode("utf-8", errors="replace")
 
 
 def _text(element: ElementTree.Element, tag: str) -> str | None:
