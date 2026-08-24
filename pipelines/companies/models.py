@@ -30,10 +30,10 @@ class CompanySyncResult:
 class CompanyFinancial:
     """기업 재무 한 기간치. 원천은 KIS와 DART 둘이다.
 
-    **금액 단위는 전부 원(KRW)이다.** KIS는 억원으로 주고 DART는 원으로 주는데, 적재 전에
+    금액 단위는 전부 원(KRW)이다. KIS는 억원으로 주고 DART는 원으로 주는데, 적재 전에
     원으로 맞춘다. 단위가 섞이면 두 원천을 한 화면에서 비교할 수 없다.
 
-    손익은 **누적 기준**으로 통일한다. KIS 분기 행이 누적이고 DART의 당기 누계도 누적이라,
+    손익은 누적 기준으로 통일한다. KIS 분기 행이 누적이고 DART의 당기 누계도 누적이라,
     분기 단독 값이 필요하면 파생 단계에서 차분으로 만든다.
 
     Attributes:
@@ -91,7 +91,7 @@ class DartCorp:
 
     Attributes:
         stock_code (str | None): KRX 단축코드. 상장 이력이 있는 법인만 갖는다.
-            **상장사 매핑은 이 값으로 한다** — 법인명 매칭은 동명이인 때문에 위험하다.
+            상장사 매핑은 이 값으로 한다 — 법인명 매칭은 동명이인 때문에 위험하다.
         modify_date (date | None): DART 최종변경일.
     """
 
