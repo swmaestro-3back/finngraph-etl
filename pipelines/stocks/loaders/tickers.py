@@ -117,11 +117,15 @@ DEACTIVATE_MISSING_TICKERS_SQL = (
 # 우선주·ETP·SPAC를 뺀다. 수집 범위와 제공 범위를 구분하는 원칙(master는 전량 적재)은
 # 파일 하나로 끝나는 master에나 적용된다. 재무·수급·배당·분봉은 종목당 API 1회씩이라
 # 전량을 돌면 호출 수가 4,400건이 되고, 그중 1,700건은 화면에 나가지도 않는다.
+#
+# service_companies는 (company_id, theme_id) 복합 PK라 JOIN하면 두 테마에 걸친 법인을
+# 두 번 수집한다. 정렬이 고정이라 상한을 두면 뒤쪽 종목에 순서가 영영 오지 않는다.
 SELECT_SERVICEABLE_TICKERS_SQL = text(
     """
     SELECT s.id, s.ticker
       FROM stocks AS s
-     WHERE s.is_active
+     WHERE EXISTS (SELECT 1 FROM service_companies AS u WHERE u.company_id = s.company_id)
+       AND s.is_active
        AND NOT s.preferred_stock
        AND NOT s.etp
        AND NOT s.spac
@@ -137,7 +141,7 @@ def fetch_serviceable_stocks(session: Session, limit: int | None = None) -> list
 
     Args:
         session (Session): DB 세션.
-        limit (int | None): 상한. 호출 한도 때문에 배치를 쪼갤 때 쓴다.
+        limit (int | None): 상한. 수동 점검용이고 배치에서는 생략한다.
 
     Returns:
         list[tuple[int, str]]: (stock_id, ticker) 목록. 단축코드 오름차순.
