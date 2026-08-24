@@ -16,17 +16,20 @@ if TYPE_CHECKING:
     # 타입 체커에는 항상 진짜 심볼을 보여준다. 아래 fallback 의 None 이 타입에 섞이면
     # 중첩 함수 안(@task 데코레이터 자리)에서 `if dag and task:` narrowing 이 풀려
     # "Object of type None cannot be called" 로 잡힌다.
-    from airflow.sdk import dag, task
+    from airflow.sdk import Asset, dag, task
 else:
     # airflow 는 optional 의존성이라 설치 안 된 환경에서도 import 자체는 통과해야 한다.
     try:
-        from airflow.sdk import dag, task
+        from airflow.sdk import Asset, dag, task
     except ImportError:
+        Asset = None
         dag = None
         task = None
 
 
 if dag and task:
+    # 재무 확정 신호. stocks_compute_derived가 구독한다.
+    companies_financials_updated = Asset("etl://companies/financials")
 
     @dag(
         dag_id="companies_kis_financials",
@@ -37,7 +40,7 @@ if dag and task:
         tags=["companies"],
     )
     def companies_kis_financials():
-        @task(retries=2)
+        @task(retries=2, outlets=[companies_financials_updated])
         def collect_kis_financials() -> None:
             from pipelines.companies.jobs.collect_kis_financials import run
 
