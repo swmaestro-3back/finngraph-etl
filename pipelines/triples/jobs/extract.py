@@ -7,12 +7,15 @@ from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.news.loaders.news_repository import (
     fetch_unprocessed_triple_news_items,
-    insert_news_relations,
-    mark_news_relation_extracted,
+    mark_triple_extraction_result,
 )
-from pipelines.triples.extractors.workflow import GraphRunner
-from pipelines.triples.loaders.neo4j import upsert_triples
-from pipelines.triples.transformers.news_relations import build_news_relation_rows
+from pipelines.triples.loaders.neo4j import upsert_triplets
+from pipelines.triples.loaders.postgres import (
+    insert_news_companies,
+    insert_relation_sources,
+)
+from pipelines.triples.transformers.company_links import resolve_company_ids
+from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)
 
@@ -22,39 +25,40 @@ DEFAULT_LIMIT = 100
 async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     """
     1. LangGraph Runner 실행
-    2. GraphDB에 트리플관계 반영
-    3. News 테이블에 relation_extracted 필드 최신화
+    2. GraphDB에 트리플관계 반영 + relation_source(간선 출처)·news_companies(기업 매핑) 적재
+    3. News 테이블에 is_processed / relation_extracted 마킹
     """
     news_id = item["news_id"]
 
     try:
         # 트리플추출
         final_state = await runner.ainvoke(str(news_id), item["text"])
-        triples = final_state.get("triples") or []
+        triplets = final_state.get("triplets") or []
 
-        # 트리플관계가 존재한다면 Neo4j 그래프와 news_relations 테이블에 반영
-        if triples:
-            await upsert_triples(str(news_id), triples)
-            # 이항 엣지로 분해 + COMPANY ticker 조회 후 news_relations에 멱등 적재
-            relation_rows = await build_news_relation_rows(triples)
-            insert_news_relations(news_id, relation_rows)
+        if triplets:
+            # Neo4j 반영 후 간선 elementId를 받아 relation_source에 기록
+            edge_rows = await upsert_triplets(str(news_id), triplets)
+            insert_relation_sources(news_id, edge_rows)
 
-        has_triples = bool(triples)
-        # News 테이블에 relation_extracted 최신화
-        mark_news_relation_extracted(
-            [news_id] if has_triples else [],
-            [] if has_triples else [news_id],
+            # 삼중항에 등장한 상장사를 news_companies에 연결
+            company_ids = await resolve_company_ids(triplets)
+            insert_news_companies(news_id, company_ids)
+
+        has_triplets = bool(triplets)
+        mark_triple_extraction_result(
+            [news_id] if has_triplets else [],
+            [] if has_triplets else [news_id],
         )
     except Exception as e:
         logger.warning(
-            "트리플 추출 실패 (NULL 유지, 다음 런 재시도): news_id=%s, %s: %s",
+            "트리플 추출 실패 (is_processed=FALSE 유지, 다음 런 재시도): news_id=%s, %s: %s",
             news_id,
             type(e).__name__,
             e,
         )
         return "failed"
 
-    return "has_triples" if has_triples else "no_triples"
+    return "has_triples" if has_triplets else "no_triples"
 
 
 async def extract_unprocessed_triples(limit: int = DEFAULT_LIMIT) -> dict[str, int]:
