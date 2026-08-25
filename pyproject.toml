@@ -22,8 +22,11 @@ dependencies = [
   "aiohttp>=3.14.2",
   "boto3>=1.34",
   "langgraph>=1.2.6",
+  "langchain-aws>=0.2",
   "flashtext>=2.7",
   "finance-datareader>=0.9.9",
+  "kiwipiepy>=0.23.2",
+  "numpy>=1.26",
 ]
 
 [dependency-groups]
@@ -62,8 +65,10 @@ known-first-party = ["pipelines", "tests", "dags"]
 # 테스트에 하드코딩된 기사 원문 등 긴 문자열 데이터는 줄길이 제한에서 제외한다.
 "tests/**" = ["E501"]
 # 프롬프트/온톨로지의 서술형 프롬프트·사전 데이터도 긴 문자열이라 줄길이 제한에서 제외한다.
-"pipelines/triples/extractors/prompts/**" = ["E501"]
+"pipelines/triples/prompts/**" = ["E501"]
 "pipelines/triples/ontology/**" = ["E501"]
+# KPF-BERT NER 라벨 목록 등 순수 데이터 파일도 줄길이 제한에서 제외한다.
+"pipelines/triples/utils/kpf.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
