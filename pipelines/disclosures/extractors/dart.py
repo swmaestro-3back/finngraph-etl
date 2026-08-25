@@ -15,7 +15,7 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-from pipelines.common.dart import (
+from pipelines.common.clients.dart import (
     NO_DATA_STATUSES,
     QUOTA_STATUSES,
     DartApiError,
