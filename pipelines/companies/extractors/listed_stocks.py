@@ -18,6 +18,7 @@ SELECT_COMPANIES_SQL = text(
     SELECT c.id AS company_id, c.name, c.ticker, c.corp_code, c.is_listed, c.country
       FROM companies AS c
      WHERE c.is_listed
+       AND c.ticker IS NOT NULL
        AND BTRIM(c.name) <> ''
     """
 )
