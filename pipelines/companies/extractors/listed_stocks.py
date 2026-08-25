@@ -11,15 +11,14 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-# 시드 원천: is_active인 활성 보통주만. companies upsert와 같은 필터(수집 범위 ≠ 제공 범위).
+# 시드 원천: 활성 보통주.
+# 종류는 여기서 판정하지 않는다. 수집 경계(kis_stock_master.is_collectible)가
+# 보통주만 들이므로 stocks 에 있는 것은 이미 다룰 종목이다.
 SELECT_LISTED_COMMON_STOCKS_SQL = text(
     """
     SELECT s.name, s.ticker, s.market
       FROM stocks AS s
      WHERE s.is_active
-       AND NOT s.preferred_stock
-       AND NOT s.etp
-       AND NOT s.spac
        AND BTRIM(s.name) <> ''
     """
 )

@@ -8,8 +8,10 @@ from pipelines.stocks.extractors.kis_stock_master import (
     KOSDAQ_SPEC,
     KOSPI_SPEC,
     LISTED_SHARES_UNIT,
+    is_collectible,
     parse_master_row,
 )
+from pipelines.stocks.models import StockTicker
 
 
 class KisStockMasterTest(unittest.TestCase):
@@ -147,3 +149,43 @@ def _fit_fixed_width(value: str, width: int) -> str:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IsCollectibleTest(unittest.TestCase):
+    """수집 대상 판정 — 보통주만 들인다."""
+
+    @staticmethod
+    def _ticker(**kwargs) -> StockTicker:
+        base = {
+            "ticker": "005930",
+            "standard_code": "KR7005930003",
+            "name": "삼성전자",
+            "market": "KOSPI",
+            "security_group": "ST",
+        }
+        return StockTicker(**{**base, **kwargs})
+
+    def test_common_stock_passes(self) -> None:
+        self.assertTrue(is_collectible(self._ticker()))
+
+    def test_etf_and_etn_are_filtered_by_security_group(self) -> None:
+        # ETF·ETN 은 그룹코드가 EF·EN 이라 etp 플래그를 보지 않아도 걸러진다.
+        for group in ("EF", "EN"):
+            with self.subTest(group=group):
+                self.assertFalse(is_collectible(self._ticker(security_group=group, etp=True)))
+
+    def test_non_stock_security_groups_are_filtered(self) -> None:
+        # 수익증권·리츠·신주인수권·예탁증서·외국주권은 플래그가 전부 false 다.
+        for group in ("BC", "RT", "SR", "SW", "DR", "FS", "IF", "MF"):
+            with self.subTest(group=group):
+                self.assertFalse(is_collectible(self._ticker(security_group=group)))
+
+    def test_preferred_stock_is_filtered(self) -> None:
+        self.assertFalse(is_collectible(self._ticker(preferred_stock=True)))
+
+    def test_spac_is_filtered(self) -> None:
+        # 스팩은 법적으로 주식회사여서 ST 로 온다. 그룹코드로는 안 걸러진다.
+        self.assertFalse(is_collectible(self._ticker(spac=True)))
+
+    def test_missing_security_group_is_filtered(self) -> None:
+        self.assertFalse(is_collectible(self._ticker(security_group=None)))

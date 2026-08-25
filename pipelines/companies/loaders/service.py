@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 # 편입만 하고 제외는 하지 않는다. 크롤링 테마는 하루 만에 구성이 바뀌는데, 그때마다
 # 수집을 끊으면 시계열에 구멍이 생기고 테마 지수도 이어지지 않는다. 빼는 것은 사람이 정한다.
 #
-# 우선주·ETP·SPAC 는 법인이 아니거나 같은 법인의 다른 주식이라 제외한다.
+# 종류는 여기서 판정하지 않는다. 수집 경계(kis_stock_master.is_collectible)가
+# 보통주만 들이므로 stocks 에 있는 것은 이미 다룰 종목이다.
 SYNC_SERVICE_COMPANIES_SQL = text(
     """
     INSERT INTO service_companies (company_id, name)
@@ -18,9 +19,6 @@ SYNC_SERVICE_COMPANIES_SQL = text(
       FROM theme_stocks AS ts
       JOIN stocks AS s ON s.id = ts.stock_id
                       AND s.is_active
-                      AND NOT s.preferred_stock
-                      AND NOT s.etp
-                      AND NOT s.spac
       JOIN companies AS c ON c.id = s.company_id
     ON CONFLICT (company_id) DO NOTHING
     """

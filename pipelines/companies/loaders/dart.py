@@ -60,9 +60,6 @@ UPSERT_LISTED_CORP_SQL = text(
       FROM stocks AS s
      WHERE s.ticker = :stock_code
        AND s.is_active
-       AND NOT s.preferred_stock
-       AND NOT s.etp
-       AND NOT s.spac
        AND NOT EXISTS (
              SELECT 1 FROM companies AS x
               WHERE x.ticker = s.ticker AND x.delisted_at IS NULL

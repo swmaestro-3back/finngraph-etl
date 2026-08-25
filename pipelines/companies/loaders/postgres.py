@@ -81,9 +81,6 @@ MARK_DELISTED_SQL = text(
 # 법인 행은 delisted_at이 채워져 조인에서 빠진다. 종목코드가 재사용되어 다른 법인이
 # 같은 단축코드를 갖게 되면, 활성 법인 쪽으로만 붙는다.
 #
-# upsert와 같은 주권('ST') 조건을 다시 건다. 없으면 종목코드가 겹치는 비주권 종목이
-# 활성 법인에 다시 붙어, 정리해둔 연결이 다음 동기화에서 조용히 되살아난다.
-#
 # IS DISTINCT FROM으로 이미 같은 법인을 가리키는 행은 건드리지 않는다. updated_at이
 # 매일 무의미하게 갱신되는 것을 막고, linked_count가 "실제로 바뀐 수"를 뜻하게 된다.
 LINK_STOCKS_TO_COMPANIES_SQL = text(
@@ -95,7 +92,6 @@ LINK_STOCKS_TO_COMPANIES_SQL = text(
      WHERE c.ticker = s.ticker
        AND c.delisted_at IS NULL
        AND s.is_active
-       AND s.security_group = 'ST'
        AND s.company_id IS DISTINCT FROM c.id
     """
 )
