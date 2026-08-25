@@ -20,6 +20,7 @@ from pipelines.companies.loaders.dart import (
     fetch_unresolved_universe,
     update_company_profile,
 )
+from pipelines.companies.loaders.diagnostics import describe_universe
 
 logger = get_logger(__name__)
 
@@ -35,6 +36,8 @@ def run(limit: int | None = None) -> None:
     client = get_dart_client()
     with session_scope() as session:
         targets = fetch_profile_targets(session, batch_size)
+        if not targets:
+            logger.warning("DART 기업개황 수집 대상이 0건이다 — %s", describe_universe(session))
         unresolved = fetch_unresolved_universe(session)
 
     if unresolved:

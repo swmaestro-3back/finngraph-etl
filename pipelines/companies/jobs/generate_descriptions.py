@@ -22,6 +22,7 @@ from pipelines.companies.loaders.descriptions import (
     fetch_description_targets,
     update_description,
 )
+from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.companies.transformers.description import (
     DESCRIPTION_SOURCE_DART_LLM,
     extract_business_section,
@@ -47,6 +48,8 @@ def run(limit: int | None = None) -> None:
 
     with session_scope() as session:
         targets = fetch_description_targets(session, limit)
+        if not targets:
+            logger.warning("기업 설명 수집 대상이 0건이다 — %s", describe_universe(session))
 
     logger.info("기업 설명 생성 시작: 후보 %d법인", len(targets))
 

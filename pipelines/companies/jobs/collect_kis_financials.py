@@ -17,6 +17,7 @@ from pipelines.companies.extractors.kis_finance import (
     fetch_financial_ratio,
     fetch_income_statement,
 )
+from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.companies.loaders.financials import fetch_stale_financial_targets, upsert_financials
 from pipelines.companies.models import CompanyFinancial
 from pipelines.companies.transformers.financials import (
@@ -50,6 +51,8 @@ def run(limit: int | None = None) -> None:
     client = get_kis_client()
     with session_scope() as session:
         targets = fetch_stale_financial_targets(session, batch_size, source="KIS")
+        if not targets:
+            logger.warning("KIS 재무 수집 대상이 0건이다 — %s", describe_universe(session))
 
     logger.info("KIS 재무 수집 시작: 대상 %d법인", len(targets))
 

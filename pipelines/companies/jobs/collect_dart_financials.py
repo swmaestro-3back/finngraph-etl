@@ -27,6 +27,7 @@ from pipelines.companies.extractors.dart import (
     fetch_financial_statements,
 )
 from pipelines.companies.loaders.dart import fetch_dart_financial_targets, fetch_unresolved_universe
+from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.companies.loaders.financials import upsert_financials
 from pipelines.companies.models import CompanyFinancial
 from pipelines.companies.transformers.dart import build_dart_financials
@@ -55,6 +56,8 @@ def run(limit: int | None = None, years: int | None = None) -> None:
     client = get_dart_client()
     with session_scope() as session:
         targets = fetch_dart_financial_targets(session, batch_size)
+        if not targets:
+            logger.warning("DART 재무 수집 대상이 0건이다 — %s", describe_universe(session))
         unresolved = fetch_unresolved_universe(session)
 
     if unresolved:
