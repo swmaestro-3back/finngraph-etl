@@ -86,11 +86,13 @@ def select_top_members(
     """군집에서 저장할 기사를 최대 cap개 고른다.
 
     대표 기사(메도이드)를 항상 포함하고, 나머지는 대표와의 유사도가 높은 순으로
-    채운다. 군집 크기가 cap 이하면 전부 돌려준다.
+    채운다. 군집 크기가 cap 이하면 전부 돌려준다. 반환 목록은 항상 대표가
+    첫 번째다.
     """
 
     if len(cluster.members) <= cap:
-        return list(cluster.members)
+        representative = cluster.representative
+        return [representative] + [m for m in cluster.members if m != representative]
 
     representative = cluster.representative
     others = [m for m in cluster.members if m != representative]

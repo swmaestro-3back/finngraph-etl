@@ -35,6 +35,40 @@ def test_select_articles_by_cluster_caps_each_cluster():
     assert stats["dropped_by_cluster_cap"] == 1
 
 
+def test_select_articles_by_cluster_first_is_medoid_when_under_cap():
+    """cap 이하 군집(가장 흔한 경우)에서도 그룹 첫 번째는 대표(메도이드)여야 한다.
+
+    대표(메도이드)가 입력 순서상 0번이 아닌 조합을 골라, select_top_members의
+    early-return 분기(len(members) <= cap)가 인덱스 정렬 순서를 그대로 돌려주던
+    회귀를 실제로 잡아낸다.
+    """
+    from pipelines.news.jobs.collect_and_cluster import select_articles_by_cluster
+    from pipelines.news.transformers.clustering import build_clusters, build_tfidf, document_terms
+
+    # 이 3건은 threshold=0.35에서 한 군집으로 묶이고, 대표(메도이드)는 1번(0번이 아님)이다.
+    items = [
+        _item("삼성전자 대규모 유상증자 확정"),
+        _item("삼성전자 유상증자 결정"),
+        _item("삼성전자 유상증자 발표"),
+    ]
+
+    groups, _ = select_articles_by_cluster(
+        items, threshold=0.35, description_weight=0.4, max_per_cluster=3
+    )
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert len(group) == 3  # cap(3) 이하이므로 전부 유지 -> early-return 분기
+
+    # select_articles_by_cluster와 동일한 절차로 대표(메도이드)를 독립적으로 재계산한다
+    documents = [document_terms(item["title"], item["description"], 0.4) for item in items]
+    similarity = build_tfidf(documents).cosine_similarity()
+    [cluster] = build_clusters(similarity, threshold=0.35)
+    assert cluster.representative != 0  # 대표가 입력상 첫 번째가 아님을 전제로 검증한다
+
+    assert group[0]["title"] == items[cluster.representative]["title"]
+
+
 def test_select_articles_by_cluster_handles_empty():
     from pipelines.news.jobs.collect_and_cluster import select_articles_by_cluster
 

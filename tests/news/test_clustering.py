@@ -35,7 +35,8 @@ def test_select_top_members_returns_all_when_under_cap():
     similarity = np.identity(2)
     cluster = Cluster(members=[0, 1], representative=1, cohesion=0.4)
 
-    assert select_top_members(cluster, similarity, cap=3) == [0, 1]
+    # 군집이 cap 이하여도 반환 목록의 첫 번째는 항상 대표(메도이드)여야 한다
+    assert select_top_members(cluster, similarity, cap=3) == [1, 0]
 
 
 def test_build_clusters_groups_similar_documents():
