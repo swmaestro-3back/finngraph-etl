@@ -26,6 +26,15 @@ class NewsSettings(BaseSettings):
 
     keyword_search_batch_size: int = Field(default=50, validation_alias="KEYWORD_SEARCH_BATCH_SIZE")
 
+    search_queries: str = Field(default="특징주", validation_alias="NEWS_SEARCH_QUERIES")
+
+    cluster_threshold: float = Field(default=0.35, validation_alias="NEWS_CLUSTER_THRESHOLD")
+    cluster_description_weight: float = Field(
+        default=0.4,
+        validation_alias="NEWS_CLUSTER_DESCRIPTION_WEIGHT",
+    )
+    cluster_max_articles: int = Field(default=3, validation_alias="NEWS_CLUSTER_MAX_ARTICLES")
+
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
     anchor_url_template: str = Field(default="", validation_alias="ANCHOR_URL_TEMPLATE")
     anchor_categories: dict[int, str] = Field(
@@ -100,6 +109,10 @@ class NewsSettings(BaseSettings):
             return {int(key): str(name) for key, name in parsed.items()}
         except (TypeError, ValueError) as e:
             raise ValueError("ANCHOR_CATEGORIES의 카테고리 ID는 정수여야 합니다.") from e
+
+    def search_query_list(self) -> list[str]:
+        """콤마 구분 NEWS_SEARCH_QUERIES를 쿼리 목록으로 돌려준다."""
+        return [query.strip() for query in self.search_queries.split(",") if query.strip()]
 
 
 @lru_cache
