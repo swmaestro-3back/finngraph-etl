@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
-from pipelines.triples.models import Entity, Triplet
+import pytest
+
+pytest.importorskip(
+    "pipelines.triples.ontology.predicate_dict",
+    reason="비공개 ontology가 없는 체크아웃(CI)에서는 스킵",
+)
+
+from pipelines.triples.models import Entity, Triplet  # noqa: E402
 
 
 def _triplet(subject: str, obj: str, predicate: str = "SUPPLIES_TO") -> Triplet:
