@@ -142,22 +142,11 @@ def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
 LINK_NEWS_THEMES_SQL = text(
     """
     INSERT INTO news_themes (news_id, theme_id)
-    SELECT news_id, theme_id
-      FROM (
-        SELECT nr.news_id, ts.theme_id
-          FROM news_relations AS nr
-          JOIN stocks AS s ON s.ticker = nr.subject_code AND s.is_active
-          JOIN theme_stocks AS ts ON ts.stock_id = s.id
-         WHERE nr.subject_code IS NOT NULL
-           AND nr.extracted_at >= now() - make_interval(hours => :window_hours)
-         UNION
-        SELECT nr.news_id, ts.theme_id
-          FROM news_relations AS nr
-          JOIN stocks AS s ON s.ticker = nr.object_code AND s.is_active
-          JOIN theme_stocks AS ts ON ts.stock_id = s.id
-         WHERE nr.object_code IS NOT NULL
-           AND nr.extracted_at >= now() - make_interval(hours => :window_hours)
-      ) AS matched
+    SELECT DISTINCT nc.news_id, ts.theme_id
+      FROM news_companies AS nc
+      JOIN stocks       AS s  ON s.company_id = nc.company_id AND s.is_active
+      JOIN theme_stocks AS ts ON ts.stock_id = s.id
+     WHERE nc.created_at >= now() - make_interval(hours => :window_hours)
     ON CONFLICT (news_id, theme_id) DO NOTHING;
     """
 )
