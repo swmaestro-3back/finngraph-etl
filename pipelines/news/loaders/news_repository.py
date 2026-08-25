@@ -772,34 +772,6 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
         return items
 
 
-def fetch_triples_for_news_ids(
-    news_ids: list[int],
-) -> dict[int, list[tuple[str, str, str]]]:
-    """뉴스 id별 트리플 `(subject_name, relation, object_name)` 목록을 조회한다."""
-
-    unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
-
-    if not unique_ids:
-        return {}
-
-    query = """
-        SELECT news_id, subject_name, relation, object_name
-        FROM news_relations
-        WHERE news_id = ANY(:ids)
-        ORDER BY news_id ASC, id ASC;
-    """
-
-    triples_by_news: dict[int, list[tuple[str, str, str]]] = {}
-
-    with session_scope() as session:
-        rows = session.execute(text(query), {"ids": unique_ids}).fetchall()
-
-    for news_id, subject_name, relation, object_name in rows:
-        triples_by_news.setdefault(int(news_id), []).append((subject_name, relation, object_name))
-
-    return triples_by_news
-
-
 def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
 
     normalized = [
