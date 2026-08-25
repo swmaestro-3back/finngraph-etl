@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
+from pipelines.common.clients.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.clients.postgres import session_scope
-from pipelines.common.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.logging import get_logger
 from pipelines.companies.extractors.dart import fetch_company_profile
 from pipelines.companies.loaders.dart import (

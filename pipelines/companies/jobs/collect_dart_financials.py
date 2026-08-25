@@ -16,9 +16,9 @@ KIS 재무와 달리 "그 시점에 시장이 알고 있었는가"를 따질 수
 
 from __future__ import annotations
 
+from pipelines.common.clients.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
-from pipelines.common.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.companies.extractors.dart import (
