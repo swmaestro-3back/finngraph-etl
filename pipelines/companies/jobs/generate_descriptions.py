@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.common.dart import get_dart_client
+from pipelines.common.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.companies.extractors.dart import (
@@ -57,9 +57,19 @@ def run(limit: int | None = None) -> None:
     unchanged = 0
     failed: list[str] = []
 
+    quota_exceeded = False
+
     for company_id, name, corp_code, last_rcept_no in targets:
         try:
             receipts = fetch_periodic_report_receipts(corp_code, start, today, client=client)
+        except DartApiError as exc:
+            if is_quota_error(exc):
+                logger.warning("DART 일 호출 한도 도달 — 여기까지 하고 다음 회차가 이어받는다")
+                quota_exceeded = True
+                break
+            logger.exception("정기공시 목록 조회 실패: corp_code=%s name=%s", corp_code, name)
+            failed.append(name)
+            continue
         except Exception:
             logger.exception("정기공시 목록 조회 실패: corp_code=%s name=%s", corp_code, name)
             failed.append(name)
@@ -93,7 +103,8 @@ def run(limit: int | None = None) -> None:
         generated += 1
 
     logger.info(
-        "기업 설명 생성 완료: %d건 생성, %d건 변경없음, %d건 실패 %s",
+        "기업 설명 생성 %s: %d건 생성, %d건 변경없음, %d건 실패 %s",
+        "중단(한도)" if quota_exceeded else "완료",
         generated,
         unchanged,
         len(failed),

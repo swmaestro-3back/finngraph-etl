@@ -26,6 +26,12 @@ logger = get_logger(__name__)
 STATUS_OK = "000"
 STATUS_NO_DATA = "013"
 
+# 인증키의 일 한도 초과(020)·과다 호출 제한(021).
+QUOTA_STATUSES = frozenset({"020", "021"})
+
+# 조회 데이터 없음(013)·원문 파일 없음(014). 오류가 아니라 정상적인 결측이다.
+NO_DATA_STATUSES = frozenset({"013", "014"})
+
 
 class DartApiError(RuntimeError):
     """OpenDART가 정상(000)이 아닌 status를 돌려준 경우."""
@@ -34,6 +40,23 @@ class DartApiError(RuntimeError):
         super().__init__(f"DART API error status={status} message={message}")
         self.status = status
         self.message = message
+
+
+class QuotaExceeded(RuntimeError):
+    """OpenDART 일일 호출 한도에 걸렸다.
+
+    실패가 아니라 "여기까지 하고 다음 실행에서 이어감"이다. 재시도는 소진된 한도에 다시
+    부딪힐 뿐이고, 진행분은 청크마다 커밋돼 있으며 대상 정렬이 갱신 오래된 순이라 다음
+    회차가 멈춘 지점부터 이어받는다.
+
+    법인별로 삼키면 안 된다 — 남은 전부가 "자료 없음"처럼 지나가면서 커서만 전진한다.
+    """
+
+
+def is_quota_error(exc: DartApiError) -> bool:
+    """일 호출 한도로 인한 오류인가."""
+
+    return exc.status in QUOTA_STATUSES
 
 
 class DartClient:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
-from pipelines.common.dart import get_dart_client
+from pipelines.common.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.companies.extractors.dart import (
@@ -41,12 +41,11 @@ def run(limit: int | None = None, years: int | None = None) -> None:
     """갱신이 오래된 법인부터 DART 연간 재무를 수집한다.
 
     Args:
-        limit (int | None): 이번 회차 처리 법인 수.
+        limit (int | None): 상한. 수동 점검용이고 배치에서는 생략한다(전량).
         years (int | None): 받아올 사업연도 개수.
     """
 
     settings = get_settings()
-    batch_size = limit or settings.dart_financial_batch_size
     year_count = years or settings.dart_financial_years
 
     # 사업보고서는 결산 후 3개월쯤 뒤에 나온다. 올해분은 아직 없을 수 있어 작년부터 센다.
@@ -55,7 +54,7 @@ def run(limit: int | None = None, years: int | None = None) -> None:
 
     client = get_dart_client()
     with session_scope() as session:
-        targets = fetch_dart_financial_targets(session, batch_size)
+        targets = fetch_dart_financial_targets(session, limit)
         if not targets:
             logger.warning("DART 재무 수집 대상이 0건이다 — %s", describe_universe(session))
         unresolved = fetch_unresolved_universe(session)
@@ -77,6 +76,7 @@ def run(limit: int | None = None, years: int | None = None) -> None:
 
     total_rows = 0
     failed: list[str] = []
+    quota_exceeded = False
 
     for company_id, corp_code, fiscal_month in targets:
         financials: list[CompanyFinancial] = []
@@ -89,6 +89,18 @@ def run(limit: int | None = None, years: int | None = None) -> None:
                         fs_div,
                         client=client,
                     )
+                except DartApiError as exc:
+                    if is_quota_error(exc):
+                        quota_exceeded = True
+                        break
+                    logger.exception(
+                        "DART 재무 수집 실패: corp_code=%s year=%s fs_div=%s",
+                        corp_code,
+                        business_year,
+                        fs_div,
+                    )
+                    failed.append(f"{corp_code}:{business_year}:{fs_div}")
+                    continue
                 except Exception:
                     logger.exception(
                         "DART 재무 수집 실패: corp_code=%s year=%s fs_div=%s",
@@ -101,10 +113,23 @@ def run(limit: int | None = None, years: int | None = None) -> None:
 
                 financials.extend(build_dart_financials(company_id, rows, fs_div, fiscal_month))
 
+            if quota_exceeded:
+                break
+
+        # 한도로 끊긴 법인은 적재하지 않는다. 일부만 넣으면 updated_at 이 갱신돼 뒤로 밀리고,
+        # 못 받은 연도가 다음 한 바퀴까지 비어 있게 된다.
+        if quota_exceeded:
+            logger.warning("DART 일 호출 한도 도달 — 여기까지 하고 다음 회차가 이어받는다")
+            break
+
         if financials:
             with session_scope() as session:
                 total_rows += upsert_financials(session, financials)
 
     logger.info(
-        "DART 재무 수집 완료: %d행 적재, 실패 %d건 %s", total_rows, len(failed), failed[:10]
+        "DART 재무 수집 %s: %d행 적재, 실패 %d건 %s",
+        "중단(한도)" if quota_exceeded else "완료",
+        total_rows,
+        len(failed),
+        failed[:10],
     )

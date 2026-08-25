@@ -15,7 +15,13 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-from pipelines.common.dart import DartApiError, DartClient
+from pipelines.common.dart import (
+    NO_DATA_STATUSES,
+    QUOTA_STATUSES,
+    DartApiError,
+    DartClient,
+    QuotaExceeded,
+)
 
 DISCLOSURE_LIST_PATH = "list.json"
 
@@ -24,16 +30,7 @@ DISCLOSURE_KIND = "I"
 TARGET_REPORT_NM = "단일판매ㆍ공급계약체결"
 LIST_PAGE_COUNT = 100
 
-# 인증키의 일 한도 초과(020)·과다 호출 제한(021).
-QUOTA_STATUSES = {"020", "021"}
-# 조회 데이터 없음(013)·원문 파일 없음(014). 오류가 아니라 정상적인 결측이다.
-NO_DATA_STATUSES = {"013", "014"}
-
 _PREFIX_TAG = re.compile(r"^\[[^\]]*\]")
-
-
-class QuotaExceeded(RuntimeError):
-    """OpenDART 일일 호출 한도에 걸렸다. 진행분은 이미 적재됐고 다음 실행이 이어받는다."""
 
 
 def is_target_report(report_nm: str | None) -> bool:
