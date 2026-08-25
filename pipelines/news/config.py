@@ -52,8 +52,12 @@ class NewsSettings(BaseSettings):
         return value.strip().lower()
 
     def search_query_list(self) -> list[str]:
-        """콤마 구분 NEWS_SEARCH_QUERIES를 쿼리 목록으로 돌려준다."""
-        return [query.strip() for query in self.search_queries.split(",") if query.strip()]
+        """세미콜론 구분 NEWS_SEARCH_QUERIES를 쿼리 목록으로 돌려준다.
+
+        쿼리 자체에 콤마가 들어갈 수 있어("특징주,공급" 같은 네이버 검색식)
+        목록 구분자는 세미콜론을 쓴다.
+        """
+        return [query.strip() for query in self.search_queries.split(";") if query.strip()]
 
 
 @lru_cache
