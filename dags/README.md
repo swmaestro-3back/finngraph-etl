@@ -4,11 +4,13 @@ Airflow DAG 정의 폴더. 각 하위 폴더는 **도메인**을 나타내며, A
 
 ```
 dags/
-├── health/     # 운영 헬스체크
-├── news/       # 뉴스 수집 · 필터 · 요약
-├── stocks/     # 주가 캔들 수집 · 집계
-├── themes/     # 테마 크롤링
-└── triplets/   # 삼중항(관계) 추출
+├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
+├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
+├── health/       # 운영 상 헬스체크용
+├── news/         # 뉴스 수집 · 필터 · 요약
+├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
+├── themes/       # 테마 크롤링 · 뉴스 연결
+└── triples/      # 트리플 추출
 ```
 
 > 단, 폴더 구조는 **소스코드 정리용**이다. Airflow UI는 파일 경로가 아니라 `dag_id`와 `tags`로 DAG를 묶어 나열한다.
@@ -17,24 +19,26 @@ dags/
 
 | 도메인 | 파일 | `dag_id` | `tags` | 스케줄 |
 |--------|------|----------|--------|--------|
+| companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | Asset ← `etl://stocks/master` |
 | companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 3 * * *` (03시) |
 | companies | `companies/kis_financials.py` | `companies_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
 | companies | `companies/descriptions.py` | `companies_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
-| companies | `companies_sync_master.py` | `companies_sync_master` | `companies`, `master` | Asset ← `etl://stocks/master` |
-| health | `health/healthcheck.py` | `health_check` | `health` | 수동 |
+| disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
+| disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
+| health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/collect_headline.py` | `news_collect_headline` | `news` | `*/30 * * * *` (30분) |
 | news | `news/collect_keyword_search.py` | `news_collect_keyword_search` | `news` | `0 * * * *` (매시) |
 | news | `news/filter_meaningless.py` | `news_filter_meaningless` | `news` | Asset ← `etl://news/collected` |
 | news | `news/summarize.py` | `news_summarize` | `news` | Asset ← `etl://news/relations` |
-| stocks | `stocks_sync_master.py` | `stocks_sync_master` | `stocks`, `master` | `0 8 * * 1-5` (평일 08시) |
+| stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/weekly_dividends.py` | `stocks_weekly_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/daily_backfill.py` | `stocks_daily_backfill` | `stocks` | 수동 |
 | stocks | `stocks/intraday_1m.py` | `stocks_intraday_1m` | `stocks` | **정지** (분봉 수집 제외) |
-| themes | `themes/etl.py` | `themes_etl` | `themes` | `0 0 * * *` (자정) |
+| themes | `themes/refresh.py` | `themes_refresh` | `themes` | `0 0 * * *` (자정) |
 | themes | `themes/link_news.py` | `themes_link_news` | `themes` | Asset ← `etl://news/relations` |
-| triplets | `triplets/etl.py` | `triplets_etl` | `triplets` | Asset ← `etl://news/filtered` |
+| triples | `triples/extract.py` | `triples_extract` | `triples` | Asset ← `etl://news/filtered` |
 
 ## Asset 의존
 
@@ -51,13 +55,33 @@ companies_kis_financials ────► etl://companies/financials ┘      (PE
   (평일 19시)
 
 news_collect_* ──► etl://news/collected ──► news_filter_meaningless
-                                              └─► etl://news/filtered ──► triplets_etl
+                                              └─► etl://news/filtered ──► triples_extract
                                                     └─► etl://news/relations ──► news_summarize
                                                                               └─► themes_link_news
 ```
 
 `stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
 기동한다. PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 시세와 재무가 모두 필요하다.
+
+## 독립실행 Crons
+
+Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 DAG들.
+
+```mermaid
+flowchart TB
+    CDP["companies_dart_pipeline<br/><code>0 3 * * *</code>"]
+    CDE["companies_descriptions<br/><code>0 4 * * 6</code>"]
+    SWD["stocks_weekly_dividends<br/><code>0 6 * * 6</code>"]
+    SDB["stocks_daily_backfill<br/>수동"]
+    SI1["stocks_intraday_1m<br/>정지"]
+    TR["themes_refresh<br/><code>0 0 * * *</code>"]
+    HC["health_check<br/>수동"]
+    DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
+    DBF["disclosures_backfill_supply_contracts<br/>수동"]
+
+    classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
+    class CDP,CDE,SWD,SDB,SI1,TR,HC,DCD,DBF cron
+```
 
 ## `dag_id`
 
@@ -92,7 +116,6 @@ news_collect_* ──► etl://news/collected ──► news_filter_meaningless
 
 ### Tag 관련 규칙
 - **태그는 도메인(폴더명) 하나만 사용한다.**
-  - `["news"]`, `["stocks"]`, `["themes"]`, `["triplets"]`, `["health"]`
-- 세부 동작명(`headline`, `summarize` 등)은 **넣지 않는다.**
-  - 이미 `dag_id`에 담겨 있어 중복이고, 한 번만 쓰이는 태그가 늘어나 UI만 지저분해진다.
-- 태그는 **여러 DAG이 공유하며 그것으로 걸러 볼 가치가 있을 때만** 의미가 있다. 도메인이 바로 그 축이다.
+  - `["news"]`, `["stocks"]`, `["themes"]`, `["triples"]`, `["health"]`, `["disclosures"]`, `["companies"]`
+- 태그는 **여러 DAG가 공유하며 사용하는 것이므로** 세부 동작명은 넣지 않는다.
+  - 세부 동작명은 이미 `dag_id`에 담겨 있어 중복이고, 한 번만 쓰이는 태그가 늘어나 UI만 지저분해지기 때문이다.

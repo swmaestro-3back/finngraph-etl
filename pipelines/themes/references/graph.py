@@ -51,7 +51,6 @@ async def fetch_company_info_by_tickers(tickers: list[str]) -> dict[str, str]:
         """
 UNWIND $tickers AS ticker
 MATCH (c:Company {ticker: ticker})
-WHERE c:KOSPI OR c:KOSDAQ
 RETURN c.ticker AS ticker, c.name AS name
 """,
         parameters={"tickers": tickers},

@@ -52,12 +52,23 @@ CREATE INDEX IF NOT EXISTS company_aliases_alias_idx   ON company_aliases (alias
 CREATE INDEX IF NOT EXISTS company_aliases_company_idx ON company_aliases (company_id);
 
 -- ── company_financials ──────────────────────────────────────────────────────
+--
+-- period_type 에 'QC' 가 있다. KIS 분기 재무는 **연초부터의 누적**이라 그대로 쓰면
+-- 1분기 EPS 를 1년치로 나누게 되고 PER 이 최대 9배 부푼다(2026-08-18 네이버·토스 11종목
+-- 대조 확인). 누적은 QC 로 담고 분기 개별값 Q 는 차분해서 만든다.
+--
+--     A    연간
+--     QC   분기 누적   ← KIS 원본
+--     Q    분기 개별   ← QC 에서 차분
+--
+-- eps·bps 는 PER·PBR 의 분모라 없으면 밸류에이션이 성립하지 않는다.
+-- KIS 재무비율 API 가 직접 주는 값이라 계산하지 않는다.
 CREATE TABLE IF NOT EXISTS company_financials (
     id                BIGSERIAL PRIMARY KEY,
     company_id        BIGINT NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
     source            TEXT NOT NULL,
     fiscal_yymm       TEXT NOT NULL,
-    period_type       TEXT NOT NULL,   -- 'Q' | 'A'
+    period_type       TEXT NOT NULL,   -- 'A' | 'QC' | 'Q'
     fs_div            TEXT,            -- 'CFS' | 'OFS'
     disclosed_at      DATE,
     rcept_no          TEXT,
@@ -65,12 +76,43 @@ CREATE TABLE IF NOT EXISTS company_financials (
     operating_income  BIGINT,
     net_income        BIGINT,
     roe               NUMERIC,
+    eps               NUMERIC,
+    bps               NUMERIC,
     total_assets      BIGINT,
     total_liabilities BIGINT,
     total_equity      BIGINT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (company_id, fiscal_yymm, period_type, fs_div, source)
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 유니크에 rcept_no 를 넣는다. DART 정정공시는 같은 회계기간에 접수번호만 다른 행으로
+-- 오는데, 접수번호가 키에 없으면 정정본이 원본을 덮어써 이력이 사라진다.
+-- KIS 행은 접수번호가 없으므로 COALESCE 로 빈 문자열을 대신 넣는다.
+-- 표현식을 쓰므로 테이블 제약(UNIQUE)이 아니라 인덱스로 만든다.
+--
+-- 이 베이스라인 이전 버전으로 만들어진 DB 에는 인라인 UNIQUE 제약이 남아 있다. 제약 이름은
+-- Postgres 가 63자로 잘라 만들기 때문에 상수로 적으면 빗나간다(끝이 `fs_di_key` 로 잘린다).
+-- 카탈로그에서 찾아 지운다. 신규 DB 에서는 아무 일도 하지 않는다.
+DO $$
+DECLARE
+    con_name TEXT;
+BEGIN
+    SELECT conname INTO con_name
+      FROM pg_constraint
+     WHERE conrelid = 'company_financials'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) =
+           'UNIQUE (company_id, fiscal_yymm, period_type, fs_div, source)';
+    IF con_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE company_financials DROP CONSTRAINT %I', con_name);
+    END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS company_financials_uk
+    ON company_financials (company_id, source, fs_div, fiscal_yymm, period_type, COALESCE(rcept_no, ''));
+
+CREATE INDEX IF NOT EXISTS company_financials_lookup_idx
+    ON company_financials (company_id, period_type, fiscal_yymm DESC);
 
 -- ── stocks ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS stocks (
@@ -151,6 +193,9 @@ CREATE TABLE IF NOT EXISTS investor_flows (
     insurance_net   BIGINT,
     bank_net        BIGINT,
     etc_corp_net    BIGINT,
+    -- 재수집 시 갱신 시각을 남긴다. 외국인 보유율(foreign_ratio)은 순매수와 원천이 달라
+    -- (현재가 조회 스냅샷) 최신 거래일 행에만 채워지는데, 언제 채워졌는지 알아야 한다.
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (stock_id, trade_date)
 );
 
@@ -160,6 +205,7 @@ CREATE TABLE IF NOT EXISTS dividends (
     divi_kind   TEXT   NOT NULL,
     dps         NUMERIC,
     pay_date    DATE,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (listing_id, record_date, divi_kind)
 );
 
@@ -283,3 +329,66 @@ VALUES
     ('소송'), ('국유화'),
     ('특징주')
 ON CONFLICT (keyword) DO NOTHING;
+
+-- ── disclosures ─────────────────────────────────────────────────────────────
+--
+-- DART 단일판매ㆍ공급계약체결 공시(정정 포함)를 접수번호 단위로 적재한다. 지금은 이 한
+-- 종류만 수집하지만 report_nm 이 컬럼이라 다른 정형 공시 유형도 스키마 변경 없이 담을 수
+-- 있다.
+--
+-- **자주 조회하는 항목은 일반 컬럼으로 승격했다.** 계약 구분·계약명·계약상대(원문 표기와
+-- 역매칭 결과)·계약 기간이 그것으로, 승격된 항목은 fields 에서 빠진다. 나머지 —
+-- 계약금액류ㆍ조건ㆍ유보ㆍ정정 블록ㆍ역매칭 부가 정보(counterparty_company_id/match_rule)
+-- — 는 fields JSONB 에 남는다. 서식이 시장(KOSPI/KOSDAQ)과 정정 여부에 따라 갈리고 공시
+-- 유형이 늘면 집합 자체가 달라지기 때문이다.
+--
+-- **날짜 컬럼(start_date/end_date/order_date)은 ISO 형식일 때만 채워진다.** 원문에는
+-- "계약 종료시" 같은 비정형 기재가 있어, 그런 값은 컬럼을 NULL 로 두고 원문 텍스트를
+-- fields 의 같은 키에 남긴다 — 타입과 원문 보존을 맞바꾸지 않는다.
+--
+-- **company_id 는 제출사(공시를 낸 법인)다.** corp_code 는 목록 API 가 항상 주지만 신규
+-- 법인이 corp_code 동기화를 기다리는 동안 companies 에 없을 수 있어 NULL 을 허용한다.
+--
+-- **원문 HTML 은 저장하지 않는다.** 파싱은 메모리에서만 하고 결과만 남긴다. 파서를 고치면
+-- 해당 rcept_no 를 지우고 백필을 다시 돌려 ON CONFLICT 로 채운다. rcept_no UNIQUE 가
+-- 수집 재개 상태 그 자체다 — 이미 있는 접수번호는 원문을 다시 받지 않는다.
+CREATE TABLE IF NOT EXISTS disclosures (
+    id                     BIGSERIAL PRIMARY KEY,
+    rcept_no               TEXT NOT NULL,
+    corp_code              TEXT NOT NULL,
+    company_id             BIGINT REFERENCES companies (id),
+    ticker                 VARCHAR(20),
+    corp_cls               TEXT,             -- 'KOSPI' | 'KOSDAQ' | 'KONEX' | 'UNLISTED'
+    report_nm              TEXT NOT NULL,
+    is_correction          BOOLEAN NOT NULL DEFAULT false,
+    rcept_dt               DATE NOT NULL,
+    flr_nm                 TEXT,
+    link                   TEXT NOT NULL,
+    contract_type          TEXT,             -- 판매ㆍ공급계약 구분
+    contract_name          TEXT,             -- 체결계약명
+    counterparty           TEXT,             -- 계약상대 원문 표기 (자유 텍스트)
+    counterparty_corp_name TEXT,             -- 역매칭된 법인명 (companies.name)
+    counterparty_corp_code TEXT,             -- 역매칭된 DART 고유번호
+    counterparty_ticker    VARCHAR(20),      -- 역매칭된 종목 단축코드 (상장사만)
+    start_date             DATE,             -- 계약 시작일 (ISO 기재만)
+    end_date               DATE,             -- 계약 종료일 (ISO 기재만)
+    order_date             DATE,             -- 계약(수주)일자 (ISO 기재만)
+    fields                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+    meta                   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS disclosures_rcept_no_uk ON disclosures (rcept_no);
+CREATE INDEX IF NOT EXISTS disclosures_company_id_idx ON disclosures (company_id);
+CREATE INDEX IF NOT EXISTS disclosures_rcept_dt_idx ON disclosures (rcept_dt);
+CREATE INDEX IF NOT EXISTS disclosures_report_nm_idx ON disclosures (report_nm);
+
+-- 계약상대 역방향 조회("누가 이 회사에 공급하나")용. 값이 있는 행만 담는 부분 인덱스라
+-- 크기가 작다. 매칭 실패(익명 기재ㆍ해외법인ㆍ모호)는 자연히 빠진다.
+-- counterparty_company_id 는 승격 대상이 아니라 fields 에 남아 표현식 인덱스를 유지한다.
+CREATE INDEX IF NOT EXISTS disclosures_counterparty_corp_code_idx
+  ON disclosures (counterparty_corp_code) WHERE counterparty_corp_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS disclosures_counterparty_company_idx
+  ON disclosures (((fields ->> 'counterparty_company_id')::bigint))
+  WHERE fields ->> 'counterparty_company_id' IS NOT NULL;
