@@ -32,7 +32,7 @@ async def fetch_theme_stock_map() -> dict[str, set[str]]:
         """
 MATCH (t:Theme)
 OPTIONAL MATCH (c:Company)-[:BELONGS_TO]->(t)
-WHERE c:KOSPI OR c:KOSDAQ
+WHERE c.is_listed
 RETURN t.name AS theme_name, coalesce(t.description, '') AS description,
        collect(c.ticker) AS tickers
 """

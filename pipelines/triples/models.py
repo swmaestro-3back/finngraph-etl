@@ -2,46 +2,53 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
-EntityLabel = Literal[
-    "COMPANY",
-    "GOVERNMENT",
-    "COUNTRY",
-    "COMMODITY",
-    "PRODUCT",
-]
+# ==============================================================================
+# Literals
+# ==============================================================================
 
-# 확정된 사실만 최종 트리플로 남기기 위한 시제·양태 분류.
-TenseLabel = Literal[
-    # 과거 또는 현재 확정 사실형
+# Temporal and modal status of a relation (UI labels: 확정 / 예정 / 관측).
+# Modality is the stance the text takes: fact, conjecture, possibility, intent.
+Tense = Literal[
     "past_or_present_fact",
-    # 미래 계획형
     "future_or_planned",
-    # 미래 가능성형
     "modal_possibility",
 ]
 
+# Polarity of a relation (UI labels: 성립 / 부인 / 종료).
+# Polarity says whether the relation holds, is denied outright, or has ended.
+Polarity = Literal[
+    "affirmed",  # the relation holds
+    "denied",  # the relation is denied outright
+    "terminated",  # the relation held once and has since been cancelled
+]
 
-# NER
+
+# ==============================================================================
+# EntityExtractor
+# ==============================================================================
+
+
 class Entity(BaseModel):
-    text: str = Field(description="개체명 표면형")
-    label: EntityLabel = Field(description="개체명 태그")
+    """An anchor-slot value: a company that matched the gazetteer."""
+
+    text: str = Field(description="기업 표면형 (gazetteer canonical)")
 
 
-# LLM이 NER 결과와 무관하게 subject/object/item에 라벨을 지어낼 수 있으므로
-# 할루시네이션을 방지용 모델 생성
-# 추후 Label 매핑해서 반환
+# ==============================================================================
+# RelationExtractor
+# ==============================================================================
+
+
 class RawRelation(BaseModel):
-    # Bedrock structured output(json_schema)은 모든 object 스키마에
-    # additionalProperties:false를 요구한다. extra="forbid"를 주면 Pydantic이
-    # model_json_schema()에 이 키를 자동으로 넣어준다.
-    model_config = ConfigDict(extra="forbid")
+    """
+    This is a model to prevent hallucination when creating labels by model itself,
+    not refering to NER results.
+    The field declaration is intended, just to make model go through CoT when giving out the model
+        source sentence first, then triples, finally predicate
+    """
 
-    # source_sentence/clause를 predicate보다 먼저 선언: structured output은 필드 선언
-    # 순서대로 채워지므로, "근거 문장을 먼저 찾고 → 절로 재구성하고 → 그 다음에 술어를 고르는"
-    # 순서가 프레임마다 강제된다. 기존 전역 clauses 필드의 CoT 역할을 프레임 단위로 옮긴 것.
-    # source_sentence는 이후 로직에서 원문 대조로 검증한다.
     source_sentence: str = Field(
         description=(
             "The sentence from the original text that expresses this relationship, "
@@ -61,15 +68,6 @@ class RawRelation(BaseModel):
     predicate: str = Field(
         description="Must be strictly selected from the registered_predicates list."
     )
-    is_negated: bool = Field(
-        description="True if the relationship involves a negative expression, otherwise False."
-    )
-    tense: TenseLabel = Field(
-        description=(
-            "Temporal/modal status of the relationship: "
-            "past_or_present_fact, future_or_planned, or modal_possibility."
-        )
-    )
     subject: str = Field(description="Must exactly match an entity from the provided NER results.")
     object: str = Field(description="Must exactly match an entity from the provided NER results.")
     item: str | None = Field(
@@ -83,8 +81,8 @@ class RawRelation(BaseModel):
 
 
 class RawRelationList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+    # List of RawRelations above
+    # Just for `structured_output` since it requires pydantic BaseModel type
     frames: list[RawRelation] = Field(
         description=(
             "List of extracted frames, each containing source_sentence, clause, subject, "
@@ -95,45 +93,110 @@ class RawRelationList(BaseModel):
     )
 
 
-# Relation (관계 후보 프레임)
-class RelationFrame(BaseModel):
+class CandidateFrame(BaseModel):
+    # The Final Result of RelationExtractor
+    # This holds datas that needs to be processed by FrameAnnotator
     subject: Entity = Field(
         description="Must exactly match an entity from the provided NER results."
     )
     object: Entity = Field(
         description="Must exactly match an entity from the provided NER results."
     )
-    # PREDICATE_DICT_NARY에서 3번째 argument(item)를 등록한 술어(공급하다 등)에만 채워지는
-    # 선택적 필드. 해당 술어라도 본문에 품목이 명시되지 않으면 None으로 남는다.
-    item: Entity | None = Field(
+    item: str | None = Field(
         default=None,
-        description="Only set for predicates with a third 'item' argument in PREDICATE_DICT_NARY.",
+        description=(
+            "Free-text product phrase copied verbatim from the article. Only set for "
+            "predicates with a third 'item' argument in PREDICATE_DICT."
+        ),
     )
     predicate: str = Field(
         description="Must be strictly selected from the registered_predicates list."
     )
-    is_negated: bool = Field(
-        description="True if the relationship involves a negative expression, otherwise False."
+
+    # Always populated since only frames passing verbatim validation
+    # (whitespace-normalized substring match) are generated.
+    source_sentence: str = Field(
+        description="The verbatim sentence from the source text that expresses this relationship.",
     )
-    tense: TenseLabel = Field(
+
+    # Minimal clause matching predicate direction
+    # Keeps directional inference intact to prevent predicate misselection.
+    clause: str = Field(
+        description=(
+            "The relationship restated as a single clause matching the predicate's direction."
+        ),
+    )
+
+
+# ==============================================================================
+# FrameAnnotator
+# ==============================================================================
+
+
+class RawAnnotation(BaseModel):
+    # The field declaration is intended, like RawRelation model
+    # first generates evidence, then determine polarity and tense
+    frame_index: int = Field(
+        description="The 0-based index of the frame being annotated, copied from the input list."
+    )
+    subject: str = Field(description="Copy the subject of the input frame back EXACTLY as given.")
+    predicate: str = Field(
+        description="Copy the predicate of the input frame back EXACTLY as given."
+    )
+    object: str = Field(description="Copy the object of the input frame back EXACTLY as given.")
+    evidence: str = Field(
+        description=(
+            "A single self-contained Korean sentence that a reader can understand on its own: "
+            "resolve pronouns to entity names, restore the omitted subject, and pull in the "
+            "time, condition, and attribution stated elsewhere in the article. "
+            "Never add facts not in the text."
+        )
+    )
+    polarity: Polarity = Field(
+        description="Polarity of the relationship: affirmed, denied, or terminated."
+    )
+    tense: Tense = Field(
         description=(
             "Temporal/modal status of the relationship: "
             "past_or_present_fact, future_or_planned, or modal_possibility."
         )
     )
-    # 이 프레임의 근거가 된 원문 문장 (provenance). 원문 대조 검증(공백 정규화 후
-    # substring 매칭)을 통과한 프레임만 생성되므로 항상 채워진다.
-    source_sentence: str = Field(
-        description="The verbatim sentence from the source text that expresses this relationship.",
+
+
+class RawAnnotationList(BaseModel):
+    # List of RawAnnotations above
+    # Just for `structured_output` since it requires pydantic BaseModel type
+    annotations: list[RawAnnotation] = Field(
+        description="One annotation per input frame, in the same order as the input list."
     )
 
 
-# Triple (확정 트리플)
-class Triple(BaseModel):
+# A relation frame that has been through FrameAnnotator.
+class RelationFrame(CandidateFrame):
+    # Evidence with context restored, so one line reads on its own. It is generated, so it
+    # cannot be matched against the source; grounding checks surface forms and length instead.
+    evidence: str = Field(
+        description=(
+            "A self-contained Korean sentence describing the relationship with restored context."
+        ),
+    )
+    polarity: Polarity = Field(description="affirmed / denied / terminated")
+    tense: Tense = Field(description="past_or_present_fact / future_or_planned / modal_possibility")
+
+
+# ==============================================================================
+# TripletBuilder
+# ==============================================================================
+
+
+class Triplet(BaseModel):
     subject: Entity = Field(description="주체")
     predicate: str = Field(description="술어 원형")
     object: Entity = Field(description="객체")
-    item: Entity | None = Field(
-        default=None, description="품목 (3rd Argument가 필수적인 술어에서만 채워짐)"
+    item: str | None = Field(
+        default=None, description="원문 품목 구 (3rd Argument가 필수적인 술어에서만 채워짐)"
     )
     source_sentence: str = Field(description="관계의 근거가 된 원문 문장 (provenance)")
+    evidence: str = Field(description="맥락이 복원된 자립적 근거 문장 (UI 노출용)")
+    polarity: Polarity = Field(description="affirmed / denied / terminated")
+    tense: Tense = Field(description="past_or_present_fact / future_or_planned / modal_possibility")

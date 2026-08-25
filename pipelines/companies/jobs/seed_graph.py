@@ -1,4 +1,4 @@
-"""task: seed_graph — 활성 보통주를 Neo4j Company 노드로 시드한다.
+"""task: seed_graph — companies 법인을 Neo4j Company 노드로 시드한다.
 
 테마 검증·적재와 트리플 code 채움이 이 시드를 전제로 한다.
 
@@ -13,7 +13,7 @@ import asyncio
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.companies.extractors.listed_stocks import fetch_listed_common_stocks
+from pipelines.companies.extractors.listed_stocks import fetch_companies
 from pipelines.companies.loaders.neo4j import seed_graph_companies
 
 logger = get_logger(__name__)
@@ -26,12 +26,12 @@ async def _seed(rows) -> int:
 
 def run() -> None:
     with session_scope() as session:
-        rows = fetch_listed_common_stocks(session)
+        rows = fetch_companies(session)
 
     seeded = asyncio.run(_seed(rows))
 
     logger.info(
-        "Neo4j 상장사 시드 결과: 원천(활성 보통주) %d개, 그래프 내 ticker 보유 %d개",
+        "Neo4j 상장사 시드 결과: 원천(companies) %d개, 그래프 내 ticker 보유 %d개",
         len(rows),
         seeded,
     )

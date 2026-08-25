@@ -14,14 +14,23 @@ from typing import Any
 from pipelines.common.config import get_settings
 
 
+def ensure_bedrock_token() -> None:
+    """Settings의 bearer 토큰을 env로 주입한다.
+
+    boto3 기반 클라이언트뿐 아니라 langchain-aws(ChatBedrockConverse)도 env의
+    AWS_BEARER_TOKEN_BEDROCK을 읽으므로, Bedrock 클라이언트 생성 전에 호출한다.
+    """
+    token = get_settings().aws_bearer_token_bedrock
+    if token:
+        os.environ.setdefault("AWS_BEARER_TOKEN_BEDROCK", token)
+
+
 @lru_cache
 def get_bedrock_client(region: str, timeout: int) -> Any:
     import boto3
     from botocore.config import Config
 
-    token = get_settings().aws_bearer_token_bedrock
-    if token:
-        os.environ.setdefault("AWS_BEARER_TOKEN_BEDROCK", token)
+    ensure_bedrock_token()
 
     return boto3.client(
         "bedrock-runtime",
