@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.loaders.news_repository import (
+from pipelines.news.loaders.postgres import (
     fetch_unprocessed_triple_news_items,
     fetch_unsummarized_news_items,
     mark_triple_extraction_result,
@@ -87,7 +87,7 @@ def test_only_relation_extracted_news_is_summarize_target(news_row):
 
 
 def test_assign_cluster_representatives():
-    from pipelines.news.loaders.news_repository import assign_cluster_representatives
+    from pipelines.news.loaders.postgres import assign_cluster_representatives
 
     marker = uuid.uuid4().hex
     with session_scope() as session:

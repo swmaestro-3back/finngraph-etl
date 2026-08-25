@@ -15,7 +15,7 @@ from pipelines.news.extractors.search_collector import (
     validate_search_settings,
 )
 from pipelines.news.extractors.text_fetcher import enrich_items_with_article_body
-from pipelines.news.loaders.news_repository import (
+from pipelines.news.loaders.postgres import (
     assign_cluster_representatives,
     filter_new_news_by_db,
     has_article_body,

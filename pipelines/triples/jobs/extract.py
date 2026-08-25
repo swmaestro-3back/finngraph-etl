@@ -5,7 +5,7 @@ from typing import Any
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
-from pipelines.news.loaders.news_repository import (
+from pipelines.news.loaders.postgres import (
     fetch_unprocessed_triple_news_items,
     mark_triple_extraction_result,
 )
