@@ -8,8 +8,6 @@ import requests
 from pipelines.news.config import get_news_settings
 from pipelines.news.utils.text_utils import get_printable_text
 
-SOURCE_TYPE_KEYWORD_SEARCH = "keyword_search"
-
 
 def validate_search_settings() -> None:
     settings = get_news_settings()
@@ -33,8 +31,6 @@ def build_request_headers() -> dict[str, str]:
 def map_search_item_to_article(
     raw_item: dict[str, Any],
     keyword: str = "",
-    keyword_id: int | None = None,
-    source_type: str = SOURCE_TYPE_KEYWORD_SEARCH,
 ) -> dict[str, Any]:
 
     title = get_printable_text(raw_item.get("title", ""))
@@ -50,9 +46,7 @@ def map_search_item_to_article(
         "originallink": originallink,
         "pubDate": pub_date,
         "pubLabel": "news",
-        "_source_type": source_type,
         "_search_keyword": keyword,
-        "_search_keyword_ids": [keyword_id] if keyword_id else [],
     }
 
 
@@ -99,11 +93,9 @@ def fetch_search_news_page(
 
 def iter_search_news_pages(
     keyword: str,
-    keyword_id: int | None = None,
     max_pages: int | None = None,
     display: int | None = None,
     sort: str | None = None,
-    source_type: str = SOURCE_TYPE_KEYWORD_SEARCH,
     wait_seconds: int = 10,
 ) -> Iterator[list[dict[str, Any]]]:
 
@@ -146,8 +138,6 @@ def iter_search_news_pages(
                 item = map_search_item_to_article(
                     raw_item=raw_item,
                     keyword=keyword,
-                    keyword_id=keyword_id,
-                    source_type=source_type,
                 )
 
                 if not item["title"] or not item["link"]:
@@ -172,22 +162,18 @@ def iter_search_news_pages(
 
 def search_news(
     keyword: str,
-    keyword_id: int | None = None,
     max_pages: int | None = None,
     display: int | None = None,
     sort: str | None = None,
-    source_type: str = SOURCE_TYPE_KEYWORD_SEARCH,
 ) -> list[dict[str, Any]]:
 
     items: list[dict[str, Any]] = []
 
     for page_items in iter_search_news_pages(
         keyword=keyword,
-        keyword_id=keyword_id,
         max_pages=max_pages,
         display=display,
         sort=sort,
-        source_type=source_type,
     ):
         items.extend(page_items)
 
