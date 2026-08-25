@@ -465,11 +465,9 @@ def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> d
 
 def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
     """
-    Triple ETL에서 사용
-    트리플관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
-
-    필터링되어 유효한 뉴스라고 판별난 is_material=True
-    + 트리플추출 안된 것 relation_extracted IS NULL
+    Triple ETL에서 사용.
+    삼중항 추출이 아직 시도되지 않은(is_processed=FALSE) 뉴스를 조회한다.
+    추출 중 예외가 난 뉴스는 FALSE로 남아 다음 런에서 자동 재시도된다.
     """
 
     query = """
@@ -477,8 +475,7 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
             id,
             text
         FROM news
-        WHERE relation_extracted IS NULL
-          AND is_material = TRUE
+        WHERE is_processed = FALSE
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
         ORDER BY id ASC
@@ -491,12 +488,13 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
         return [{"news_id": int(news_id), "text": news_text} for news_id, news_text in rows]
 
 
-def mark_news_relation_extracted(
+def mark_triple_extraction_result(
     has_triples_ids: list[int], no_triples_ids: list[int]
 ) -> dict[str, int]:
     """
-    Triple ETL에서 호출
-    트리플관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
+    Triple ETL에서 호출.
+    삼중항 추출을 시도한 뉴스의 is_processed를 TRUE로 올리고,
+    삼중항 존재 여부를 relation_extracted에 마킹한다.
     """
 
     unique_true = sorted({int(news_id) for news_id in has_triples_ids if news_id})
@@ -511,7 +509,8 @@ def mark_news_relation_extracted(
                 text(
                     """
                     UPDATE news
-                    SET relation_extracted = TRUE
+                    SET is_processed = TRUE,
+                        relation_extracted = TRUE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -523,7 +522,8 @@ def mark_news_relation_extracted(
                 text(
                     """
                     UPDATE news
-                    SET relation_extracted = FALSE
+                    SET is_processed = TRUE,
+                        relation_extracted = FALSE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -531,6 +531,10 @@ def mark_news_relation_extracted(
             )
 
     return {"true_count": len(unique_true), "false_count": len(unique_false)}
+
+
+# Task 7(extract job 개편)에서 제거 예정인 하위호환 alias
+mark_news_relation_extracted = mark_triple_extraction_result
 
 
 def find_existing_links(links: list[str]) -> set[str]:
@@ -745,7 +749,7 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
             title,
             text
         FROM news
-        WHERE relation_extracted IS NOT NULL
+        WHERE relation_extracted = TRUE
           AND (summary IS NULL OR BTRIM(summary) = '')
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
@@ -885,3 +889,35 @@ def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
     logging.info(f"요약 저장 완료: {saved_count}개")
 
     return {"saved_count": saved_count}
+
+
+def assign_cluster_representatives(groups: list[list[int]]) -> int:
+    """클러스터 그룹별로 멤버 전원의 cluster_rep_news_id를 대표 뉴스 id로 기록한다.
+
+    각 그룹의 첫 번째 id가 대표이며, 대표 자신도 자기 id를 가리킨다 (단독 기사 포함).
+    갱신된 행 수를 반환한다.
+    """
+
+    updated_count = 0
+
+    with session_scope() as session:
+        for group in groups:
+            member_ids = sorted({int(news_id) for news_id in group if news_id})
+
+            if not member_ids:
+                continue
+
+            rep_id = int(group[0])
+            result = session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET cluster_rep_news_id = :rep_id
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"rep_id": rep_id, "ids": member_ids},
+            )
+            updated_count += result.rowcount or 0
+
+    return updated_count
