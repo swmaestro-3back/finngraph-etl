@@ -315,161 +315,11 @@ def save_news_items(
         }
 
 
-def fetch_recent_news_items(limit: int = 50) -> list[dict[str, Any]]:
-
-    body_filter_sql = "WHERE text IS NOT NULL AND BTRIM(text) <> ''"
-
-    query = f"""
-        SELECT
-            id,
-            title,
-            summary,
-            text,
-            link,
-            originallink,
-            published_at
-        FROM news
-        {body_filter_sql}
-        ORDER BY id DESC
-        LIMIT :limit;
-    """
-
-    with session_scope() as session:
-        rows = session.execute(text(query), {"limit": limit}).fetchall()
-
-        items = []
-
-        for row in rows:
-            (
-                news_id,
-                title,
-                summary,
-                news_text,
-                link,
-                originallink,
-                published_at,
-            ) = row
-
-            item = {
-                "_news_id": news_id,
-                "title": title or "",
-                "description": summary or "",
-                "_text": news_text or "",
-                "link": link or "",
-                "originallink": originallink or "",
-                "pubDate": (
-                    published_at.strftime("%a, %d %b %Y %H:%M:%S %z") if published_at else ""
-                ),
-            }
-
-            items.append(item)
-
-        return items
-
-
-def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
-
-    query = """
-        SELECT
-            id,
-            title,
-            summary,
-            text,
-            link,
-            originallink,
-            published_at
-        FROM news
-        WHERE is_material IS NULL
-          AND text IS NOT NULL
-          AND BTRIM(text) <> ''
-        ORDER BY id ASC
-        LIMIT :limit;
-    """
-
-    with session_scope() as session:
-        rows = session.execute(text(query), {"limit": limit}).fetchall()
-
-        items = []
-
-        for row in rows:
-            (
-                news_id,
-                title,
-                summary,
-                news_text,
-                link,
-                originallink,
-                published_at,
-            ) = row
-
-            items.append(
-                {
-                    "_news_id": news_id,
-                    "title": title or "",
-                    "description": summary or "",
-                    "_text": news_text or "",
-                    "link": link or "",
-                    "originallink": originallink or "",
-                    "pubDate": (
-                        published_at.strftime("%a, %d %b %Y %H:%M:%S %z") if published_at else ""
-                    ),
-                }
-            )
-
-        return items
-
-
-def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> dict[str, int]:
-
-    unique_kept = sorted({int(news_id) for news_id in kept_ids if news_id})
-    unique_dropped = sorted({int(news_id) for news_id in dropped_ids if news_id})
-
-    if not unique_kept and not unique_dropped:
-        logging.info("판정 결과 기록 대상이 없습니다.")
-        return {"kept_count": 0, "dropped_count": 0}
-
-    with session_scope() as session:
-        if unique_kept:
-            session.execute(
-                text(
-                    """
-                    UPDATE news
-                    SET is_material = TRUE
-                    WHERE id = ANY(:ids);
-                    """
-                ),
-                {"ids": unique_kept},
-            )
-
-        if unique_dropped:
-            session.execute(
-                text(
-                    """
-                    UPDATE news
-                    SET is_material = FALSE
-                    WHERE id = ANY(:ids);
-                    """
-                ),
-                {"ids": unique_dropped},
-            )
-
-    result = {"kept_count": len(unique_kept), "dropped_count": len(unique_dropped)}
-
-    logging.info(
-        f"material 판정 기록 완료: 유지 {result['kept_count']}개, "
-        f"소프트삭제 {result['dropped_count']}개"
-    )
-
-    return result
-
-
 def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
     """
-    Triple ETL에서 사용
-    트리플관계 추출이 아직 진행되지 않아, relation_extracted값이 NULL인 뉴스들을 조회
-
-    필터링되어 유효한 뉴스라고 판별난 is_material=True
-    + 트리플추출 안된 것 relation_extracted IS NULL
+    Triple ETL에서 사용.
+    삼중항 추출이 아직 시도되지 않은(is_processed=FALSE) 뉴스를 조회한다.
+    추출 중 예외가 난 뉴스는 FALSE로 남아 다음 런에서 자동 재시도된다.
     """
 
     query = """
@@ -477,8 +327,7 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
             id,
             text
         FROM news
-        WHERE relation_extracted IS NULL
-          AND is_material = TRUE
+        WHERE is_processed = FALSE
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
         ORDER BY id ASC
@@ -491,12 +340,13 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
         return [{"news_id": int(news_id), "text": news_text} for news_id, news_text in rows]
 
 
-def mark_news_relation_extracted(
+def mark_triple_extraction_result(
     has_triples_ids: list[int], no_triples_ids: list[int]
 ) -> dict[str, int]:
     """
-    Triple ETL에서 호출
-    트리플관계 추출 여부에 따른 BOOLEAN값을 news 테이블의 relation_extracted에 마킹하기 위한 함수
+    Triple ETL에서 호출.
+    삼중항 추출을 시도한 뉴스의 is_processed를 TRUE로 올리고,
+    삼중항 존재 여부를 relation_extracted에 마킹한다.
     """
 
     unique_true = sorted({int(news_id) for news_id in has_triples_ids if news_id})
@@ -511,7 +361,8 @@ def mark_news_relation_extracted(
                 text(
                     """
                     UPDATE news
-                    SET relation_extracted = TRUE
+                    SET is_processed = TRUE,
+                        relation_extracted = TRUE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -523,7 +374,8 @@ def mark_news_relation_extracted(
                 text(
                     """
                     UPDATE news
-                    SET relation_extracted = FALSE
+                    SET is_processed = TRUE,
+                        relation_extracted = FALSE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -689,54 +541,6 @@ def filter_new_news_by_db(
     return new_items, existing_items
 
 
-def delete_news_by_ids(news_ids: list[int]) -> dict[str, int]:
-    """뉴스 하드 삭제. 자식 테이블(news_relations, news_themes 등)은 FK CASCADE로 함께 정리된다."""
-
-    unique_news_ids = sorted({int(news_id) for news_id in news_ids if news_id})
-
-    if not unique_news_ids:
-        logging.info("삭제할 뉴스 id가 없습니다.")
-        return {"requested_count": 0, "deleted_news_count": 0}
-
-    with session_scope() as session:
-        deleted_news = session.execute(
-            text(
-                """
-                DELETE FROM news
-                WHERE id = ANY(:ids)
-                RETURNING id;
-                """
-            ),
-            {"ids": unique_news_ids},
-        ).fetchall()
-
-    result = {
-        "requested_count": len(unique_news_ids),
-        "deleted_news_count": len(deleted_news),
-    }
-
-    logging.info(
-        f"뉴스 삭제 완료: 요청={result['requested_count']}개, "
-        f"뉴스삭제={result['deleted_news_count']}개"
-    )
-
-    return result
-
-
-def extract_news_ids_from_removed_items(removed_items: list[dict[str, Any]]) -> list[int]:
-
-    news_ids = []
-
-    for removed in removed_items:
-        item = removed.get("removed_item", {})
-        news_id = item.get("_news_id")
-
-        if news_id:
-            news_ids.append(int(news_id))
-
-    return news_ids
-
-
 def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
 
     query = """
@@ -745,7 +549,7 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
             title,
             text
         FROM news
-        WHERE relation_extracted IS NOT NULL
+        WHERE relation_extracted = TRUE
           AND (summary IS NULL OR BTRIM(summary) = '')
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
@@ -770,82 +574,6 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
             )
 
         return items
-
-
-def insert_news_relations(news_id: int, rows: list[dict[str, Any]]) -> int:
-    """추출된 트리플을 news_relations에 멱등 저장한다.
-
-    UNIQUE(news_id, subject_name, relation, object_name)로 재추출 시 ON CONFLICT DO NOTHING.
-    rows 항목 형식: {subject_name, subject_type, subject_code, relation,
-                    object_name, object_type, object_code}. 신규 삽입된 행 수를 반환한다.
-    """
-
-    if not rows:
-        return 0
-
-    inserted_count = 0
-
-    with session_scope() as session:
-        for row in rows:
-            result = session.execute(
-                text(
-                    """
-                    INSERT INTO news_relations (
-                        news_id,
-                        subject_name,
-                        subject_type,
-                        subject_code,
-                        relation,
-                        object_name,
-                        object_type,
-                        object_code
-                    )
-                    VALUES (
-                        :news_id,
-                        :subject_name,
-                        :subject_type,
-                        :subject_code,
-                        :relation,
-                        :object_name,
-                        :object_type,
-                        :object_code
-                    )
-                    ON CONFLICT (news_id, subject_name, relation, object_name) DO NOTHING;
-                    """
-                ),
-                {"news_id": news_id, **row},
-            )
-            inserted_count += result.rowcount or 0
-
-    return inserted_count
-
-
-def fetch_triples_for_news_ids(
-    news_ids: list[int],
-) -> dict[int, list[tuple[str, str, str]]]:
-    """뉴스 id별 트리플 `(subject_name, relation, object_name)` 목록을 조회한다."""
-
-    unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
-
-    if not unique_ids:
-        return {}
-
-    query = """
-        SELECT news_id, subject_name, relation, object_name
-        FROM news_relations
-        WHERE news_id = ANY(:ids)
-        ORDER BY news_id ASC, id ASC;
-    """
-
-    triples_by_news: dict[int, list[tuple[str, str, str]]] = {}
-
-    with session_scope() as session:
-        rows = session.execute(text(query), {"ids": unique_ids}).fetchall()
-
-    for news_id, subject_name, relation, object_name in rows:
-        triples_by_news.setdefault(int(news_id), []).append((subject_name, relation, object_name))
-
-    return triples_by_news
 
 
 def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
@@ -885,3 +613,80 @@ def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
     logging.info(f"요약 저장 완료: {saved_count}개")
 
     return {"saved_count": saved_count}
+
+
+def assign_cluster_representatives(groups: list[list[int]]) -> int:
+    """클러스터 그룹별로 멤버 전원의 cluster_rep_news_id를 대표 뉴스 id로 기록한다.
+
+    각 그룹의 첫 번째 id가 대표이며, 대표 자신도 자기 id를 가리킨다 (단독 기사 포함).
+    갱신된 행 수를 반환한다.
+    """
+
+    updated_count = 0
+
+    with session_scope() as session:
+        for group in groups:
+            member_ids = sorted({int(news_id) for news_id in group if news_id})
+
+            if not member_ids:
+                continue
+
+            rep_id = int(group[0])
+            result = session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET cluster_rep_news_id = :rep_id
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"rep_id": rep_id, "ids": member_ids},
+            )
+            updated_count += result.rowcount or 0
+
+    return updated_count
+
+
+def fetch_search_keywords() -> list[dict[str, Any]]:
+    """search_keywords 테이블의 검색 쿼리 전체를 id 순으로 조회한다.
+
+    keyword 한 행이 네이버 API 요청 한 번이 되며, 콤마 등 검색식은 그대로 전달된다.
+    """
+
+    query = """
+        SELECT id, keyword
+        FROM search_keywords
+        ORDER BY id ASC;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query)).fetchall()
+
+        return [
+            {"id": int(keyword_id), "keyword": keyword}
+            for keyword_id, keyword in rows
+            if keyword and keyword.strip()
+        ]
+
+
+def mark_keywords_searched(keyword_ids: list[int]) -> int:
+    """검색을 마친 키워드들의 last_searched_at을 갱신한다. 갱신 행 수를 반환한다."""
+
+    unique_ids = sorted({int(keyword_id) for keyword_id in keyword_ids if keyword_id})
+
+    if not unique_ids:
+        return 0
+
+    with session_scope() as session:
+        result = session.execute(
+            text(
+                """
+                UPDATE search_keywords
+                SET last_searched_at = now()
+                WHERE id = ANY(:ids);
+                """
+            ),
+            {"ids": unique_ids},
+        )
+
+        return result.rowcount or 0

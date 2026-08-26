@@ -22,8 +22,6 @@ DEFAULT_MAX_TOKENS = 512
 DEFAULT_MAX_CONCURRENCY = 4
 DEFAULT_TIMEOUT = 300
 
-Triple = tuple[str, str, str]
-
 
 def get_summarizer_config() -> dict[str, Any]:
 
@@ -73,38 +71,10 @@ def build_summary_source_text(item: dict[str, Any], body_limit: int = DEFAULT_BO
     return text.strip()
 
 
-def format_triples_for_prompt(triples: list[Triple] | None) -> str:
-    if not triples:
-        return "(none)"
-
-    lines = []
-    seen: set[Triple] = set()
-
-    for triple in triples:
-        if not triple or len(triple) < 3:
-            continue
-
-        subject, relation, obj = (str(part or "").strip() for part in triple[:3])
-
-        if not subject or not relation or not obj:
-            continue
-
-        key = (subject, relation, obj)
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-        lines.append(f"- {subject} —[{relation}]→ {obj}")
-
-    return "\n".join(lines) if lines else "(none)"
-
-
 def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LIMIT) -> str:
     return render_summary_prompt(
         "summary_single.txt",
         title=get_printable_text(item.get("title", "")),
-        triples=format_triples_for_prompt(item.get("_triples")),
         source_text=build_summary_source_text(item, body_limit),
     )
 

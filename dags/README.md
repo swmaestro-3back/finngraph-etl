@@ -7,10 +7,9 @@ dags/
 ├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
 ├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
 ├── health/       # 운영 상 헬스체크용
-├── news/         # 뉴스 수집 · 필터 · 요약
+├── news/         # 뉴스 수집·군집화 → 트리플 추출 → 요약 통합 파이프라인
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
-├── themes/       # 테마 크롤링 · 뉴스 연결
-└── triples/      # 트리플 추출
+└── themes/       # 테마 크롤링
 ```
 
 > 단, 폴더 구조는 **소스코드 정리용**이다. Airflow UI는 파일 경로가 아니라 `dag_id`와 `tags`로 DAG를 묶어 나열한다.
@@ -26,10 +25,7 @@ dags/
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/collect_headline.py` | `news_collect_headline` | `news` | `*/30 * * * *` (30분) |
-| news | `news/collect_keyword_search.py` | `news_collect_keyword_search` | `news` | `0 * * * *` (매시) |
-| news | `news/filter_meaningless.py` | `news_filter_meaningless` | `news` | Asset ← `etl://news/collected` |
-| news | `news/summarize.py` | `news_summarize` | `news` | Asset ← `etl://news/relations` |
+| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 * * * *` (매시 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
@@ -37,8 +33,6 @@ dags/
 | stocks | `stocks/daily_backfill.py` | `stocks_daily_backfill` | `stocks` | 수동 |
 | stocks | `stocks/intraday_1m.py` | `stocks_intraday_1m` | `stocks` | **정지** (분봉 수집 제외) |
 | themes | `themes/refresh.py` | `themes_refresh` | `themes` | `0 0 * * *` (자정) |
-| themes | `themes/link_news.py` | `themes_link_news` | `themes` | Asset ← `etl://news/relations` |
-| triples | `triples/extract.py` | `triples_extract` | `triples` | Asset ← `etl://news/filtered` |
 
 ## Asset 의존
 
@@ -53,11 +47,6 @@ stocks_daily_pipeline ───────► etl://stocks/daily ───┐
   (평일 18시, 일봉→기간봉→수급)                       ├──► stocks_compute_derived
 companies_kis_financials ────► etl://companies/financials ┘      (PER·PBR·수익률)
   (평일 19시)
-
-news_collect_* ──► etl://news/collected ──► news_filter_meaningless
-                                              └─► etl://news/filtered ──► triples_extract
-                                                    └─► etl://news/relations ──► news_summarize
-                                                                              └─► themes_link_news
 ```
 
 `stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
@@ -69,6 +58,7 @@ Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 D
 
 ```mermaid
 flowchart TB
+    NP["news_pipeline<br/><code>0 * * * *</code>"]
     CDP["companies_dart_pipeline<br/><code>0 3 * * *</code>"]
     CDE["companies_descriptions<br/><code>0 4 * * 6</code>"]
     SWD["stocks_weekly_dividends<br/><code>0 6 * * 6</code>"]
@@ -80,7 +70,7 @@ flowchart TB
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class CDP,CDE,SWD,SDB,SI1,TR,HC,DCD,DBF cron
+    class NP,CDP,CDE,SWD,SDB,SI1,TR,HC,DCD,DBF cron
 ```
 
 ## `dag_id`
@@ -89,7 +79,7 @@ flowchart TB
 
 ```python
 @dag(
-    dag_id="news_summarize",   # ← UI에 뜨는 이름, 전역 유일해야 함
+    dag_id="news_pipeline",   # ← UI에 뜨는 이름, 전역 유일해야 함
     ...
 )
 ```
@@ -98,7 +88,7 @@ flowchart TB
 - **전역 유일** — 두 DAG가 같은 `dag_id`를 쓰면 충돌한다.
   - 폴더가 이미 도메인을 나타내지만, UI는 평면(flat) 네임스페이스라 **`dag_id`에는 도메인 접두사를 유지**한다.
 - **파일명과 일치시킨다** — UI에서 본 `dag_id`로 소스 파일을 바로 찾을 수 있어야 한다.
-  - 예: `dag_id="news_summarize"` ↔ `dags/news/summarize.py`
+  - 예: `dag_id="news_pipeline"` ↔ `dags/news/pipeline.py`
 
 ### 주의 사항
 `dag_id`를 바꾸면 Airflow는 **완전히 다른 새 DAG로 인식**한다. 기존 실행 히스토리·스케줄 상태가 UI에서 분리되므로, **운영 중인 DAG의 `dag_id`는 함부로 바꾸지 않는다.**

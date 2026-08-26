@@ -907,74 +907,6 @@ wheels = [
 ]
 
 [[package]]
-name = "finngraph-etl"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "beautifulsoup4" },
-    { name = "boto3" },
-    { name = "finance-datareader" },
-    { name = "flashtext" },
-    { name = "httpx" },
-    { name = "langgraph" },
-    { name = "lxml" },
-    { name = "neo4j" },
-    { name = "pandas" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "requests" },
-    { name = "sqlalchemy" },
-    { name = "tenacity" },
-]
-
-[package.optional-dependencies]
-airflow = [
-    { name = "apache-airflow" },
-]
-news = [
-    { name = "beautifulsoup4" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.2" },
-    { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=3.3" },
-    { name = "beautifulsoup4", specifier = ">=4.15.0" },
-    { name = "beautifulsoup4", marker = "extra == 'news'", specifier = ">=4.12" },
-    { name = "boto3", specifier = ">=1.34" },
-    { name = "finance-datareader", specifier = ">=0.9.9" },
-    { name = "flashtext", specifier = ">=2.7" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "langgraph", specifier = ">=1.2.6" },
-    { name = "lxml", specifier = ">=6.1.1" },
-    { name = "neo4j", specifier = ">=6.2.0" },
-    { name = "pandas", specifier = ">=2.2" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-settings", specifier = ">=2.3" },
-    { name = "requests", specifier = ">=2.32" },
-    { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "tenacity", specifier = ">=8.3" },
-]
-provides-extras = ["airflow", "news"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pre-commit", specifier = ">=3.7" },
-    { name = "pytest", specifier = ">=8.2" },
-    { name = "ruff", specifier = ">=0.5" },
-]
-
-[[package]]
 name = "fastapi"
 version = "0.136.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1047,6 +979,81 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e8/8b/8f516b366f5aa465bfdcb0456b0f7ae38f4496fde882b85798998f706f1b/finance_datareader-0.9.202.tar.gz", hash = "sha256:16e734dc3f3f51962d92c2cdc9b707b27650115f0990b25f6ffdad3318197070", size = 39406, upload-time = "2026-05-13T20:10:05.883Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/e8/57ac4d122c5e2b3c2b54bcd7069ee0ce735a174695f0b45407319d7728e5/finance_datareader-0.9.202-py3-none-any.whl", hash = "sha256:8d166865c1537c2b9fe0243ab67aea7eb057d7e25ff0366f8eeabda6dccdfbac", size = 53934, upload-time = "2026-05-13T20:10:07.073Z" },
+]
+
+[[package]]
+name = "finngraph-etl"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "beautifulsoup4" },
+    { name = "boto3" },
+    { name = "finance-datareader" },
+    { name = "flashtext" },
+    { name = "httpx" },
+    { name = "kiwipiepy" },
+    { name = "langchain-aws" },
+    { name = "langgraph" },
+    { name = "lxml" },
+    { name = "neo4j" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pandas" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "requests" },
+    { name = "sqlalchemy" },
+    { name = "tenacity" },
+]
+
+[package.optional-dependencies]
+airflow = [
+    { name = "apache-airflow" },
+]
+news = [
+    { name = "beautifulsoup4" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.2" },
+    { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=3.3" },
+    { name = "beautifulsoup4", specifier = ">=4.15.0" },
+    { name = "beautifulsoup4", marker = "extra == 'news'", specifier = ">=4.12" },
+    { name = "boto3", specifier = ">=1.34" },
+    { name = "finance-datareader", specifier = ">=0.9.9" },
+    { name = "flashtext", specifier = ">=2.7" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "kiwipiepy", specifier = ">=0.23.2" },
+    { name = "langchain-aws", specifier = ">=0.2" },
+    { name = "langgraph", specifier = ">=1.2.6" },
+    { name = "lxml", specifier = ">=6.1.1" },
+    { name = "neo4j", specifier = ">=6.2.0" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pandas", specifier = ">=2.2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.3" },
+    { name = "requests", specifier = ">=2.32" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "tenacity", specifier = ">=8.3" },
+]
+provides-extras = ["airflow", "news"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=3.7" },
+    { name = "pytest", specifier = ">=8.2" },
+    { name = "ruff", specifier = ">=0.5" },
 ]
 
 [[package]]
@@ -1530,6 +1537,52 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
+]
+
+[[package]]
+name = "kiwipiepy"
+version = "0.23.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "kiwipiepy-model" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/3f/b317dfd0085341a8e2b24fa8eddd7e709b07a91e6bcf20b8d8952ca26a03/kiwipiepy-0.23.2.tar.gz", hash = "sha256:632d627531ceaf4b55bd5c01d50eebdae0253c79c2c8a3f682f2e68492f36198", size = 2468793, upload-time = "2026-06-11T15:36:55.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/18/3a3d95667f0e16a822e8d02c95c2948fd104a128d5a2a4c11d7312fcde9c/kiwipiepy-0.23.2-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:32801636f8adfbe4b1413839e294fe5aa9cbf62a47671555dfa91712ddd22b50", size = 14929888, upload-time = "2026-06-11T15:47:04.345Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/0e/b5d4c25fe56cfa4cb8f234a6054b380fca61f43c934715c366b7e6b10118/kiwipiepy-0.23.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:e5e9aec332b683d6de1e3a7bf12617f87ff3ca51788a119971f586165d1bca74", size = 5741991, upload-time = "2026-06-11T15:37:23.809Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/3f/aaecf391a22f9c7746b03e05a78173db88a871841bdd69305ecdebebc767/kiwipiepy-0.23.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e0b4e064fef9ff32d84498546519b7c414113fe1b845af532988a3a64a2af339", size = 5031979, upload-time = "2026-06-11T15:58:23.425Z" },
+    { url = "https://files.pythonhosted.org/packages/81/61/49e3fdfab1e9a07cf0d168b26018fe21dea45e069af769828e166c2f4084/kiwipiepy-0.23.2-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1035f4598e01c09ce222f4f2ef7966cf44f6e163d7861ecc7cf413bf9e77901a", size = 11513529, upload-time = "2026-06-11T16:21:35.077Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/92/ce54f97575da8a4c9352fe6c5e4f4323adcd023d44eb0e9360dbdfbdf743/kiwipiepy-0.23.2-cp314-cp314t-win_amd64.whl", hash = "sha256:77f5086f3e19ef939cae70cd693b5df492ec76e390d9b0a977b22f4bf81e8ded", size = 3712674, upload-time = "2026-06-11T16:00:23.497Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/d8/9d6bde6ad64e0b1d4d66fcc1a45c819b4afbf9d21763d7e1e427913dab13/kiwipiepy-0.23.2-cp39-abi3-macosx_10_14_x86_64.whl", hash = "sha256:951aa58836697f467d4436fefddb91ccb864673415f3dcd805c67f757100cb2e", size = 14919737, upload-time = "2026-06-11T16:04:04.292Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/dd/10dd6b63daf1c3e25ca72512d6c0ebbdac15911782f37ca283f10d3b753a/kiwipiepy-0.23.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:8410195a640b1c3ec164e69f3249e2d7c9b3dcd2222f5a5a245eed1c27f1ca55", size = 5733448, upload-time = "2026-06-11T15:38:33.594Z" },
+    { url = "https://files.pythonhosted.org/packages/81/c9/622cb3800e04b887d2fddfc05746e326f1864b4518fa3746d8887fefc219/kiwipiepy-0.23.2-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c9cbe16ab16236935e8c596209ead8513c3fc54c162e7218fa06d484522812bc", size = 5030678, upload-time = "2026-06-11T15:58:25.053Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/0a/c3d4c9e4e43494ede5badd39ef157de33e46eb5668659afd80ef7c713dda/kiwipiepy-0.23.2-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:46a0a9fd36727736e8010ff54c655639f5df1c2ec34b92679cd3a94e8734d81f", size = 11513350, upload-time = "2026-06-11T16:21:37.365Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/5d/a18b133599bed0adbf62878deff1e786f7edafefa8b843b269f1c7bd92ac/kiwipiepy-0.23.2-cp39-abi3-win_amd64.whl", hash = "sha256:2ee49d007b55955ffe4d91d56c9adaae6f358f8c6d5c281efbdf8162ecbad3e2", size = 3613895, upload-time = "2026-06-11T15:59:57.052Z" },
+]
+
+[[package]]
+name = "kiwipiepy-model"
+version = "0.23.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/59/28403890c5f757254bf2068ff321fb3e656fb2e5658a3de8bfc092e4fd83/kiwipiepy_model-0.23.0.tar.gz", hash = "sha256:498a22f5585e6c4a162423d7557eb3ee3f71cddc6e0aeb2650c50467e85933e2", size = 87976912, upload-time = "2026-03-17T16:28:32.318Z" }
+
+[[package]]
+name = "langchain-aws"
+version = "1.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "langchain-core" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/ca/88fd983e4ffb2b0a765efdd57da75b99be9f2077bedf75e57a7b7d6ac843/langchain_aws-1.7.0.tar.gz", hash = "sha256:e4e8d578b4be8fd3ad970373fc72c3e321fea7f955cb6c075464e30636ec583d", size = 609279, upload-time = "2026-08-05T18:45:38.166Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/4c/85e6c625b04c2637ad053c28ed7eda9aa4b89f77e6763b3a41f126427ded/langchain_aws-1.7.0-py3-none-any.whl", hash = "sha256:25ccaebeec0bd718df4a1dce44c725591e177690bc19df7caa0cd2d601df27a0", size = 214878, upload-time = "2026-08-05T18:45:36.583Z" },
 ]
 
 [[package]]
