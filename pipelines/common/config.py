@@ -36,8 +36,9 @@ class Settings(BaseSettings):
     )
 
     # === OpenDART ===
-    # 인증키는 일 20,000건 한도라 초당 값은 넉넉히 잡아도 무방하다. 병목은 호출 수가 아니라
-    # 하루 한도이므로, batch_size로 회차당 처리량을 조절한다.
+    # 인증키는 일 20,000건 한도다. 회차당 상한은 두지 않는다 — 대상 정렬이 "갱신 오래된
+    # 순"이라 상한을 두면 한 바퀴에 며칠이 걸리고(2,000법인 · 재무 배치 100이면 20일),
+    # 한도에 닿으면 잡이 스스로 멈춰 다음 회차가 이어받는다.
     # 같은 인증키를 두 이름으로 받는다. 별도 키로 두면 한쪽만 설정한 배포에서 다른 쪽
     # 파이프라인이 빈 키로 조용히 실패한다. 둘 다 있으면 DART_API_KEY 가 우선이다.
     dart_api_key: str = Field(
@@ -53,18 +54,8 @@ class Settings(BaseSettings):
         default=10,
         validation_alias="DART_RATE_LIMIT_PER_SECOND",
     )
-    # 개요·재무 모두 service_companies(361법인)로 좁혀져 있어 한 회차에 거의 다 돈다.
-    dart_profile_batch_size: int = Field(default=200, validation_alias="DART_PROFILE_BATCH_SIZE")
-    dart_financial_batch_size: int = Field(
-        default=100,
-        validation_alias="DART_FINANCIAL_BATCH_SIZE",
-    )
     # 사업연도 몇 개를 받을지. 법인·연도당 CFS/OFS 2회라 늘리면 호출 수가 비례해 는다.
     dart_financial_years: int = Field(default=3, validation_alias="DART_FINANCIAL_YEARS")
-    company_financial_batch_size: int = Field(
-        default=300,
-        validation_alias="COMPANY_FINANCIAL_BATCH_SIZE",
-    )
 
     # === disclosures: 단일판매ㆍ공급계약체결 공시 ===
     # 백필 소급 연수와 일별 갱신 시 되짚어볼 구간. 근거는 STOCK_DAILY_* 와 같다 — 짧으면

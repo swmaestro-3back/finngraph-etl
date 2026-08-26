@@ -6,7 +6,7 @@ from io import BytesIO
 from zipfile import ZipFile
 
 from pipelines.common.utils.time import now_kst
-from pipelines.stocks.models import StockTicker
+from pipelines.stocks.models import SECURITY_GROUP_STOCK, StockTicker
 
 KOSPI_MASTER_URL = "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip"
 KOSDAQ_MASTER_URL = "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip"
@@ -393,12 +393,30 @@ def fetch_kospi_kosdaq_tickers() -> list[StockTicker]:
     return fetch_stock_master_tickers((KOSPI_SPEC, KOSDAQ_SPEC))
 
 
+def is_collectible(ticker: StockTicker) -> bool:
+    """수집 대상인가 — 보통주만.
+
+    ETF·ETN 은 security_group 이 EF·EN 이라 이 조건 하나로 함께 걸러진다. 스팩은 법적으로
+    주식회사여서 ST 로 오므로 따로 뺀다(실측 ST 2,721 중 71).
+
+    여기서 거르면 stocks 테이블이 곧 "우리가 다루는 종목"이 되어, 하류가 종류를 다시
+    판정할 필요가 없다. 마스터에서 빠진 종목은 다음 동기화에서 is_active 가 내려간다.
+    """
+
+    return (
+        ticker.security_group == SECURITY_GROUP_STOCK
+        and not ticker.preferred_stock
+        and not ticker.spac
+    )
+
+
 def fetch_stock_master_tickers(specs: tuple[MarketMasterSpec, ...]) -> list[StockTicker]:
     synced_at = now_kst()
     tickers: list[StockTicker] = []
     for spec in specs:
         content = _download_master_file(spec.url)
-        tickers.extend(parse_master_content(content, spec, synced_at=synced_at))
+        parsed = parse_master_content(content, spec, synced_at=synced_at)
+        tickers.extend(ticker for ticker in parsed if is_collectible(ticker))
     return tickers
 
 

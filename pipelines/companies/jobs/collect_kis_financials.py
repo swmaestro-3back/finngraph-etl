@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pipelines.common.clients.kis import get_kis_client
 from pipelines.common.clients.postgres import session_scope
-from pipelines.common.config import get_settings
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.companies.extractors.kis_finance import (
@@ -17,6 +16,7 @@ from pipelines.companies.extractors.kis_finance import (
     fetch_financial_ratio,
     fetch_income_statement,
 )
+from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.companies.loaders.financials import fetch_stale_financial_targets, upsert_financials
 from pipelines.companies.models import CompanyFinancial
 from pipelines.companies.transformers.financials import (
@@ -41,15 +41,14 @@ def run(limit: int | None = None) -> None:
     """재무 갱신이 오래된 법인부터 KIS 재무를 수집해 적재한다.
 
     Args:
-        limit (int | None): 이번 회차 처리 법인 수. 생략하면 설정값을 쓴다.
+        limit (int | None): 상한. 수동 점검용이고 배치에서는 생략한다(전량).
     """
-
-    settings = get_settings()
-    batch_size = limit or settings.company_financial_batch_size
 
     client = get_kis_client()
     with session_scope() as session:
-        targets = fetch_stale_financial_targets(session, batch_size, source="KIS")
+        targets = fetch_stale_financial_targets(session, limit, source="KIS")
+        if not targets:
+            logger.warning("KIS 재무 수집 대상이 0건이다 — %s", describe_universe(session))
 
     logger.info("KIS 재무 수집 시작: 대상 %d법인", len(targets))
 

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from datetime import date
 
+from pipelines.common.clients.dart import get_dart_client
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
-from pipelines.common.dart import get_dart_client
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.disclosures.extractors.dart import (

@@ -16,6 +16,7 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.common.utils.time import now_kst
+from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.stocks.extractors.kis import fetch_dividends
 from pipelines.stocks.loaders.flows import upsert_dividends
 from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
@@ -42,6 +43,8 @@ def run(limit: int | None = None, lookback_days: int = DEFAULT_LOOKBACK_DAYS) ->
     client = get_kis_client()
     with session_scope() as session:
         targets = fetch_serviceable_stocks(session, limit)
+        if not targets:
+            logger.warning("배당 수집 대상이 0종목이다 — %s", describe_universe(session))
 
     today = now_kst().date()
     start = today - timedelta(days=lookback_days)
