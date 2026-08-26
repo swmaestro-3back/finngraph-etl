@@ -309,6 +309,8 @@ CREATE INDEX IF NOT EXISTS idx_news_themes_theme ON news_themes (theme_id);
 CREATE INDEX IF NOT EXISTS idx_news_themes_news  ON news_themes (news_id);
 
 -- ── search_keywords ─────────────────────────────────────────────────────────
+-- news_pipeline이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
+-- 콤마 등 네이버 검색식은 문자열 그대로 query 파라미터로 전달된다.
 CREATE TABLE IF NOT EXISTS search_keywords (
     id               BIGSERIAL PRIMARY KEY,
     keyword          TEXT NOT NULL UNIQUE,
@@ -321,13 +323,7 @@ CREATE INDEX IF NOT EXISTS idx_search_keywords_last_searched
 
 INSERT INTO search_keywords (keyword)
 VALUES
-    ('인수'), ('합병'), ('매각'), ('분할'), ('분사'), ('제휴'),
-    ('수주'), ('낙찰'), ('입찰'), ('공급계약'), ('납품'),
-    ('수출'), ('수입'), ('증산'), ('감산'), ('채굴'),
-    ('제재'), ('규제'), ('관세'), ('수출 금지'), ('수입 금지'),
-    ('협정 체결'), ('협정 파기'), ('국교 단절'), ('침공'), ('봉쇄'), ('휴전'),
-    ('소송'), ('국유화'),
-    ('특징주')
+    ('특징주,공급'), ('특징주,계약')
 ON CONFLICT (keyword) DO NOTHING;
 
 -- ── disclosures ─────────────────────────────────────────────────────────────

@@ -1,14 +1,33 @@
 -- 0002: 뉴스 통합 파이프라인 스키마 재편
 --
--- news_relations(트리플 평문 적재)와 search_keywords(키워드 순회 수집)를 폐기하고,
--- Neo4j 간선 출처를 추적하는 relation_source, 뉴스-기업 매핑 물리 테이블
--- news_companies로 대체한다. (PRD: docs/prd/2026-08-25-news-pipeline.md)
+-- news_relations(트리플 평문 적재)를 폐기하고, Neo4j 간선 출처를 추적하는
+-- relation_source, 뉴스-기업 매핑 물리 테이블 news_companies로 대체한다.
+-- search_keywords는 통합 파이프라인의 검색 쿼리 원천으로 유지한다.
+-- (PRD: docs/prd/2026-08-25-news-pipeline.md)
 
 -- ── 제거 ────────────────────────────────────────────────────────────────────
-DROP VIEW IF EXISTS news_companies;        -- news_relations 기반 VIEW (물리 테이블로 대체)
-DROP VIEW IF EXISTS entities_relations;
-DROP TABLE IF EXISTS news_relations;
-DROP TABLE IF EXISTS search_keywords;
+-- news_relations 기반 VIEW(news_companies, entities_relations)는 CASCADE로 함께 제거된다.
+-- (DROP VIEW를 따로 쓰면 이미 마이그레이션돼 news_companies가 테이블인 DB에서
+--  타입 불일치 에러가 나 멱등성이 깨진다.)
+DROP TABLE IF EXISTS news_relations CASCADE;
+
+-- ── search_keywords 유지 + 통합 파이프라인 검색 쿼리 시드 ───────────────────
+-- 이 마이그레이션의 구버전이 테이블을 드랍했으므로 방어적으로 재생성한다
+-- (신규 DB는 0000이 이미 만들었으니 no-op).
+CREATE TABLE IF NOT EXISTS search_keywords (
+    id               BIGSERIAL PRIMARY KEY,
+    keyword          TEXT NOT NULL UNIQUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_searched_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_keywords_last_searched
+  ON search_keywords (last_searched_at);
+
+INSERT INTO search_keywords (keyword)
+VALUES
+    ('특징주,공급'), ('특징주,계약')
+ON CONFLICT (keyword) DO NOTHING;
 
 -- ── news 상태 컬럼 재편 ─────────────────────────────────────────────────────
 -- is_processed: 삼중항 추출 시도 완료 여부. FALSE인 행이 extract_triples 대상.

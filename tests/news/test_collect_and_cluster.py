@@ -78,12 +78,3 @@ def test_select_articles_by_cluster_handles_empty():
 
     assert groups == []
     assert stats["selected"] == 0
-
-
-def test_search_query_list_parsing(monkeypatch):
-    # 구분자는 세미콜론 — 쿼리 자체에 콤마가 들어갈 수 있다("특징주,공급" 검색식)
-    monkeypatch.setenv("NEWS_SEARCH_QUERIES", "특징주,공급; 특징주,계약 ;;")
-
-    from pipelines.news.config import NewsSettings
-
-    assert NewsSettings().search_query_list() == ["특징주,공급", "특징주,계약"]

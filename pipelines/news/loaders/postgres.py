@@ -645,3 +645,48 @@ def assign_cluster_representatives(groups: list[list[int]]) -> int:
             updated_count += result.rowcount or 0
 
     return updated_count
+
+
+def fetch_search_keywords() -> list[dict[str, Any]]:
+    """search_keywords 테이블의 검색 쿼리 전체를 id 순으로 조회한다.
+
+    keyword 한 행이 네이버 API 요청 한 번이 되며, 콤마 등 검색식은 그대로 전달된다.
+    """
+
+    query = """
+        SELECT id, keyword
+        FROM search_keywords
+        ORDER BY id ASC;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query)).fetchall()
+
+        return [
+            {"id": int(keyword_id), "keyword": keyword}
+            for keyword_id, keyword in rows
+            if keyword and keyword.strip()
+        ]
+
+
+def mark_keywords_searched(keyword_ids: list[int]) -> int:
+    """검색을 마친 키워드들의 last_searched_at을 갱신한다. 갱신 행 수를 반환한다."""
+
+    unique_ids = sorted({int(keyword_id) for keyword_id in keyword_ids if keyword_id})
+
+    if not unique_ids:
+        return 0
+
+    with session_scope() as session:
+        result = session.execute(
+            text(
+                """
+                UPDATE search_keywords
+                SET last_searched_at = now()
+                WHERE id = ANY(:ids);
+                """
+            ),
+            {"ids": unique_ids},
+        )
+
+        return result.rowcount or 0

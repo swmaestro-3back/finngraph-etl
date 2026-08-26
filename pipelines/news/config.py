@@ -23,8 +23,6 @@ class NewsSettings(BaseSettings):
     search_sort: str = Field(default="date", validation_alias="SEARCH_SORT")
     max_pages: int = Field(default=1, validation_alias="MAX_PAGES")
 
-    search_queries: str = Field(default="특징주", validation_alias="NEWS_SEARCH_QUERIES")
-
     cluster_threshold: float = Field(default=0.35, validation_alias="NEWS_CLUSTER_THRESHOLD")
     cluster_description_weight: float = Field(
         default=0.4,
@@ -50,14 +48,6 @@ class NewsSettings(BaseSettings):
     @classmethod
     def _normalize_host(cls, value: str) -> str:
         return value.strip().lower()
-
-    def search_query_list(self) -> list[str]:
-        """세미콜론 구분 NEWS_SEARCH_QUERIES를 쿼리 목록으로 돌려준다.
-
-        쿼리 자체에 콤마가 들어갈 수 있어("특징주,공급" 같은 네이버 검색식)
-        목록 구분자는 세미콜론을 쓴다.
-        """
-        return [query.strip() for query in self.search_queries.split(";") if query.strip()]
 
 
 @lru_cache
