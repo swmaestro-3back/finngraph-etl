@@ -11,24 +11,6 @@
 --  타입 불일치 에러가 나 멱등성이 깨진다.)
 DROP TABLE IF EXISTS news_relations CASCADE;
 
--- ── search_keywords 유지 + 통합 파이프라인 검색 쿼리 시드 ───────────────────
--- 이 마이그레이션의 구버전이 테이블을 드랍했으므로 방어적으로 재생성한다
--- (신규 DB는 0000이 이미 만들었으니 no-op).
-CREATE TABLE IF NOT EXISTS search_keywords (
-    id               BIGSERIAL PRIMARY KEY,
-    keyword          TEXT NOT NULL UNIQUE,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_searched_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_search_keywords_last_searched
-  ON search_keywords (last_searched_at);
-
-INSERT INTO search_keywords (keyword)
-VALUES
-    ('특징주,공급'), ('특징주,계약')
-ON CONFLICT (keyword) DO NOTHING;
-
 -- ── news 상태 컬럼 재편 ─────────────────────────────────────────────────────
 -- is_processed: 삼중항 추출 시도 완료 여부. FALSE인 행이 extract_triples 대상.
 -- relation_extracted: 삼중항이 1개 이상 나왔는지. is_processed=TRUE일 때만 유의미.
