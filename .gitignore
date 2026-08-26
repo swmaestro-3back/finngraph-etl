@@ -26,6 +26,7 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .bkit/
+.superpowers/
 
 # 로컬 테스트 데이터 푸시 방지용
 pipelines/themes/data/*
