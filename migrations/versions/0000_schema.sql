@@ -297,17 +297,6 @@ CREATE TABLE IF NOT EXISTS theme_stocks (
 CREATE INDEX IF NOT EXISTS theme_stocks_theme_idx ON theme_stocks (theme_id);
 CREATE INDEX IF NOT EXISTS theme_stocks_stock_idx ON theme_stocks (stock_id);
 
-CREATE TABLE IF NOT EXISTS news_themes (
-    id         BIGSERIAL PRIMARY KEY,
-    news_id    BIGINT NOT NULL REFERENCES news (id) ON DELETE CASCADE,
-    theme_id   BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (news_id, theme_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_news_themes_theme ON news_themes (theme_id);
-CREATE INDEX IF NOT EXISTS idx_news_themes_news  ON news_themes (news_id);
-
 -- ── search_keywords ─────────────────────────────────────────────────────────
 -- news_pipeline이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
 -- 콤마 등 네이버 검색식은 문자열 그대로 query 파라미터로 전달된다.

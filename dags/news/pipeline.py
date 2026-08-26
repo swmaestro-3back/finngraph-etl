@@ -5,17 +5,14 @@ from typing import Any
 
 try:
     import pendulum
-    from airflow.sdk import Asset, dag, task
+    from airflow.sdk import dag, task
 except ImportError:
     pendulum = None
-    Asset = None
     dag = None
     task = None
 
 
 if dag and task:
-    # themes_link_news DAG가 이 Asset으로 트리거된다 (구 triples_extract에서 이관).
-    news_relations_updated = Asset("etl://news/relations")
 
     @dag(
         dag_id="news_pipeline",
@@ -32,7 +29,7 @@ if dag and task:
 
             return run()
 
-        @task(retries=1, retry_delay=timedelta(minutes=10), outlets=[news_relations_updated])
+        @task(retries=1, retry_delay=timedelta(minutes=10))
         def extract_triples() -> dict[str, int]:
             from pipelines.triples.jobs.extract import run
 

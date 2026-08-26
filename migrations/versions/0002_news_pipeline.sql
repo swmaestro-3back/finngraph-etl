@@ -11,6 +11,10 @@
 --  타입 불일치 에러가 나 멱등성이 깨진다.)
 DROP TABLE IF EXISTS news_relations CASCADE;
 
+-- 뉴스-테마 연결(themes_link_news DAG) 폐기로 news_themes도 함께 제거한다.
+-- 인덱스(idx_news_themes_theme, idx_news_themes_news)는 테이블과 함께 제거된다.
+DROP TABLE IF EXISTS news_themes CASCADE;
+
 -- ── news 상태 컬럼 재편 ─────────────────────────────────────────────────────
 -- is_processed: 삼중항 추출 시도 완료 여부. FALSE인 행이 extract_triples 대상.
 -- relation_extracted: 삼중항이 1개 이상 나왔는지. is_processed=TRUE일 때만 유의미.

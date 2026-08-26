@@ -8,11 +8,8 @@ DB migration 파일을 관리합니다. 운영 DB에 migration을 적용하기 �
 ## 적용 순서 (FK 의존 순서 — 번호순으로 적용)
 
 
-| 순서  | 파일                                               | 내용                                                           |
-| --- | ------------------------------------------------ | ------------------------------------------------------------ |
-| 1   | `versions/20260725_01_news.sql`                  | `news` 본체                                                    |
-| 2   | `versions/20260725_02_companies.sql`             | `companies` 기업 마스터 (KRX 적재 예정)                               |
-| 3   | `versions/20260725_03_themes.sql`                | `themes` / `theme_companies` / `news_themes`                 |
-| 4   | `versions/20260725_04_keyword_search.sql`        | `search_keywords`                                            |
-| 5   | `versions/20260725_05_news_relations.sql`        | `news_relations` + 뷰(`news_companies`, `entities_relations`) |
-| 6   | `versions/20260729_07_pinned_search_keyword.sql` | `search_keywords.is_pinned` 컬럼 + '특징주' 고정 키워드 시드             |
+| 순서  | 파일                                     | 내용                                                                            |
+| --- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| 1   | `versions/0000_schema.sql`             | 신규 DB 기준 베이스라인 DDL (전체 테이블)                                                   |
+| 2   | `versions/0001_etl_pipeline.sql`       | ETL 파이프라인 스키마 변경                                                              |
+| 3   | `versions/0002_news_pipeline.sql`      | 뉴스 통합 파이프라인 스키마 재편 (`relation_source`, `news_companies`, `news_themes` 제거) |

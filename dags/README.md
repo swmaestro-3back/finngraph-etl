@@ -9,7 +9,7 @@ dags/
 ├── health/       # 운영 상 헬스체크용
 ├── news/         # 뉴스 수집·군집화 → 트리플 추출 → 요약 통합 파이프라인
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
-└── themes/       # 테마 크롤링 · 뉴스 연결
+└── themes/       # 테마 크롤링
 ```
 
 > 단, 폴더 구조는 **소스코드 정리용**이다. Airflow UI는 파일 경로가 아니라 `dag_id`와 `tags`로 DAG를 묶어 나열한다.
@@ -33,7 +33,6 @@ dags/
 | stocks | `stocks/daily_backfill.py` | `stocks_daily_backfill` | `stocks` | 수동 |
 | stocks | `stocks/intraday_1m.py` | `stocks_intraday_1m` | `stocks` | **정지** (분봉 수집 제외) |
 | themes | `themes/refresh.py` | `themes_refresh` | `themes` | `0 0 * * *` (자정) |
-| themes | `themes/link_news.py` | `themes_link_news` | `themes` | Asset ← `etl://news/relations` |
 
 ## Asset 의존
 
@@ -48,9 +47,6 @@ stocks_daily_pipeline ───────► etl://stocks/daily ───┐
   (평일 18시, 일봉→기간봉→수급)                       ├──► stocks_compute_derived
 companies_kis_financials ────► etl://companies/financials ┘      (PER·PBR·수익률)
   (평일 19시)
-
-news_pipeline ────────────────────────► etl://news/relations ──────► themes_link_news
-  (매시 정각, collect_and_cluster → extract_triples → summarize)
 ```
 
 `stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
@@ -62,6 +58,7 @@ Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 D
 
 ```mermaid
 flowchart TB
+    NP["news_pipeline<br/><code>0 * * * *</code>"]
     CDP["companies_dart_pipeline<br/><code>0 3 * * *</code>"]
     CDE["companies_descriptions<br/><code>0 4 * * 6</code>"]
     SWD["stocks_weekly_dividends<br/><code>0 6 * * 6</code>"]
@@ -73,7 +70,7 @@ flowchart TB
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class CDP,CDE,SWD,SDB,SI1,TR,HC,DCD,DBF cron
+    class NP,CDP,CDE,SWD,SDB,SI1,TR,HC,DCD,DBF cron
 ```
 
 ## `dag_id`
