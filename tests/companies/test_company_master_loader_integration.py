@@ -196,28 +196,32 @@ def test_stock_without_corp_code_creates_no_company() -> None:
     assert _aliases() == set()
 
 
-def test_preferred_and_etp_are_not_companies() -> None:
-    """우선주·ETP는 corpCode에 단축코드가 있어도 법인이 되지 않는다."""
+def test_corp_code_absence_keeps_a_stock_out_of_companies() -> None:
+    """corpCode에 없는 종목은 법인이 되지 않는다.
+
+    우선주·ETF는 수집 경계(kis_stock_master.is_collectible)에서 걸러지므로 stocks에
+    애초에 들어오지 않는다. 여기서는 corpCode 쪽 조건만 본다 —
+    종류 판정 테스트는 tests/stocks/test_kis_stock_master.py 에 있다.
+    """
+
     _load_stocks(
         _stock(COMMON_SYMBOL, "테스트전자"),
-        _stock(PREFERRED_SYMBOL, "테스트전자우", preferred_stock=True),
-        _stock(ETP_SYMBOL, "테스트ETF", etp=True),
+        _stock(UNKNOWN_SYMBOL, "테스트미등록"),
     )
-    _load_corp_codes(COMMON_SYMBOL, PREFERRED_SYMBOL, ETP_SYMBOL)
+    _load_corp_codes(COMMON_SYMBOL)
 
     _sync()
 
     assert [row["ticker"] for row in _companies()] == [COMMON_SYMBOL], (
-        "보통주 한 종목만 법인이 되어야 한다"
+        "corpCode에 있는 종목만 법인이 되어야 한다"
     )
 
     links = _stock_links()
     assert links[COMMON_SYMBOL] is not None
-    assert links[PREFERRED_SYMBOL] is None
-    assert links[ETP_SYMBOL] is None
+    assert links[UNKNOWN_SYMBOL] is None
 
     # 법인에 연결되지 않은 종목의 이름은 별칭으로도 들어가지 않는다.
-    assert "테스트전자우" not in _aliases()
+    assert "테스트미등록" not in _aliases()
 
 
 def test_delisting_turns_the_flag_off_and_keeps_the_company() -> None:

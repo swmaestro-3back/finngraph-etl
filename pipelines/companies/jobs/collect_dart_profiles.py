@@ -10,9 +10,8 @@
 
 from __future__ import annotations
 
+from pipelines.common.clients.dart import DartApiError, get_dart_client, is_quota_error
 from pipelines.common.clients.postgres import session_scope
-from pipelines.common.config import get_settings
-from pipelines.common.dart import get_dart_client
 from pipelines.common.logging import get_logger
 from pipelines.companies.extractors.dart import fetch_company_profile
 from pipelines.companies.loaders.dart import (
@@ -20,6 +19,7 @@ from pipelines.companies.loaders.dart import (
     fetch_unresolved_universe,
     update_company_profile,
 )
+from pipelines.companies.loaders.diagnostics import describe_universe
 
 logger = get_logger(__name__)
 
@@ -29,12 +29,11 @@ CHUNK_SIZE = 50
 def run(limit: int | None = None) -> None:
     """개요가 비어 있는 법인부터 기업개황을 채운다."""
 
-    settings = get_settings()
-    batch_size = limit or settings.dart_profile_batch_size
-
     client = get_dart_client()
     with session_scope() as session:
-        targets = fetch_profile_targets(session, batch_size)
+        targets = fetch_profile_targets(session, limit)
+        if not targets:
+            logger.warning("DART 기업개황 수집 대상이 0건이다 — %s", describe_universe(session))
         unresolved = fetch_unresolved_universe(session)
 
     if unresolved:
@@ -51,9 +50,21 @@ def run(limit: int | None = None) -> None:
     missing = 0
     failed: list[str] = []
 
+    quota_exceeded = False
+
     for corp_code in targets:
         try:
             profile = fetch_company_profile(corp_code, client=client)
+        except DartApiError as exc:
+            if is_quota_error(exc):
+                # 남은 법인을 건너뛰면 안 된다. updated_at 이 갱신되지 않아야 다음 회차가
+                # 여기서부터 이어받는다. 재시도해 봐야 소진된 한도에 다시 부딪힌다.
+                logger.warning("DART 일 호출 한도 도달 — 여기까지 하고 다음 회차가 이어받는다")
+                quota_exceeded = True
+                break
+            logger.exception("기업개황 수집 실패: corp_code=%s", corp_code)
+            failed.append(corp_code)
+            continue
         except Exception:
             logger.exception("기업개황 수집 실패: corp_code=%s", corp_code)
             failed.append(corp_code)
@@ -67,7 +78,8 @@ def run(limit: int | None = None) -> None:
             updated += update_company_profile(session, profile)
 
     logger.info(
-        "DART 기업개황 수집 완료: 갱신 %d건, 데이터 없음 %d건, 실패 %d건 %s",
+        "DART 기업개황 수집 %s: 갱신 %d건, 데이터 없음 %d건, 실패 %d건 %s",
+        "중단(한도)" if quota_exceeded else "완료",
         updated,
         missing,
         len(failed),

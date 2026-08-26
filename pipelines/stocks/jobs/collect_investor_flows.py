@@ -19,6 +19,7 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.common.utils.time import now_kst
+from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.stocks.extractors.kis import fetch_foreign_holding, fetch_investor_flows
 from pipelines.stocks.loaders.flows import upsert_investor_flows
 from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
@@ -54,6 +55,8 @@ def run(limit: int | None = None, pages: int = 1) -> None:
     client = get_kis_client()
     with session_scope() as session:
         targets = fetch_serviceable_stocks(session, limit)
+        if not targets:
+            logger.warning("투자자 수급 수집 대상이 0종목이다 — %s", describe_universe(session))
         base_date = _resolve_base_date(session)
 
     logger.info(

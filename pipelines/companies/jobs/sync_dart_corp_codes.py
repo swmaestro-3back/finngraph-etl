@@ -10,8 +10,8 @@ corpCode.xml 한 번 내려받아 두 가지를 한다.
 
 from __future__ import annotations
 
+from pipelines.common.clients.dart import get_dart_client
 from pipelines.common.clients.postgres import session_scope
-from pipelines.common.dart import get_dart_client
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.companies.extractors.dart import fetch_corp_codes

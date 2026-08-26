@@ -50,22 +50,25 @@ ATTACH_CORP_CODE_BY_TICKER_SQL = text(
     """
 )
 
-# ② 없으면 만든다. 지금 거래되는 보통주에 한해 ticker를 채운다.
+# ② 없으면 만든다. corpCode 의 stock_code 를 그대로 ticker 로 쓴다.
+#
+# stocks 를 읽지 않는다. 예전에는 "지금 거래되는가"를 여기서 조인으로 판정했는데, 그러면
+# 이 잡이 stocks 보다 뒤에 돌아야 해서 순서가 얽혔다. 상장 여부는 sync_listed_companies 가
+# is_listed 로 관리하므로 판정이 두 곳에 있을 이유가 없다.
+#
+# 폐지된 종목의 stock_code 도 corpCode 에 남아 있어 그 법인들까지 ticker 를 갖는다(실측
+# 3,986 중 1,332). 활성 종목이 없어 is_listed 가 켜지지 않고 연결도 되지 않는다.
+# stock_code 는 중복이 0건이라 활성 티커 유니크에 걸릴 일도 없다.
 UPSERT_LISTED_CORP_SQL = text(
     """
     INSERT INTO companies (
       corp_code, ticker, name, country, is_listed, created_at, updated_at
     )
-    SELECT :corp_code, s.ticker, :name, 'KR', false, now(), now()
-      FROM stocks AS s
-     WHERE s.ticker = :stock_code
-       AND s.is_active
-       AND NOT s.preferred_stock
-       AND NOT s.etp
-       AND NOT s.spac
-       AND NOT EXISTS (
+    SELECT CAST(:corp_code AS TEXT), CAST(:stock_code AS VARCHAR), CAST(:name AS TEXT),
+           'KR', false, now(), now()
+     WHERE NOT EXISTS (
              SELECT 1 FROM companies AS x
-              WHERE x.ticker = s.ticker AND x.delisted_at IS NULL
+              WHERE x.ticker = CAST(:stock_code AS VARCHAR) AND x.delisted_at IS NULL
            )
     ON CONFLICT (corp_code) WHERE corp_code IS NOT NULL DO UPDATE SET
       ticker = COALESCE(companies.ticker, EXCLUDED.ticker),

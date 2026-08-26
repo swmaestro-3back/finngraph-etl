@@ -14,7 +14,7 @@ from datetime import date, datetime
 from typing import Any
 from xml.etree import ElementTree
 
-from pipelines.common.dart import DartClient, get_dart_client
+from pipelines.common.clients.dart import DartClient, get_dart_client
 from pipelines.companies.models import CompanyProfile, DartCorp
 
 CORP_CODE_PATH = "corpCode.xml"
