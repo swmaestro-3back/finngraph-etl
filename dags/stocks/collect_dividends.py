@@ -26,14 +26,14 @@ else:
 if dag and task:
 
     @dag(
-        dag_id="stocks_weekly_dividends",
+        dag_id="stocks_collect_dividends",
         start_date=datetime(2026, 1, 1),
         schedule="0 6 * * 6",
         catchup=False,
         max_active_runs=1,
         tags=["stocks"],
     )
-    def stocks_weekly_dividends():
+    def stocks_collect_dividends():
         @task(retries=2)
         def collect_dividends() -> None:
             from pipelines.stocks.jobs.collect_dividends import run
@@ -42,4 +42,4 @@ if dag and task:
 
         collect_dividends()
 
-    stocks_weekly_dividends()
+    stocks_collect_dividends()

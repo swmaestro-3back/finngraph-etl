@@ -13,11 +13,11 @@ except ImportError:
 SOURCES: tuple[str, ...] = ("naver",)
 
 if dag and task:
-    # 테마 편입 확정 신호. 수집 대상 파생(companies_service_companies)이 구독한다.
+    # 테마 편입 확정 신호. 수집 대상 파생(companies_sync_service_companies)이 구독한다.
     theme_stocks_loaded = Asset("etl://themes/stocks")
 
     @dag(
-        dag_id="themes_init",
+        dag_id="pipeline",
         start_date=datetime(2026, 1, 1),
         schedule=None,
         catchup=False,
@@ -25,7 +25,7 @@ if dag and task:
         tags=["themes"],
         default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
     )
-    def themes_init():
+    def themes_rebuild_pipeline():
         @task
         def extract_source(source_name: str) -> str:
             from pipelines.themes.jobs.extract_source import run
@@ -71,4 +71,4 @@ if dag and task:
 
     # 최종 흐름: extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb) -> embed
     # 전량 삭제는 각 로더(load_graph/load_rdb) 안에서 적재 직전에 일어난다.
-    themes_init()
+    themes_rebuild_pipeline()

@@ -41,13 +41,13 @@ if dag and task:
     def stocks_daily_pipeline():
         @task(retries=2)
         def collect_daily_candles() -> None:
-            from pipelines.stocks.jobs.collect_daily import run
+            from pipelines.stocks.jobs.collect_daily_candles import run
 
             run()
 
         @task(retries=2)
         def collect_period_candles() -> None:
-            from pipelines.stocks.jobs.collect_daily import run_period
+            from pipelines.stocks.jobs.collect_daily_candles import run_period
 
             run_period()
 

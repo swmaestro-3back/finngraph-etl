@@ -35,6 +35,37 @@ finngraph-etl/
   Airflow가 존재하지 않습니다.
 - Airflow task 하나당 `pipelines/{domain}/jobs/` 파일 하나를 두고, 진입점 함수 이름은 `run`,
   파일명은 `task_id`와 같게 맞춥니다. job은 조립만 하고 로직을 갖지 않습니다.
+
+### 네이밍
+
+**DAG는 명사(존재), task와 job은 동사구(행위), 동사는 아래 사전에 있는 것만 씁니다.**
+
+- **job 파일명 = `<동사>_<목적어>.py`.** 도메인은 경로(`pipelines/news/`)가 이미 말하므로
+  반복하지 않되, 목적어는 생략하지 않습니다(`summarize.py` ✗ → `summarize_articles.py` ✓).
+  동사가 두 개 필요해지면 이름 문제가 아니라 job 분리를 고민할 신호입니다.
+- **task_id = 호출하는 job 파일명.** Airflow UI에서 실패한 task 이름만 보고 해당 파일을
+  바로 찾을 수 있어야 합니다.
+- **dag_id = `<도메인>_<나머지>`.** UI가 평면 네임스페이스라 도메인 접두사를 유지합니다.
+  - 단일 task DAG → job 이름을 그대로 씁니다: `companies_collect_kis_financials`.
+  - 복수 task 오케스트레이션 DAG → `<수식어>_pipeline` 명사형: `stocks_daily_pipeline`.
+  - 주기(`daily`·`weekly`)는 그 주기 자체가 이름의 본질일 때만 넣습니다. 스케줄은
+    `schedule` 파라미터가 이미 말해줍니다(`weekly_dividends` ✗ → `collect_dividends` ✓).
+- **DAG 파일명 = dag_id에서 도메인 접두사를 뺀 것.** 예: `companies_collect_kis_financials`
+  ↔ `dags/companies/collect_kis_financials.py`.
+
+**동사 사전** — 같은 뜻의 동사가 늘어나지 않게, 새 동사가 필요하면 여기에 먼저 추가합니다.
+
+| 동사 | 의미 |
+|------|------|
+| `collect` | 외부 API/크롤링 → RDB 적재 |
+| `sync` | 원천 마스터 데이터 최신화 (멱등, 전체 갱신) |
+| `backfill` | 과거분 소급 수집 (주로 수동) |
+| `compute` | 기존 데이터에서 파생값 계산 |
+| `generate` | LLM 생성 |
+| `embed` | 벡터 임베딩 생성·적재 |
+| `extract` / `validate` / `load` | 단계 분리형 파이프라인의 ETL 각 단계 |
+| `summarize` | LLM 요약 |
+| `link` / `seed` | 그래프 간선 연결 / 초기 노드 적재 |
 - task를 나누는 기준은 **재시도 경계**입니다 — "여기가 깨졌을 때 앞 단계를 다시 돌리고
   싶은가?"에 아니라고 답하면 태스크를 나눕니다. DAG를 나누는 기준은 **트리거**입니다.
   스케줄이나 Asset이 다르면 태스크가 하나뿐이어도 별개 DAG입니다.

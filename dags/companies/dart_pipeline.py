@@ -4,7 +4,7 @@
 (fiscal_yymm)를 만들 때 결산월이 필요하고, 없으면 12월로 가정해 3월·6월 결산 법인이
 어긋난다.
 
-법인 행 생성(sync_corp_codes)은 companies_corp_codes 로 떼어냈다. 두 태스크가 대상을
+법인 행 생성(sync_dart_corp_codes)은 companies_sync_dart_corp_codes 로 떼어냈다. 두 태스크가 대상을
 service_companies 로 거르는데, 그 목록이 법인 위에서 정해지므로 한 DAG 에 있으면
 최초 실행에서 대상 0건으로 끝난다.
 """
@@ -43,17 +43,17 @@ if dag and task:
     )
     def companies_dart_pipeline():
         @task(retries=2)
-        def collect_profiles() -> None:
+        def collect_dart_profiles() -> None:
             from pipelines.companies.jobs.collect_dart_profiles import run
 
             run()
 
         @task(retries=2)
-        def collect_financials() -> None:
+        def collect_dart_financials() -> None:
             from pipelines.companies.jobs.collect_dart_financials import run
 
             run()
 
-        collect_profiles() >> collect_financials()
+        collect_dart_profiles() >> collect_dart_financials()
 
     companies_dart_pipeline()

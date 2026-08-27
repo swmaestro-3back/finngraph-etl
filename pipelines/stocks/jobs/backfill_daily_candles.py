@@ -4,7 +4,7 @@ FinanceDataReader로 종목당 1회 호출해 전 구간을 받는다. 이미 �
 거래일 다음날부터만 받아, 재실행이 처음부터 다시 긁지 않게 한다.
 
 수동 실행이 기본이다(DAG schedule=None). 2,600종목 × 1회라 한 번 돌리면 끝이고,
-매일 도는 갱신은 KIS 쪽(collect_daily)이 맡는다.
+매일 도는 갱신은 KIS 쪽(collect_daily_candles)이 맡는다.
 """
 
 from __future__ import annotations

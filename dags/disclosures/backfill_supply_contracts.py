@@ -33,11 +33,11 @@ if dag and task:
     )
     def disclosures_backfill_supply_contracts():
         @task
-        def run_backfill() -> None:
+        def backfill_supply_contracts() -> None:
             from pipelines.disclosures.jobs.backfill_supply_contracts import run
 
             run()
 
-        run_backfill()
+        backfill_supply_contracts()
 
     disclosures_backfill_supply_contracts()
