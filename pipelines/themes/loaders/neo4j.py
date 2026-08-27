@@ -26,6 +26,17 @@ DETACH DELETE t
     )
 
 
+async def replace_all_themes(themes: list[Theme]) -> dict[str, Any]:
+    """검증된 스냅샷으로 Theme 전량 삭제-재적재. RDB(load_themes)와 같은 전략이다.
+
+    Postgres와 달리 호출 단위 자동 커밋이라 삭제-적재가 한 트랜잭션은 아니다.
+    """
+
+    await delete_all_themes()
+    await upsert_themes(themes)
+    return {"themes": len(themes)}
+
+
 async def upsert_themes(themes: list[Theme]) -> None:
     """Theme 노드와 BELONGS_TO 간선을 적재한다."""
 

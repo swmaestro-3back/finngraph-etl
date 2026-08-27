@@ -12,11 +12,6 @@ from pipelines.stocks.loaders.tickers import fetch_active_stock_ids
 
 logger = get_logger(__name__)
 
-# 전량 삭제-재적재 앞의 안전장치. 크롤러가 부분적으로 깨져 소수의 테마만 파싱돼도
-# 기존 데이터를 날리지 않도록, 절대 개수와 기존 대비 비율을 함께 본다.
-MIN_THEMES_SAFETY = 50
-MIN_THEMES_RATIO = 0.5
-
 
 def _insert_theme(session, name: str, description: str) -> int:
     # 스냅샷 내 중복 테마명은 한 행으로 병합한다.
@@ -68,13 +63,6 @@ def _insert_theme_stocks(
 
 def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
 
-    if len(themes) < MIN_THEMES_SAFETY:
-        logger.error(
-            "테마 스냅샷이 %d개뿐이라 적재를 중단합니다(정상 데이터 덮어쓰기 방지).",
-            len(themes),
-        )
-        return {"themes": 0, "theme_stocks": 0, "unmatched": 0, "failed": 0, "skipped": True}
-
     theme_count = 0
     stock_count = 0
     unmatched_count = 0
@@ -82,22 +70,6 @@ def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
 
     with session_scope() as session:
         stock_ids = fetch_active_stock_ids(session)
-
-        # 부분 크롤 감지 — 기존 대비 급감한 스냅샷은 결측으로 보고 기존 데이터를 보존한다.
-        existing = session.execute(text("SELECT count(*) FROM themes;")).scalar_one()
-        if existing and len(themes) < existing * MIN_THEMES_RATIO:
-            logger.error(
-                "테마 스냅샷이 기존 %d개 대비 %d개로 급감해 적재를 중단합니다(크롤 결측 의심).",
-                existing,
-                len(themes),
-            )
-            return {
-                "themes": 0,
-                "theme_stocks": 0,
-                "unmatched": 0,
-                "failed": 0,
-                "skipped": True,
-            }
 
         # 전량 삭제-재적재. theme_stocks 는 FK ON DELETE CASCADE 로 함께 지워진다.
         session.execute(text("DELETE FROM themes;"))
@@ -130,7 +102,6 @@ def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
         "theme_stocks": stock_count,
         "unmatched": unmatched_count,
         "failed": failed_count,
-        "skipped": False,
     }
 
     logger.info(

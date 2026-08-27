@@ -17,7 +17,7 @@ if dag and task:
     theme_stocks_loaded = Asset("etl://themes/stocks")
 
     @dag(
-        dag_id="themes_refresh",
+        dag_id="themes_init",
         start_date=datetime(2026, 1, 1),
         schedule=None,
         catchup=False,
@@ -25,13 +25,7 @@ if dag and task:
         tags=["themes"],
         default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
     )
-    def themes_refresh():
-        @task(retries=0)
-        def reset_graph() -> None:
-            from pipelines.themes.jobs.reset_graph import run
-
-            run()
-
+    def themes_init():
         @task
         def extract_source(source_name: str) -> str:
             from pipelines.themes.jobs.extract_source import run
@@ -62,14 +56,11 @@ if dag and task:
 
             run()
 
-        reset = reset_graph()
-
-        # SOURCE별 task를 생성하고 reset 이후 병렬 실행되도록 fan-out
+        # SOURCE별 task를 생성해 병렬 실행되도록 fan-out
         # extracted 리스트는 SOURCES 순서를 유지
         extracted = [
             extract_source.override(task_id=f"extract_{source}")(source) for source in SOURCES
         ]
-        reset >> extracted
 
         validated = validate_themes(extracted)
 
@@ -78,5 +69,6 @@ if dag and task:
 
         graph_loaded >> embed_themes()
 
-    # 최종 흐름: reset -> extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb) -> embed
-    themes_refresh()
+    # 최종 흐름: extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb) -> embed
+    # 전량 삭제는 각 로더(load_graph/load_rdb) 안에서 적재 직전에 일어난다.
+    themes_init()

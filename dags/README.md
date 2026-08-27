@@ -32,7 +32,7 @@ dags/
 | stocks | `stocks/weekly_dividends.py` | `stocks_weekly_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/daily_backfill.py` | `stocks_daily_backfill` | `stocks` | 수동 |
 | stocks | `stocks/intraday_1m.py` | `stocks_intraday_1m` | `stocks` | **정지** (분봉 수집 제외) |
-| themes | `themes/refresh.py` | `themes_refresh` | `themes` | `0 0 * * *` (자정) |
+| themes | `themes/init.py` | `themes_init` | `themes` | 수동 |
 
 ## Asset 의존
 
@@ -64,7 +64,7 @@ flowchart TB
     SWD["stocks_weekly_dividends<br/><code>0 6 * * 6</code>"]
     SDB["stocks_daily_backfill<br/>수동"]
     SI1["stocks_intraday_1m<br/>정지"]
-    TR["themes_refresh<br/><code>0 0 * * *</code>"]
+    TR["themes_init<br/>수동"]
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
