@@ -113,6 +113,59 @@ def test_build_disclosure_resolves_filer_and_counterparty() -> None:
     assert record.meta["parser_version"] == 2
 
 
+def test_build_disclosure_promotes_correction_chain_fields() -> None:
+    """정정공시는 정정신고 블록의 체인 재료가 컬럼으로 승격된다.
+
+    original_rcept_no 는 원문에 부모 접수번호가 없어 삽입 시점에는 미확정(None)이고,
+    link job 의 체인 해소가 채운다. 정정 블록 원문(fields["correction"])은 그대로 남는다.
+    """
+
+    html, golden = load_pair("20260821900482")
+    filing = {
+        "corp_code": "00116408",
+        "corp_name": "동신건설",
+        "stock_code": "025950",
+        "corp_cls": "K",
+        "report_nm": "[기재정정]단일판매ㆍ공급계약체결",
+        "rcept_no": "20260821900482",
+        "flr_nm": "동신건설",
+        "rcept_dt": "20260821",
+    }
+
+    record = build_disclosure(filing, html, CorpMaster([]))
+
+    assert record.is_correction
+    assert record.correction_target_report == "단일판매공급계약"
+    assert record.correction_target_date.isoformat() == "2026-07-09"
+    assert (
+        record.correction_reason == "안전공사 수준평가 맞춤형 컨설팅 결과반영에 의한 계약금액 감액"
+    )
+    assert record.original_rcept_no is None
+    assert record.fields["correction"] == golden["fields"]["correction"]
+
+
+def test_build_disclosure_original_rcept_no_is_self_for_non_correction() -> None:
+    """원공시는 자기 자신이 체인 루트다 — 삽입 시점에 바로 확정된다."""
+
+    html, _ = load_pair("20260821800662")
+    filing = {
+        "corp_code": "00103510",
+        "corp_cls": "Y",
+        "report_nm": "단일판매ㆍ공급계약체결",
+        "rcept_no": "20260821800662",
+        "flr_nm": "인지컨트롤스",
+        "rcept_dt": "20260821",
+    }
+
+    record = build_disclosure(filing, html, CorpMaster([]))
+
+    assert not record.is_correction
+    assert record.original_rcept_no == "20260821800662"
+    assert record.correction_target_report is None
+    assert record.correction_target_date is None
+    assert record.correction_reason is None
+
+
 def test_build_disclosure_unknown_filer_keeps_nulls() -> None:
     html, _ = load_pair("20260821900624")
     filing = {

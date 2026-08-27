@@ -374,6 +374,33 @@ _PROMOTED_TEXT_FIELDS = (
 )
 _PROMOTED_DATE_FIELDS = ("start_date", "end_date", "order_date")
 
+# 정정신고 블록에서 컬럼으로 승격하는 항목. 라벨은 canon 키로 비교한다("2. 정정관련
+# 공시서류제출일" 류 번호·공백 무시). 블록 원문(fields["correction"])은 그대로 남긴다 —
+# 정정사항(정정전/정정후) 목록은 구조가 가변적이라 승격하지 않는다.
+_CORRECTION_PROMOTED = {
+    "정정관련공시서류": "correction_target_report",
+    "정정관련공시서류제출일": "correction_target_date",
+    "정정사유": "correction_reason",
+}
+
+
+def _promote_correction(correction: dict[str, Any] | None) -> dict[str, Any]:
+    promoted: dict[str, Any] = {field: None for field in _CORRECTION_PROMOTED.values()}
+    if not correction:
+        return promoted
+    for label, value in correction.items():
+        if not isinstance(value, str):
+            continue  # items(정정사항 목록)는 승격 대상이 아니다
+        field = _CORRECTION_PROMOTED.get(canon(label))
+        if field is None or is_blank(value):
+            continue
+        if field == "correction_target_date":
+            iso = to_date(value)
+            promoted[field] = date.fromisoformat(iso) if iso else None
+        else:
+            promoted[field] = clean(value)
+    return promoted
+
 
 def _pop_promoted_date(fields: dict[str, Any], key: str) -> date | None:
     """승격 날짜 항목을 fields 에서 꺼낸다.
@@ -410,6 +437,7 @@ def build_disclosure(
 
     promoted = {key: fields.pop(key, None) for key in _PROMOTED_TEXT_FIELDS}
     promoted_dates = {key: _pop_promoted_date(fields, key) for key in _PROMOTED_DATE_FIELDS}
+    correction = _promote_correction(fields.get("correction"))
 
     rcept_no = str(filing["rcept_no"])
     corp_code = str(filing.get("corp_code") or "")
@@ -423,6 +451,12 @@ def build_disclosure(
         corp_cls=market(filing.get("corp_cls")),
         report_nm=clean(filing.get("report_nm") or "") or None,
         is_correction=is_correction,
+        correction_target_report=correction["correction_target_report"],
+        correction_target_date=correction["correction_target_date"],
+        correction_reason=correction["correction_reason"],
+        # 정정공시의 체인 루트는 원문만으로 알 수 없다(부모의 제출일만 있고 접수번호가
+        # 없다) — link job 의 체인 해소가 채운다.
+        original_rcept_no=None if is_correction else rcept_no,
         rcept_dt=datetime.strptime(str(filing["rcept_dt"]), "%Y%m%d").date(),
         flr_nm=filing.get("flr_nm"),
         link=VIEWER_URL.format(rcept_no=rcept_no),

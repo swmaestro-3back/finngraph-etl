@@ -19,7 +19,8 @@ UPSERT_DISCLOSURE_SQL = text(
     """
     INSERT INTO disclosures (
       rcept_no, corp_code, company_id, ticker, corp_cls, report_nm,
-      is_correction, rcept_dt, flr_nm, link,
+      is_correction, correction_target_report, correction_target_date,
+      correction_reason, original_rcept_no, rcept_dt, flr_nm, link,
       contract_type, contract_name, counterparty,
       counterparty_corp_name, counterparty_corp_code, counterparty_ticker,
       start_date, end_date, order_date,
@@ -27,7 +28,8 @@ UPSERT_DISCLOSURE_SQL = text(
     )
     VALUES (
       :rcept_no, :corp_code, :company_id, :ticker, :corp_cls, :report_nm,
-      :is_correction, :rcept_dt, :flr_nm, :link,
+      :is_correction, :correction_target_report, :correction_target_date,
+      :correction_reason, :original_rcept_no, :rcept_dt, :flr_nm, :link,
       :contract_type, :contract_name, :counterparty,
       :counterparty_corp_name, :counterparty_corp_code, :counterparty_ticker,
       :start_date, :end_date, :order_date,
@@ -39,6 +41,12 @@ UPSERT_DISCLOSURE_SQL = text(
       corp_cls = EXCLUDED.corp_cls,
       report_nm = EXCLUDED.report_nm,
       is_correction = EXCLUDED.is_correction,
+      correction_target_report = EXCLUDED.correction_target_report,
+      correction_target_date = EXCLUDED.correction_target_date,
+      correction_reason = EXCLUDED.correction_reason,
+      -- 재파싱 시 정정공시의 새 값(NULL)이 link job 의 체인 해소 결과를 지우지 않게
+      -- 기존 값을 보존한다. 잘못 해소된 값도 다음 link 실행이 전량 재계산으로 바로잡는다.
+      original_rcept_no = COALESCE(EXCLUDED.original_rcept_no, disclosures.original_rcept_no),
       rcept_dt = EXCLUDED.rcept_dt,
       flr_nm = EXCLUDED.flr_nm,
       link = EXCLUDED.link,
@@ -61,24 +69,80 @@ SELECT_EXISTING_RCEPT_NOS_SQL = text(
     "SELECT rcept_no FROM disclosures WHERE rcept_no = ANY(:rcept_nos)"
 )
 
-# 근거 원장 대상 — 제출사·계약상대 양쪽 모두 ticker 가 있는 공시만. 계약상대 ticker 는
-# 역매칭 성공(상장사 확정)을 뜻한다. 정규명은 companies 조인으로 해석한다 — Neo4j 시드
-# 노드의 name 과 같은 원천(companies.name)이라 간선 자연키가 그래프와 일치한다.
+# 정정 체인 해소 — 각 정정공시의 부모(직전 회차)를 같은 회사의 correction_target_date
+# 접수분에서 찾고, 재귀로 루트(최초 원공시)까지 따라가 original_rcept_no 를 확정한다.
+#
+# 부모 후보가 여럿이면(같은 날 같은 회사의 공시 다건) 접수번호가 앞서는 것 중 가장 늦은
+# 행을 직전 회차로 본다 — DART 의 "정정관련 공시서류제출일"이 직전 회차의 제출일이라
+# 접수 순서상 가장 가까운 앞선 행이 맞을 확률이 가장 높다. 같은 날 서로 다른 계약이
+# 섞이면 오매칭 여지가 있으나, 매 실행 전량 재계산이라 로직 개선 시 자동 교정된다.
+# 부모를 못 찾은 정정(백필 범위 밖·비정형 제출일)은 자기 자신을 루트로 삼아 별개
+# 계약으로 취급한다 — 집계를 실제보다 줄이지 않는 보수적 폴백이다.
+RESOLVE_ORIGINAL_RCEPT_NOS_SQL = text(
+    """
+    WITH RECURSIVE parents AS (
+        SELECT DISTINCT ON (c.rcept_no)
+               c.rcept_no,
+               p.rcept_no AS parent_rcept_no
+          FROM disclosures c
+          JOIN disclosures p
+            ON p.corp_code = c.corp_code
+           AND p.rcept_dt = c.correction_target_date
+           AND p.rcept_no < c.rcept_no
+         WHERE c.is_correction
+           AND c.correction_target_date IS NOT NULL
+         ORDER BY c.rcept_no, p.rcept_no DESC
+    ),
+    roots AS (
+        SELECT d.rcept_no, d.rcept_no AS root_rcept_no
+          FROM disclosures d
+          LEFT JOIN parents pr ON pr.rcept_no = d.rcept_no
+         WHERE pr.rcept_no IS NULL
+        UNION ALL
+        SELECT pr.rcept_no, r.root_rcept_no
+          FROM parents pr
+          JOIN roots r ON r.rcept_no = pr.parent_rcept_no
+    )
+    UPDATE disclosures d
+       SET original_rcept_no = r.root_rcept_no,
+           updated_at = now()
+      FROM roots r
+     WHERE d.rcept_no = r.rcept_no
+       AND d.original_rcept_no IS DISTINCT FROM r.root_rcept_no
+    """
+)
+
+# 근거 원장 대상 — 체인(original_rcept_no)당 최신 회차 1행만. 같은 계약의 원공시·정정
+# 회차들이 원장에 나란히 실려 disclosure_count 를 부풀리는 것을 막는다. 내용(계약상대·
+# 계약명)은 최신 회차의 확정값을 쓰고, mentioned_at 은 원공시 접수일이다(계약이 처음
+# 알려진 시점). 제출사·계약상대 양쪽 모두 ticker 가 있는 행만 남는다 — 최신 회차가
+# 매칭에 실패하면 체인 전체가 빠지고 delete_stale 이 옛 간선을 회수한다. 정규명은
+# companies 조인으로 해석한다 — Neo4j 시드 노드의 name 과 같은 원천(companies.name)이라
+# 간선 자연키가 그래프와 일치한다.
 SELECT_SUPPLY_EDGES_SQL = text(
     """
-    SELECT d.rcept_no,
-           d.rcept_dt,
-           COALESCE(d.contract_name, d.contract_type) AS item,
-           d.ticker,
+    WITH latest AS (
+        SELECT DISTINCT ON (COALESCE(original_rcept_no, rcept_no))
+               rcept_no,
+               COALESCE(original_rcept_no, rcept_no) AS original_rcept_no,
+               contract_name, contract_type, ticker, counterparty_ticker
+          FROM disclosures
+         ORDER BY COALESCE(original_rcept_no, rcept_no), rcept_no DESC
+    )
+    SELECT l.rcept_no,
+           o.rcept_dt,
+           COALESCE(l.contract_name, l.contract_type) AS item,
+           l.ticker,
            f.name AS filer_name,
-           d.counterparty_ticker,
+           l.counterparty_ticker,
            c.name AS counterparty_name
-      FROM disclosures d
-      JOIN companies f ON f.ticker = d.ticker AND f.delisted_at IS NULL
-      JOIN companies c ON c.ticker = d.counterparty_ticker AND c.delisted_at IS NULL
-     WHERE d.ticker IS NOT NULL
-       AND d.counterparty_ticker IS NOT NULL
-     ORDER BY d.rcept_no
+      FROM latest l
+      JOIN disclosures o ON o.rcept_no = l.original_rcept_no
+      JOIN companies f ON f.ticker = l.ticker AND f.delisted_at IS NULL
+      JOIN companies c ON c.ticker = l.counterparty_ticker AND c.delisted_at IS NULL
+     WHERE l.ticker IS NOT NULL
+       AND l.counterparty_ticker IS NOT NULL
+     ORDER BY l.rcept_no
     """
 )
 
@@ -139,6 +203,10 @@ def upsert_disclosures(session: Session, records: list[DisclosureRecord]) -> int
                 "corp_cls": record.corp_cls,
                 "report_nm": record.report_nm,
                 "is_correction": record.is_correction,
+                "correction_target_report": record.correction_target_report,
+                "correction_target_date": record.correction_target_date,
+                "correction_reason": record.correction_reason,
+                "original_rcept_no": record.original_rcept_no,
                 "rcept_dt": record.rcept_dt,
                 "flr_nm": record.flr_nm,
                 "link": record.link,
@@ -169,8 +237,19 @@ def fetch_existing_rcept_nos(session: Session, rcept_nos: list[str]) -> set[str]
     return {row.rcept_no for row in rows}
 
 
+def resolve_original_rcept_nos(session: Session) -> int:
+    """정정 체인을 재귀로 풀어 original_rcept_no 를 확정한다. 갱신한 행 수를 반환한다.
+
+    매 실행 전량 재계산이라 멱등이다 — 늦게 적재된 원공시도 다음 실행에서 연결되고,
+    새 정정이 오면 그 체인의 루트가 다시 계산된다.
+    """
+
+    result = session.execute(RESOLVE_ORIGINAL_RCEPT_NOS_SQL)
+    return result.rowcount or 0
+
+
 def fetch_supply_edges(session: Session) -> list[SupplyContractEdge]:
-    """근거 원장 재료 전량 — 계약상대 ticker 매칭에 성공한 공시."""
+    """근거 원장 재료 — 계약상대 ticker 매칭에 성공한 공시, 체인당 최신 회차 1행."""
 
     rows = session.execute(SELECT_SUPPLY_EDGES_SQL)
     return [
