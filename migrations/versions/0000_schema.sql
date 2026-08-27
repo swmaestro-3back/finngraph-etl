@@ -191,20 +191,13 @@ CREATE TABLE IF NOT EXISTS stock_period_candles (
 );
 
 CREATE TABLE IF NOT EXISTS investor_flows (
-    stock_id        BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
-    trade_date      DATE   NOT NULL,
-    personal_net    BIGINT,
-    institution_net BIGINT,
-    foreign_net     BIGINT,
-    foreign_ratio   NUMERIC,
-    trust_net       BIGINT,
-    pension_net     BIGINT,
-    insurance_net   BIGINT,
-    bank_net        BIGINT,
-    etc_corp_net    BIGINT,
-    -- 재수집 시 갱신 시각을 남긴다. 외국인 보유율(foreign_ratio)은 순매수와 원천이 달라
-    -- (현재가 조회 스냅샷) 최신 거래일 행에만 채워지는데, 언제 채워졌는지 알아야 한다.
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    stock_id            BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
+    trade_date          DATE   NOT NULL,
+    individual_net_qty  BIGINT,
+    institution_net_qty BIGINT,
+    foreign_net_qty     BIGINT,
+    foreign_hold_ratio  NUMERIC,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (stock_id, trade_date)
 );
 

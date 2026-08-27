@@ -33,7 +33,8 @@ dags/
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
-| themes | `themes/rebuild_pipeline.py` | `themes_rebuild_pipeline` | `themes` | 수동 |
+| stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
+| themes | `themes/pipeline.py` | `themes_pipeline` | `themes` | 수동 |
 
 ## Asset 의존
 
@@ -64,13 +65,14 @@ flowchart TB
     CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
     SBD["stocks_backfill_daily_candles<br/>수동"]
-    TR["themes_rebuild_pipeline<br/>수동"]
+    SBI["stocks_backfill_investor_flows<br/>수동"]
+    TR["themes_pipeline<br/>수동"]
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class NP,CDP,CGD,SCD,SBD,TR,HC,DCD,DBF cron
+    class NP,CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
 ```
 
 ## `dag_id`

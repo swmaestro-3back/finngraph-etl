@@ -1,6 +1,6 @@
 """서비스 대상 동기화.
 
-theme_stocks 에 편입된 종목의 법인을 수집 대상으로 올린다. themes_rebuild_pipeline 이 테마를
+theme_stocks 에 편입된 종목의 법인을 수집 대상으로 올린다. themes_pipeline 이 테마를
 갱신한 직후에 돈다.
 
 수집 대상이 곧 모든 파이프라인의 범위다 — 시세·수급·배당·재무·설명이 전부 이 목록을

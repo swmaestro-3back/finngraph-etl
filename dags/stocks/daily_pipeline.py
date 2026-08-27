@@ -5,7 +5,8 @@
     일봉 → 기간봉(주·월) → 투자자 수급
 
 같은 KIS 호출 예산을 쓰는 작업은 한 DAG에 묶어 동시 실행을 피한다 — 여러 DAG가 겹치면
-초당 호출 한도에 걸린다. 수급도 마감 후 KIS 배치라 여기에 함께 둔다.
+초당 호출 한도에 걸린다. 수급은 네이버 API 라 KIS 예산과 무관하지만, 마감 후 확정값을
+받는 일배치라 여기에 함께 둔다.
 
 끝나면 Asset을 발행한다. 파생 지표(PER·PBR·수익률)는 시세와 재무가 둘 다 있어야
 계산되므로, 시각이 아니라 두 Asset이 모두 갱신된 시점에 기동한다(stocks_compute_derived).
@@ -16,7 +17,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from airflow.sdk import Asset, dag, task
@@ -51,7 +52,9 @@ if dag and task:
 
             run_period()
 
-        @task(retries=2, outlets=[stocks_daily_collected])
+        # 수급은 네이버 비공식 API 라 차단 의심 시 즉시 실패한다. 기본 5분 재시도는
+        # 차단이 풀리기에 짧아 간격을 늘려 둔다.
+        @task(retries=2, retry_delay=timedelta(minutes=15), outlets=[stocks_daily_collected])
         def collect_investor_flows() -> None:
             from pipelines.stocks.jobs.collect_investor_flows import run
 

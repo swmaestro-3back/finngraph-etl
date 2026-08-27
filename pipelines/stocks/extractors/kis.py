@@ -17,7 +17,7 @@ from typing import Any
 
 from pipelines.common.clients.kis import KisClient, get_kis_client
 from pipelines.common.logging import get_logger
-from pipelines.stocks.models import Dividend, ForeignHolding, InvestorFlow
+from pipelines.stocks.models import Dividend
 from pipelines.stocks.types import DailyCandle, PeriodCandle
 
 logger = get_logger(__name__)
@@ -25,13 +25,8 @@ logger = get_logger(__name__)
 CHART_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
 CHART_TR_ID = "FHKST03010100"
 
-INVESTOR_PATH = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
-INVESTOR_TR_ID = "FHPTJ04160001"
-
 DIVIDEND_PATH = "/uapi/domestic-stock/v1/ksdinfo/dividend"
 DIVIDEND_TR_ID = "HHKDB669102C0"
-PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
-PRICE_TR_ID = "FHKST01010100"
 
 # 기간 조회 1회 최대 건수. 이 수만큼 돌아오면 더 있을 수 있다는 신호다.
 CHART_PAGE_SIZE = 100
@@ -103,65 +98,6 @@ def fetch_period_candles(
     return sorted(candles, key=lambda candle: candle.base_date)
 
 
-# -- 내부 --------------------------------------------------------------------
-
-
-def fetch_investor_flows(
-    ticker: str,
-    base_date: date,
-    client: KisClient | None = None,
-) -> list[InvestorFlow]:
-    """base_date 기준 직전 30영업일의 투자자 수급을 가져온다.
-
-    소급 조회가 되므로 base_date를 30영업일씩 과거로 옮기면 백필이 된다(task.md 3-9).
-
-    Args:
-        ticker (str): 단축코드.
-        base_date (date): 조회 기준일.
-        client (KisClient | None): 재사용할 클라이언트.
-
-    Returns:
-        list[InvestorFlow]: 거래일 오름차순. 최대 30건.
-    """
-
-    client = client or get_kis_client()
-    data = client.request(
-        INVESTOR_PATH,
-        INVESTOR_TR_ID,
-        {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": ticker,
-            "FID_INPUT_DATE_1": base_date.strftime("%Y%m%d"),
-            "FID_ORG_ADJ_PRC": "0",
-            "FID_PERIOD_DIV_CODE": "D",
-            "FID_ETC_CLS_CODE": "0",
-        },
-    )
-
-    flows: list[InvestorFlow] = []
-    for row in data.get("output2") or []:
-        trade_date = _parse_date(row.get("stck_bsop_date"))
-        if trade_date is None:
-            continue
-
-        flows.append(
-            InvestorFlow(
-                ticker=ticker,
-                trade_date=trade_date,
-                foreign_net=_parse_int(row.get("frgn_ntby_qty")),
-                personal_net=_parse_int(row.get("prsn_ntby_qty")),
-                institution_net=_parse_int(row.get("orgn_ntby_qty")),
-                pension_net=_parse_int(row.get("fund_ntby_qty")),
-                trust_net=_parse_int(row.get("ivtr_ntby_qty")),
-                insurance_net=_parse_int(row.get("insu_ntby_qty")),
-                bank_net=_parse_int(row.get("bank_ntby_qty")),
-                etc_corp_net=_parse_int(row.get("etc_corp_ntby_vol")),
-            )
-        )
-
-    return sorted(flows, key=lambda flow: flow.trade_date)
-
-
 def fetch_dividends(
     ticker: str,
     start: date,
@@ -212,47 +148,6 @@ def fetch_dividends(
         )
 
     return sorted(dividends, key=lambda dividend: dividend.record_date)
-
-
-def fetch_foreign_holding(ticker: str, client: KisClient | None = None) -> ForeignHolding | None:
-    """외국인 보유 스냅샷을 가져온다.
-
-    `hts_frgn_ehrt`를 쓰지 않는다. 그 값은 보유주식수를 상장주식수가 아니라 외국인
-    한도주식수로 나눈 '소진율'이다. 한도가 100%인 종목에서는 보유율과 같지만 통신·항공처럼
-    49%인 업종에서는 두 배로 벌어진다(2026-08-11 실측: KT 소진율 100.00% / 실제 보유율
-    49.00%, SK텔레콤 72.54% / 35.54%). 보유율은 보유주식수를 직접 나눠 만든다.
-
-    현재가 조회는 현재 시점 스냅샷이라 과거 소급이 안 된다. 매일 받아 쌓아야 시계열이 된다.
-
-    Args:
-        ticker (str): 단축코드.
-        client (KisClient | None): 재사용할 클라이언트.
-
-    Returns:
-        ForeignHolding | None: 보유수량이나 상장주식수가 비어 오면 None.
-    """
-
-    client = client or get_kis_client()
-    data = client.request(
-        PRICE_PATH,
-        PRICE_TR_ID,
-        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
-    )
-
-    output = data.get("output") or {}
-    hold_qty = _parse_int(output.get("frgn_hldn_qty"))
-    listed_shares = _parse_int(output.get("lstn_stcn"))
-
-    if hold_qty is None or not listed_shares:
-        return None
-
-    ratio = (Decimal(hold_qty) / Decimal(listed_shares) * 100).quantize(Decimal("0.0001"))
-    return ForeignHolding(
-        ticker=ticker,
-        hold_qty=hold_qty,
-        listed_shares=listed_shares,
-        ratio=ratio,
-    )
 
 
 # -- 내부 --------------------------------------------------------------------
