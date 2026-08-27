@@ -24,19 +24,28 @@ class CorpMasterRow:
 
 @dataclass(frozen=True)
 class SupplyContractEdge:
-    """Neo4j SUPPLIES_TO 간선 한 개의 재료 — 계약상대 ticker 매칭에 성공한 공시만.
+    """SUPPLIES_TO 근거 원장 행 한 개의 재료 — 계약상대 ticker 매칭에 성공한 공시만.
+
+    relation_sources(근거 원장)의 disclosure 행이 되고, 간선 자연키의 정규명은
+    companies 조인으로 해석한다 — Neo4j 시드 노드의 name과 같은 원천이라 일치한다.
 
     Attributes:
-        rcept_no (str): 접수번호. 간선 provenance 로 쌓인다.
-        link (str): DART 뷰어 URL.
+        rcept_no (str): 접수번호. 원장의 출처 키. 뷰어 URL 은 disclosures.link 조인으로 얻는다.
+        rcept_dt (date): 접수일자. 원장의 mentioned_at.
+        item (str | None): COALESCE(contract_name, contract_type).
         filer_ticker (str): 제출사(공급자) 종목 단축코드.
+        filer_name (str): 제출사 정규명 (companies.name).
         counterparty_ticker (str): 계약상대(수요자) 종목 단축코드.
+        counterparty_name (str): 계약상대 정규명 (companies.name).
     """
 
     rcept_no: str
-    link: str
+    rcept_dt: date
+    item: str | None
     filer_ticker: str
+    filer_name: str
     counterparty_ticker: str
+    counterparty_name: str
 
 
 @dataclass(frozen=True)
