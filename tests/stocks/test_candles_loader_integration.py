@@ -71,7 +71,7 @@ def _rows() -> list[dict]:
             text(
                 """
                 SELECT c.trade_date, c.close, c.trade_value, c.source
-                  FROM daily_candles AS c
+                  FROM stock_candles_daily AS c
                   JOIN stocks AS s ON s.id = c.stock_id
                  WHERE s.ticker = :ticker
                  ORDER BY c.trade_date
@@ -110,7 +110,7 @@ def test_daily_candles_are_keyed_by_stock_id() -> None:
             text(
                 """
                 SELECT c.stock_id
-                  FROM daily_candles AS c
+                  FROM stock_candles_daily AS c
                   JOIN stocks AS s ON s.id = c.stock_id
                  WHERE s.ticker = :ticker AND c.trade_date = :d
                 """
@@ -213,7 +213,7 @@ def test_period_candles_separate_week_and_month() -> None:
         count = session.execute(
             text(
                 """
-                SELECT count(*) FROM stock_period_candles AS c
+                SELECT count(*) FROM stock_candles_period AS c
                   JOIN stocks AS s ON s.id = c.stock_id
                  WHERE s.ticker = :ticker
                 """

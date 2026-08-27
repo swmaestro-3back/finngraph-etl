@@ -17,7 +17,7 @@ from pipelines.stocks.types import DailyCandle, MinuteCandle, PeriodCandle
 
 UPSERT_DAILY_CANDLE_SQL = text(
     """
-    INSERT INTO daily_candles (
+    INSERT INTO stock_candles_daily (
       stock_id, trade_date, open, high, low, close, volume, trade_value, source, updated_at
     )
     VALUES (
@@ -30,7 +30,7 @@ UPSERT_DAILY_CANDLE_SQL = text(
       close = EXCLUDED.close,
       volume = EXCLUDED.volume,
       -- 거래대금은 원천에 따라 없을 수 있다. NULL로 덮어써서 기존 값을 지우지 않는다.
-      trade_value = COALESCE(EXCLUDED.trade_value, daily_candles.trade_value),
+      trade_value = COALESCE(EXCLUDED.trade_value, stock_candles_daily.trade_value),
       source = EXCLUDED.source,
       updated_at = now()
     """
@@ -38,7 +38,7 @@ UPSERT_DAILY_CANDLE_SQL = text(
 
 UPSERT_PERIOD_CANDLE_SQL = text(
     """
-    INSERT INTO stock_period_candles (
+    INSERT INTO stock_candles_period (
       stock_id, period, base_date, open, high, low, close, volume, trade_value, updated_at
     )
     VALUES (
@@ -50,7 +50,7 @@ UPSERT_PERIOD_CANDLE_SQL = text(
       low = EXCLUDED.low,
       close = EXCLUDED.close,
       volume = EXCLUDED.volume,
-      trade_value = COALESCE(EXCLUDED.trade_value, stock_period_candles.trade_value),
+      trade_value = COALESCE(EXCLUDED.trade_value, stock_candles_period.trade_value),
       updated_at = now()
     """
 )
@@ -58,7 +58,7 @@ UPSERT_PERIOD_CANDLE_SQL = text(
 SELECT_LATEST_DAILY_CANDLE_DATES_SQL = text(
     """
     SELECT stock_id, MAX(trade_date) AS latest
-      FROM daily_candles
+      FROM stock_candles_daily
      GROUP BY stock_id
     """
 )

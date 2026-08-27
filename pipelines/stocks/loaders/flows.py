@@ -10,7 +10,7 @@ from pipelines.stocks.models import Dividend, InvestorFlow
 
 UPSERT_INVESTOR_FLOW_SQL = text(
     """
-    INSERT INTO investor_flows (
+    INSERT INTO stock_investor_flows (
       stock_id, trade_date, individual_net_qty, institution_net_qty,
       foreign_net_qty, foreign_hold_ratio, updated_at
     )
@@ -28,12 +28,12 @@ UPSERT_INVESTOR_FLOW_SQL = text(
 )
 
 SELECT_INVESTOR_FLOW_COUNTS_SQL = text(
-    "SELECT stock_id, COUNT(*) AS row_count FROM investor_flows GROUP BY stock_id"
+    "SELECT stock_id, COUNT(*) AS row_count FROM stock_investor_flows GROUP BY stock_id"
 )
 
 UPSERT_DIVIDEND_SQL = text(
     """
-    INSERT INTO dividends (listing_id, record_date, divi_kind, dps, pay_date, updated_at)
+    INSERT INTO stock_dividends (listing_id, record_date, divi_kind, dps, pay_date, updated_at)
     VALUES (:stock_id, :record_date, :divi_kind, :dps, :pay_date, now())
     ON CONFLICT (listing_id, record_date, divi_kind) DO UPDATE SET
       dps = EXCLUDED.dps,

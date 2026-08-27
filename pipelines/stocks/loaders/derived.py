@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 # 시가총액은 종가 × 상장주식수로 만든다. master 값은 전일 기준가라 당일 종가와 어긋난다.
 UPSERT_VALUATION_SQL = text(
     """
-    INSERT INTO valuation_daily (
+    INSERT INTO stock_valuations_daily (
       listing_id, trade_date, market_cap, per, pbr, eps, bps, dividend_yield
     )
     SELECT
@@ -33,7 +33,7 @@ UPSERT_VALUATION_SQL = text(
         WHEN c.close > 0 AND d.dps_sum IS NOT NULL AND d.dps_sum > 0
         THEN ROUND(d.dps_sum / c.close * 100, 2)
       END
-      FROM daily_candles AS c
+      FROM stock_candles_daily AS c
       JOIN stocks AS s ON s.id = c.stock_id
       LEFT JOIN LATERAL (
              -- TTM(최근 12개월) EPS = 분기 개별 EPS 네 개의 합.
@@ -74,7 +74,7 @@ UPSERT_VALUATION_SQL = text(
       LEFT JOIN LATERAL (
              -- 최근 1년 배당 합. 분기배당이면 4건이 더해지고, 무배당(0)은 제외한다.
              SELECT SUM(dv.dps) AS dps_sum
-               FROM dividends AS dv
+               FROM stock_dividends AS dv
               WHERE dv.listing_id = c.stock_id
                 AND dv.dps IS NOT NULL
                 AND dv.dps > 0
@@ -94,11 +94,11 @@ UPSERT_VALUATION_SQL = text(
 
 # 기간 수익률
 #
-# valuation_daily 에 함께 담는다. 별도 테이블이면 같은 키를 두 번 관리하게 된다.
+# stock_valuations_daily 에 함께 담는다. 별도 테이블이면 같은 키를 두 번 관리하게 된다.
 # 비교 대상은 N일 전 이전의 가장 가까운 거래일이다 — 그 날이 휴장이면 봉이 없다.
 UPDATE_RETURNS_SQL = text(
     """
-    UPDATE valuation_daily AS v
+    UPDATE stock_valuations_daily AS v
        SET r_1w = r.r_1w,
            r_1m = r.r_1m,
            r_3m = r.r_3m
@@ -109,20 +109,20 @@ UPDATE_RETURNS_SQL = text(
           ROUND((c.close / NULLIF(w.close, 0) - 1) * 100, 2) AS r_1w,
           ROUND((c.close / NULLIF(m.close, 0) - 1) * 100, 2) AS r_1m,
           ROUND((c.close / NULLIF(q.close, 0) - 1) * 100, 2) AS r_3m
-          FROM daily_candles AS c
+          FROM stock_candles_daily AS c
           LEFT JOIN LATERAL (
-                 SELECT p.close FROM daily_candles AS p
+                 SELECT p.close FROM stock_candles_daily AS p
                   WHERE p.stock_id = c.stock_id AND p.trade_date <= c.trade_date - INTERVAL '7 days'
                   ORDER BY p.trade_date DESC LIMIT 1
                ) AS w ON true
           LEFT JOIN LATERAL (
-                 SELECT p.close FROM daily_candles AS p
+                 SELECT p.close FROM stock_candles_daily AS p
                   WHERE p.stock_id = c.stock_id
                     AND p.trade_date <= c.trade_date - INTERVAL '1 month'
                   ORDER BY p.trade_date DESC LIMIT 1
                ) AS m ON true
           LEFT JOIN LATERAL (
-                 SELECT p.close FROM daily_candles AS p
+                 SELECT p.close FROM stock_candles_daily AS p
                   WHERE p.stock_id = c.stock_id
                     AND p.trade_date <= c.trade_date - INTERVAL '3 months'
                   ORDER BY p.trade_date DESC LIMIT 1
