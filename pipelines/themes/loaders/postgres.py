@@ -1,6 +1,11 @@
 """테마 Postgres 적재.
 
-`load_themes`: 크롤링 스냅샷을 themes/theme_stocks에 정합 (themes_refresh, 일 1회)
+`load_themes`: 크롤링 스냅샷으로 themes/theme_stocks 전량 삭제-재적재
+(themes_refresh, 일 1회). Neo4j 쪽(reset_graph → load_graph)과 같은 전략이다.
+
+삭제와 재적재가 한 트랜잭션이라 중간 실패 시 이전 데이터가 그대로 남는다.
+행이 매번 새로 만들어지므로 embedding 컬럼은 NULL 로 시작하고, 후속
+embed_themes 가 전량 재임베딩한다.
 """
 
 from __future__ import annotations
@@ -15,10 +20,14 @@ from pipelines.stocks.loaders.tickers import fetch_active_stock_ids
 
 logger = get_logger(__name__)
 
-MIN_THEMES_SAFETY = 1
+# 전량 삭제-재적재 앞의 안전장치. 크롤러가 부분적으로 깨져 소수의 테마만 파싱돼도
+# 기존 데이터를 날리지 않도록, 절대 개수와 기존 대비 비율을 함께 본다.
+MIN_THEMES_SAFETY = 50
+MIN_THEMES_RATIO = 0.5
 
 
-def _upsert_theme(session, name: str, description: str) -> int:
+def _insert_theme(session, name: str, description: str) -> int:
+    # 스냅샷 내 중복 테마명은 한 행으로 병합한다.
     row = session.execute(
         text(
             """
@@ -34,12 +43,12 @@ def _upsert_theme(session, name: str, description: str) -> int:
     return row[0]
 
 
-def _reconcile_theme_stocks(
+def _insert_theme_stocks(
     session, theme_id: int, companies: list[dict[str, Any]], stock_ids: dict[str, int]
 ) -> tuple[int, int]:
-    """스냅샷 기준으로 theme_stocks를 정합한다. (연결 수, 미매칭 수) 반환."""
+    """스냅샷의 편입 종목을 적재한다. (연결 수, 미매칭 수) 반환."""
 
-    linked_ids: list[int] = []
+    linked = 0
     unmatched = 0
 
     for company in companies:
@@ -50,7 +59,7 @@ def _reconcile_theme_stocks(
             unmatched += 1
             continue
 
-        linked_ids.append(stock_id)
+        linked += 1
         session.execute(
             text(
                 """
@@ -62,25 +71,16 @@ def _reconcile_theme_stocks(
             {"theme_id": theme_id, "stock_id": stock_id, "reason": company.get("reason")},
         )
 
-    if linked_ids:
-        session.execute(
-            text(
-                "DELETE FROM theme_stocks "
-                "WHERE theme_id = :theme_id AND NOT (stock_id = ANY(:ids));"
-            ),
-            {"theme_id": theme_id, "ids": linked_ids},
-        )
-    else:
-        # 빈 스냅샷은 "종목이 없어짐"과 "크롤 결측"을 구분할 수 없으므로 기존 편입을 보존한다.
-        logger.warning("테마 편입 스냅샷이 비어 삭제를 건너뜀: theme_id=%s", theme_id)
-
-    return len(linked_ids), unmatched
+    return linked, unmatched
 
 
 def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
 
     if len(themes) < MIN_THEMES_SAFETY:
-        logger.error("테마 스냅샷이 비어 있어 적재를 중단합니다(정상 데이터 덮어쓰기 방지).")
+        logger.error(
+            "테마 스냅샷이 %d개뿐이라 적재를 중단합니다(정상 데이터 덮어쓰기 방지).",
+            len(themes),
+        )
         return {"themes": 0, "theme_stocks": 0, "unmatched": 0, "failed": 0, "skipped": True}
 
     theme_count = 0
@@ -91,6 +91,25 @@ def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
     with session_scope() as session:
         stock_ids = fetch_active_stock_ids(session)
 
+        # 부분 크롤 감지 — 기존 대비 급감한 스냅샷은 결측으로 보고 기존 데이터를 보존한다.
+        existing = session.execute(text("SELECT count(*) FROM themes;")).scalar_one()
+        if existing and len(themes) < existing * MIN_THEMES_RATIO:
+            logger.error(
+                "테마 스냅샷이 기존 %d개 대비 %d개로 급감해 적재를 중단합니다(크롤 결측 의심).",
+                existing,
+                len(themes),
+            )
+            return {
+                "themes": 0,
+                "theme_stocks": 0,
+                "unmatched": 0,
+                "failed": 0,
+                "skipped": True,
+            }
+
+        # 전량 삭제-재적재. theme_stocks 는 FK ON DELETE CASCADE 로 함께 지워진다.
+        session.execute(text("DELETE FROM themes;"))
+
         for theme in themes:
             name = (theme.get("name") or "").strip()
 
@@ -99,10 +118,10 @@ def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
 
             try:
                 with session.begin_nested():
-                    theme_id = _upsert_theme(
+                    theme_id = _insert_theme(
                         session, name=name, description=theme.get("description", "") or ""
                     )
-                    linked, unmatched = _reconcile_theme_stocks(
+                    linked, unmatched = _insert_theme_stocks(
                         session, theme_id, theme.get("companies", []) or [], stock_ids
                     )
 

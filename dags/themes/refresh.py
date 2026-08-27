@@ -9,7 +9,7 @@ except ImportError:
     dag = None
     task = None
 
-SOURCES: tuple[str, ...] = ("naver", "judal")
+SOURCES: tuple[str, ...] = ("naver",)
 
 if dag and task:
     # 테마 편입 확정 신호. 수집 대상 파생(companies_service_companies)이 구독한다.
@@ -56,6 +56,12 @@ if dag and task:
 
             run(validated_path)
 
+        @task
+        def embed_themes() -> None:
+            from pipelines.themes.jobs.embed_themes import run
+
+            run()
+
         reset = reset_graph()
 
         # SOURCE별 task를 생성하고 reset 이후 병렬 실행되도록 fan-out
@@ -69,8 +75,13 @@ if dag and task:
 
         # 저장소가 달라 실패 특성도 다르다. 한쪽이 죽어도 다른 쪽은 성공해야 하므로
         # 하나의 태스크로 합치지 않는다.
-        load_graph(validated)
-        load_rdb(validated)
+        graph_loaded = load_graph(validated)
+        rdb_loaded = load_rdb(validated)
 
-    # 최종 실행 흐름: reset -> extract(소스 병렬) -> validate -> load_graph ∥ load_rdb
+        # 적재가 전량 삭제-재적재라 임베딩도 매 회차 전량 재생성된다.
+        # pg 에 쓰고 Neo4j Theme 노드에도 복사하므로 양쪽 적재를 모두 기다린다.
+        # 청크 커밋 + 해시 비교로 재개 가능하므로 실패 시 재시도만 하면 된다.
+        [graph_loaded, rdb_loaded] >> embed_themes()
+
+    # 최종 흐름: reset -> extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb) -> embed
     themes_refresh()
