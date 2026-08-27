@@ -9,6 +9,7 @@ except ImportError:
     dag = None
     task = None
 
+# SOURCES: tuple[str, ...] = ("naver", "judal",)
 SOURCES: tuple[str, ...] = ("naver",)
 
 if dag and task:
@@ -18,7 +19,7 @@ if dag and task:
     @dag(
         dag_id="themes_refresh",
         start_date=datetime(2026, 1, 1),
-        schedule="0 0 * * *",
+        schedule=None,
         catchup=False,
         max_active_runs=1,
         tags=["themes"],
@@ -27,7 +28,6 @@ if dag and task:
     def themes_refresh():
         @task(retries=0)
         def reset_graph() -> None:
-            # DETACH DELETE라 재시도해도 얻을 게 없다. 실패하면 실행을 멈추는 편이 낫다.
             from pipelines.themes.jobs.reset_graph import run
 
             run()
@@ -73,15 +73,10 @@ if dag and task:
 
         validated = validate_themes(extracted)
 
-        # 저장소가 달라 실패 특성도 다르다. 한쪽이 죽어도 다른 쪽은 성공해야 하므로
-        # 하나의 태스크로 합치지 않는다.
         graph_loaded = load_graph(validated)
-        rdb_loaded = load_rdb(validated)
+        load_rdb(validated)
 
-        # 적재가 전량 삭제-재적재라 임베딩도 매 회차 전량 재생성된다.
-        # pg 에 쓰고 Neo4j Theme 노드에도 복사하므로 양쪽 적재를 모두 기다린다.
-        # 청크 커밋 + 해시 비교로 재개 가능하므로 실패 시 재시도만 하면 된다.
-        [graph_loaded, rdb_loaded] >> embed_themes()
+        graph_loaded >> embed_themes()
 
     # 최종 흐름: reset -> extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb) -> embed
     themes_refresh()

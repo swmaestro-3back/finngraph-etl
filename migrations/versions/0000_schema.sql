@@ -270,43 +270,22 @@ CREATE INDEX IF NOT EXISTS idx_news_companies_news    ON news_companies (news_id
 CREATE INDEX IF NOT EXISTS idx_news_companies_company ON news_companies (company_id);
 
 -- ── themes ──────────────────────────────────────────────────────────────────
---
--- embedding / *_text_hash 는 이슈 인사이트 에이전트의 역발상 벡터 검색용이다.
--- 가설 문장을 테마 설명·편입 사유와 코사인 유사도로 매칭한다.
--- 임베딩 모델은 amazon.titan-embed-text-v2:0 (dimensions=1024) 으로 고정 —
--- kg-api(질의 측)와 반드시 동일해야 하며, 모델·차원을 바꾸면 vector(1024) 타입
--- 변경과 함께 embedding 전체를 NULL 리셋(전량 재임베딩)해야 한다. 해시 컬럼은
--- 모델 교체를 감지하지 못한다.
---
--- 테마 리프레시는 전량 삭제-재적재라 매 리프레시마다 전 행이 재임베딩된다.
--- *_text_hash 는 임베딩 잡이 중간에 죽었을 때의 재개 기준이다: 현재 텍스트의
--- md5 와 저장된 해시를 비교해 다르거나 embedding 이 NULL 인 행만 재임베딩한다.
 CREATE TABLE IF NOT EXISTS themes (
-    id                  BIGSERIAL PRIMARY KEY,
-    name                TEXT NOT NULL UNIQUE,
-    description         TEXT,
-    embedding           vector(1024),
-    embedding_text_hash TEXT
+    id          BIGSERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT
 );
 
 CREATE TABLE IF NOT EXISTS theme_stocks (
-    id               BIGSERIAL PRIMARY KEY,
-    theme_id         BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
-    stock_id         BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
-    reason           TEXT,
-    reason_embedding vector(1024),
-    reason_text_hash TEXT,
+    id       BIGSERIAL PRIMARY KEY,
+    theme_id BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
+    stock_id BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
+    reason   TEXT,
     UNIQUE (theme_id, stock_id)
 );
 
 CREATE INDEX IF NOT EXISTS theme_stocks_theme_idx ON theme_stocks (theme_id);
 CREATE INDEX IF NOT EXISTS theme_stocks_stock_idx ON theme_stocks (stock_id);
-
--- kg-api 가 `embedding <=> :qvec` (코사인) 로 조회하는 경로.
-CREATE INDEX IF NOT EXISTS themes_embedding_hnsw_idx
-  ON themes USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS theme_stocks_reason_embedding_hnsw_idx
-  ON theme_stocks USING hnsw (reason_embedding vector_cosine_ops);
 
 -- ── search_keywords ─────────────────────────────────────────────────────────
 -- news_pipeline 이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
@@ -332,15 +311,8 @@ ON CONFLICT (keyword) DO NOTHING;
 -- 종류만 수집하지만 report_nm 이 컬럼이라 다른 정형 공시 유형도 스키마 변경 없이 담을 수
 -- 있다.
 --
--- **자주 조회하는 항목은 일반 컬럼으로 승격했다.** 계약 구분·계약명·계약상대(원문 표기와
--- 역매칭 결과)·계약 기간이 그것으로, 승격된 항목은 fields 에서 빠진다. 나머지 —
--- 계약금액류ㆍ조건ㆍ유보ㆍ정정 블록ㆍ역매칭 부가 정보(counterparty_company_id/match_rule)
--- — 는 fields JSONB 에 남는다. 서식이 시장(KOSPI/KOSDAQ)과 정정 여부에 따라 갈리고 공시
--- 유형이 늘면 집합 자체가 달라지기 때문이다.
---
--- **날짜 컬럼(start_date/end_date/order_date)은 ISO 형식일 때만 채워진다.** 원문에는
--- "계약 종료시" 같은 비정형 기재가 있어, 그런 값은 컬럼을 NULL 로 두고 원문 텍스트를
--- fields 의 같은 키에 남긴다 — 타입과 원문 보존을 맞바꾸지 않는다.
+-- **자주 조회하는 항목은 일반 컬럼으로 승격했다.** 
+-- 부가 정보는 JSONB 칼럼으로 저장한다.
 --
 -- **company_id 는 제출사(공시를 낸 법인)다.** corp_code 는 목록 API 가 항상 주지만 신규
 -- 법인이 corp_code 동기화를 기다리는 동안 companies 에 없을 수 있어 NULL 을 허용한다.
@@ -357,6 +329,14 @@ CREATE TABLE IF NOT EXISTS disclosures (
     corp_cls               TEXT,             -- 'KOSPI' | 'KOSDAQ' | 'KONEX' | 'UNLISTED'
     report_nm              TEXT NOT NULL,
     is_correction          BOOLEAN NOT NULL DEFAULT false,
+    correction_target_report TEXT,           -- "정정관련 공시서류"
+    correction_target_date DATE,             -- "정정관련 공시서류제출일"
+    correction_reason      TEXT,             -- "정정사유"
+    -- 체인 루트(최초 원공시) 접수번호. 원공시는 자기 자신, 정정공시는 link job 의
+    -- 재귀 해소(resolve_original_rcept_nos)가 채운다 — 원문에는 부모의 제출일만 있고
+    -- 접수번호가 없어 DB 안에서만 확정할 수 있다. 원장 적재는 체인당 최신 회차 1행만
+    -- 담아 disclosure_count 가 문서 수가 아니라 계약 수가 된다.
+    original_rcept_no      TEXT,
     rcept_dt               DATE NOT NULL,
     flr_nm                 TEXT,
     link                   TEXT NOT NULL,
@@ -389,6 +369,13 @@ CREATE INDEX IF NOT EXISTS disclosures_counterparty_corp_code_idx
 CREATE INDEX IF NOT EXISTS disclosures_counterparty_company_idx
   ON disclosures (((fields ->> 'counterparty_company_id')::bigint))
   WHERE fields ->> 'counterparty_company_id' IS NOT NULL;
+
+-- 정정 체인 해소의 부모 탐색 경로(corp_code + rcept_dt = correction_target_date).
+CREATE INDEX IF NOT EXISTS disclosures_corp_code_rcept_dt_idx
+  ON disclosures (corp_code, rcept_dt);
+-- 체인 단위 dedupe(원장 적재)와 "이 원공시의 회차들" 역조회.
+CREATE INDEX IF NOT EXISTS disclosures_original_rcept_no_idx
+  ON disclosures (original_rcept_no) WHERE original_rcept_no IS NOT NULL;
 
 -- ── relation_sources: 근거 원장 ─────────────────────────────────────────────
 -- 한 행 = (출처 1건 × 삼중항 1개). 출처는 뉴스 XOR 공시. Neo4j 간선의 근거를 전부 담는

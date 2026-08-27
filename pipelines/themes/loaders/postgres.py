@@ -1,12 +1,4 @@
-"""테마 Postgres 적재.
-
-`load_themes`: 크롤링 스냅샷으로 themes/theme_stocks 전량 삭제-재적재
-(themes_refresh, 일 1회). Neo4j 쪽(reset_graph → load_graph)과 같은 전략이다.
-
-삭제와 재적재가 한 트랜잭션이라 중간 실패 시 이전 데이터가 그대로 남는다.
-행이 매번 새로 만들어지므로 embedding 컬럼은 NULL 로 시작하고, 후속
-embed_themes 가 전량 재임베딩한다.
-"""
+"""테마 Postgres 적재."""
 
 from __future__ import annotations
 
