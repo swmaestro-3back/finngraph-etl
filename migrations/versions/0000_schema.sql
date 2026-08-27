@@ -323,7 +323,7 @@ CREATE INDEX IF NOT EXISTS idx_search_keywords_last_searched
 
 INSERT INTO search_keywords (keyword)
 VALUES
-    ('특징주,공급'), ('특징주,계약'), ('특징주','수주'), ('특징주','납품')
+    ('특징주,공급'), ('특징주,계약'), ('특징주,수주'), ('특징주,납품')
 ON CONFLICT (keyword) DO NOTHING;
 
 -- ── disclosures ─────────────────────────────────────────────────────────────
