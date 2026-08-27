@@ -46,7 +46,7 @@ def test_fetch_search_keywords_returns_inserted_row(keyword_row):
 
 
 def test_initial_seed_keywords_exist():
-    # 0000/0002 마이그레이션이 시드한 기본 검색 쿼리
+    # 0000 베이스라인이 시드한 기본 검색 쿼리
     keywords = {row["keyword"] for row in fetch_search_keywords()}
 
     assert {"특징주,공급", "특징주,계약"} <= keywords

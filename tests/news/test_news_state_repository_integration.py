@@ -1,6 +1,6 @@
 """news 상태 컬럼(is_processed/relation_extracted) 규약 통합 테스트.
 
-로컬 DB 필요: docker compose up -d db 후 0002 마이그레이션 적용 상태.
+로컬 DB 필요: docker compose up -d db 후 0000 베이스라인 적용 상태.
 """
 
 from __future__ import annotations
