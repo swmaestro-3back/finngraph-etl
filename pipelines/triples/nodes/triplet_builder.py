@@ -38,6 +38,9 @@ class TripletBuilder:
         if frame.predicate not in self._predicate_dict:
             return None
 
+        if self._violates_irreflexivity(frame):
+            return None
+
         return Triplet(
             subject=frame.subject,
             predicate=frame.predicate,
@@ -49,12 +52,20 @@ class TripletBuilder:
             tense=frame.tense,
         )
 
+    def _violates_irreflexivity(self, frame: RelationFrame) -> bool:
+        """
+        True if the predicate is marked irreflexive in the ontology and subject == object
+        """
+        spec = self._predicate_dict.get(frame.predicate, {})
+        return bool(spec.get("irreflexive")) and frame.subject.text == frame.object.text
+
     def stats(self, relation_frames: list[RelationFrame]) -> dict:
         """
         Report per-stage counts for debugging and evaluation
         """
         total = len(relation_frames)
         not_in_dict = sum(1 for f in relation_frames if f.predicate not in self._predicate_dict)
+        self_referential = sum(1 for f in relation_frames if self._violates_irreflexivity(f))
 
         polarity_counts: dict[str, int] = {polarity: 0 for polarity in get_args(Polarity)}
         tense_counts: dict[str, int] = {tense: 0 for tense in get_args(Tense)}
@@ -67,6 +78,7 @@ class TripletBuilder:
         return {
             "total_frames": total,
             "filtered_not_in_dict": not_in_dict,
+            "filtered_self_referential": self_referential,
             "polarity_counts": polarity_counts,
             "tense_counts": tense_counts,
             "passed": passed,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 pytest.importorskip(
@@ -46,15 +44,11 @@ def test_collect_company_names_skips_unregistered_predicate():
 def test_resolve_company_ids_maps_via_ticker(monkeypatch):
     from pipelines.triples.transformers import company_links
 
-    async def fake_fetch_tickers(names):
-        # 테슬라는 비상장(그래프 매핑 없음) 시나리오
-        return {"삼성전자": "005930"}
-
-    monkeypatch.setattr(company_links, "fetch_company_tickers", fake_fetch_tickers)
     monkeypatch.setattr(
         company_links, "fetch_company_ids_by_tickers", lambda tickers: {"005930": 42}
     )
 
-    ids = asyncio.run(company_links.resolve_company_ids([_triplet("삼성전자", "테슬라")]))
+    # 테슬라는 비상장(그래프 매핑 없음, ticker None) 시나리오
+    ids = company_links.resolve_company_ids({"삼성전자": "005930", "테슬라": None})
 
     assert ids == [42]

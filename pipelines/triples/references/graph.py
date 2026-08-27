@@ -1,6 +1,6 @@
 """Neo4j 참조 데이터 조회.
 
-relation_source 행을 만들 때 COMPANY 엔드포인트의 ticker를 그래프에서 채워야 한다.
+relation_sources 행을 만들 때 COMPANY 엔드포인트의 ticker(code)를 그래프에서 채워야 한다.
 파이프라인 입력이 아니라 변환에 쓰는 **참조**라 `references/`에 둔다 — `loaders/`에
 두면 transformer가 loader를 임포트해 E→T→L 방향이 깨진다. 쓰기는 `loaders/neo4j.py`다.
 """

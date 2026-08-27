@@ -325,7 +325,8 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
     query = """
         SELECT
             id,
-            text
+            text,
+            (COALESCE(published_at, collected_at, now()))::date AS mentioned_at
         FROM news
         WHERE is_processed = FALSE
           AND text IS NOT NULL
@@ -337,7 +338,10 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
     with session_scope() as session:
         rows = session.execute(text(query), {"limit": limit}).fetchall()
 
-        return [{"news_id": int(news_id), "text": news_text} for news_id, news_text in rows]
+        return [
+            {"news_id": int(news_id), "text": news_text, "mentioned_at": mentioned_at}
+            for news_id, news_text, mentioned_at in rows
+        ]
 
 
 def mark_triple_extraction_result(

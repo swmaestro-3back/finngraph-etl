@@ -1,23 +1,47 @@
-"""트리플 파이프라인의 RDB 적재 (relation_source · news_companies).
+"""트리플 파이프라인의 RDB 적재 (relation_sources · news_companies).
 
-Neo4j 적재는 loaders/neo4j.py. 이 모듈은 그래프 적재 결과(간선 elementId)와
-기업 매핑을 RDB에 기록해, 그래프 간선 ↔ 출처 뉴스 ↔ 근거 문장을 RDB에서
-양방향 조회할 수 있게 한다.
+relation_sources는 뉴스·공시 근거를 함께 담는 원장이고, 이 모듈은 그중 뉴스
+(source_type='news') 행을 쓴다. 공시 행은 disclosures/loaders/postgres.py가 쓴다.
+Neo4j 간선은 이 원장의 집계(entities_relations 뷰)를 캐시한 파생이다 —
+그래프 쓰기는 loaders/neo4j.py.
 """
 
 from __future__ import annotations
+
+from datetime import date
 
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 
+INSERT_RELATION_SOURCE_SQL = text(
+    """
+    INSERT INTO relation_sources (
+        source_type, news_id,
+        subject_name, subject_type, subject_code,
+        relation,
+        object_name, object_type, object_code,
+        evidence, mentioned_at, item,
+        source_sentence, polarity, tense
+    )
+    VALUES (
+        'news', :news_id,
+        :subject_name, :subject_type, :subject_code,
+        :relation,
+        :object_name, :object_type, :object_code,
+        :evidence, :mentioned_at, :item,
+        :source_sentence, :polarity, :tense
+    )
+    ON CONFLICT ON CONSTRAINT uq_relsrc_news DO NOTHING;
+    """
+)
 
-def insert_relation_sources(news_id: int, rows: list[dict[str, str]]) -> int:
-    """Neo4j 간선 출처를 relation_source에 멱등 적재한다.
 
-    rows 항목 형식: {"neo4j_id": 간선 elementId, "reason": 근거 문장(evidence)}.
-    UNIQUE(news_id, neo4j_id)로 재추출 시 ON CONFLICT DO NOTHING.
-    신규 삽입된 행 수를 반환한다.
+def insert_relation_sources(news_id: int, mentioned_at: date, rows: list[dict]) -> int:
+    """뉴스 근거 행을 relation_sources에 멱등 적재한다.
+
+    rows 항목 형식은 edges.source_row_of 반환값. UNIQUE(news_id, 삼중항)로
+    재추출 시 ON CONFLICT DO NOTHING. 신규 삽입된 행 수를 반환한다.
     """
 
     if not rows:
@@ -28,18 +52,8 @@ def insert_relation_sources(news_id: int, rows: list[dict[str, str]]) -> int:
     with session_scope() as session:
         for row in rows:
             result = session.execute(
-                text(
-                    """
-                    INSERT INTO relation_source (news_id, neo4j_id, reason)
-                    VALUES (:news_id, :neo4j_id, :reason)
-                    ON CONFLICT (news_id, neo4j_id) DO NOTHING;
-                    """
-                ),
-                {
-                    "news_id": news_id,
-                    "neo4j_id": row["neo4j_id"],
-                    "reason": row.get("reason"),
-                },
+                INSERT_RELATION_SOURCE_SQL,
+                {"news_id": news_id, "mentioned_at": mentioned_at, **row},
             )
             inserted_count += result.rowcount or 0
 

@@ -1,4 +1,16 @@
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- 0000: 신규 DB 기준 베이스라인 DDL (전체 스키마)
+--
+-- 구 0000~0003 마이그레이션을 최종 상태로 통합한 단일 베이스라인이다. 운영 DB가 없다는
+-- 전제라 ALTER/DROP 없이 초기 스키마만 적는다. 반복 적용 안전(idempotent)하다.
+--
+-- 적재 흐름의 큰 그림:
+--   companies/stocks  ← KIS·DART 마스터 동기화
+--   news              ← 네이버 뉴스 수집 (search_keywords 가 검색 쿼리 원천)
+--   disclosures       ← DART 공급계약 공시 수집
+--   relation_sources  ← 뉴스(LLM 삼중항 추출)·공시가 함께 쓰는 근거 원장.
+--                       Neo4j 간선은 이 원장의 집계(entities_relations 뷰)를 캐시한
+--                       파생이라, 그래프는 언제든 원장에서 전량 재구성할 수 있다.
+
 CREATE EXTENSION IF NOT EXISTS vector;
 
 DO $$
@@ -8,24 +20,26 @@ END $$;
 
 -- ── companies ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS companies (
-    id                 BIGSERIAL PRIMARY KEY,
-    name               TEXT NOT NULL,
-    ticker             VARCHAR(20),
-    corp_code          TEXT,
-    is_listed          BOOLEAN NOT NULL,
-    description        TEXT,
-    description_source TEXT,
-    wikidata_qid       TEXT,
-    ceo_name           TEXT,
-    country            TEXT NOT NULL,
-    industry_code      TEXT,
-    established_on     DATE,
-    fiscal_month       TEXT,
-    homepage           TEXT,
-    address            TEXT,
-    delisted_at        DATE,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                   BIGSERIAL PRIMARY KEY,
+    name                 TEXT NOT NULL,
+    ticker               VARCHAR(20),
+    corp_code            TEXT,
+    is_listed            BOOLEAN NOT NULL,
+    description          TEXT,
+    description_source   TEXT,
+    -- 설명을 만든 원천 공시. 새 보고서가 없으면 설명을 다시 만들지 않는다.
+    description_rcept_no TEXT,
+    wikidata_qid         TEXT,
+    ceo_name             TEXT,
+    country              TEXT NOT NULL,
+    industry_code        TEXT,
+    established_on       DATE,
+    fiscal_month         TEXT,
+    homepage             TEXT,
+    address              TEXT,
+    delisted_at          DATE,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS companies_active_ticker_uk
@@ -89,25 +103,6 @@ CREATE TABLE IF NOT EXISTS company_financials (
 -- 오는데, 접수번호가 키에 없으면 정정본이 원본을 덮어써 이력이 사라진다.
 -- KIS 행은 접수번호가 없으므로 COALESCE 로 빈 문자열을 대신 넣는다.
 -- 표현식을 쓰므로 테이블 제약(UNIQUE)이 아니라 인덱스로 만든다.
---
--- 이 베이스라인 이전 버전으로 만들어진 DB 에는 인라인 UNIQUE 제약이 남아 있다. 제약 이름은
--- Postgres 가 63자로 잘라 만들기 때문에 상수로 적으면 빗나간다(끝이 `fs_di_key` 로 잘린다).
--- 카탈로그에서 찾아 지운다. 신규 DB 에서는 아무 일도 하지 않는다.
-DO $$
-DECLARE
-    con_name TEXT;
-BEGIN
-    SELECT conname INTO con_name
-      FROM pg_constraint
-     WHERE conrelid = 'company_financials'::regclass
-       AND contype = 'u'
-       AND pg_get_constraintdef(oid) =
-           'UNIQUE (company_id, fiscal_yymm, period_type, fs_div, source)';
-    IF con_name IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE company_financials DROP CONSTRAINT %I', con_name);
-    END IF;
-END $$;
-
 CREATE UNIQUE INDEX IF NOT EXISTS company_financials_uk
     ON company_financials (company_id, source, fs_div, fiscal_yymm, period_type, COALESCE(rcept_no, ''));
 
@@ -121,7 +116,7 @@ CREATE TABLE IF NOT EXISTS stocks (
     ticker               TEXT NOT NULL,
     market               TEXT NOT NULL,
     company_id           BIGINT REFERENCES companies (id),
-    standard_code        TEXT NOT NULL, 
+    standard_code        TEXT NOT NULL,
     listed_date          DATE,
     delisted_at          DATE,
     is_active            BOOLEAN NOT NULL DEFAULT true,
@@ -148,6 +143,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS stocks_standard_code_uk ON stocks (standard_co
 CREATE UNIQUE INDEX IF NOT EXISTS stocks_active_ticker_uk ON stocks (ticker) WHERE is_active;
 CREATE INDEX IF NOT EXISTS stocks_company_id_idx ON stocks (company_id);
 CREATE INDEX IF NOT EXISTS stocks_security_group_idx ON stocks (security_group);
+
+-- ── service_companies ───────────────────────────────────────────────────────
+--
+-- 수집 대상 목록. 비면 시세·수급·배당·재무 잡의 대상이 전부 0이 된다.
+--
+-- 테마를 담지 않는다. 답하는 질문이 "이 법인을 수집하는가" 하나뿐이고, 테마 소속은
+-- theme_stocks 가 다대다로 이미 들고 있다. 여기에 theme_id 를 두면 두 테마에 걸친
+-- 법인이 두 행이 되어 JOIN 한 번에 같은 종목을 두 번 수집한다.
+CREATE TABLE IF NOT EXISTS service_companies (
+    company_id BIGINT PRIMARY KEY REFERENCES companies (id) ON DELETE CASCADE,
+    name       TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- ── 시세 · 수급 · 배당 · 밸류에이션 ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS daily_candles (
@@ -225,80 +234,82 @@ CREATE TABLE IF NOT EXISTS valuation_daily (
 );
 
 -- ── news ────────────────────────────────────────────────────────────────────
+-- is_processed: 삼중항 추출 시도 완료 여부. FALSE 인 행이 extract_triples 대상.
+-- relation_extracted: 삼중항이 1개 이상 나왔는지. is_processed=TRUE 일 때만 유의미.
+-- cluster_rep_news_id: 같은 런에서 같은 사건(클러스터)으로 묶인 기사들의 대표 뉴스 id.
+--   대표 기사와 단독 기사는 자기 자신을 가리킨다. 런 단위 정보라 런 간 병합은 없다.
 CREATE TABLE IF NOT EXISTS news (
-    id                 BIGSERIAL PRIMARY KEY,
-    title              TEXT,
-    text               TEXT,
-    summary            TEXT,
-    link               TEXT UNIQUE,
-    originallink       TEXT,
-    published_at       TIMESTAMPTZ,
-    is_material        BOOLEAN,
-    source_type        VARCHAR(20),
-    collected_at       TIMESTAMPTZ DEFAULT now(),
-    relation_extracted BOOLEAN
+    id                  BIGSERIAL PRIMARY KEY,
+    title               TEXT,
+    text                TEXT,
+    summary             TEXT,
+    link                TEXT UNIQUE,
+    originallink        TEXT,
+    published_at        TIMESTAMPTZ,
+    collected_at        TIMESTAMPTZ DEFAULT now(),
+    is_processed        BOOLEAN NOT NULL DEFAULT FALSE,
+    relation_extracted  BOOLEAN,
+    cluster_rep_news_id BIGINT REFERENCES news (id) ON DELETE SET NULL
 );
 
--- ── news_relations ──────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS news_relations (
-    id           BIGSERIAL PRIMARY KEY,
-    news_id      BIGINT NOT NULL REFERENCES news (id) ON DELETE CASCADE,
-    subject_name TEXT NOT NULL,
-    subject_type VARCHAR(20) NOT NULL,
-    subject_code VARCHAR(20),
-    relation     VARCHAR(30) NOT NULL,
-    object_name  TEXT NOT NULL,
-    object_type  VARCHAR(20) NOT NULL,
-    object_code  VARCHAR(20),
-    extracted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (news_id, subject_name, relation, object_name)
+CREATE INDEX IF NOT EXISTS idx_news_cluster_rep ON news (cluster_rep_news_id);
+CREATE INDEX IF NOT EXISTS idx_news_unprocessed
+  ON news (id) WHERE NOT is_processed;
+
+-- ── news_companies ──────────────────────────────────────────────────────────
+-- 뉴스-기업 매핑. 삼중항의 COMPANY 엔티티를 ticker → companies.id 로 해석해 적재한다.
+CREATE TABLE IF NOT EXISTS news_companies (
+    id         BIGSERIAL PRIMARY KEY,
+    news_id    BIGINT NOT NULL REFERENCES news (id) ON DELETE CASCADE,
+    company_id BIGINT NOT NULL REFERENCES companies (id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (news_id, company_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_news_relations_subject_code
-  ON news_relations (subject_code) WHERE subject_code IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_news_relations_object_code
-  ON news_relations (object_code) WHERE object_code IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_news_relations_subject_name ON news_relations (subject_name);
-CREATE INDEX IF NOT EXISTS idx_news_relations_object_name  ON news_relations (object_name);
-CREATE INDEX IF NOT EXISTS idx_news_relations_triple
-  ON news_relations (subject_name, relation, object_name);
-CREATE INDEX IF NOT EXISTS idx_news_relations_news ON news_relations (news_id);
-
-CREATE OR REPLACE VIEW news_companies AS
-SELECT DISTINCT news_id, subject_name AS company_name, subject_code AS ticker
-FROM news_relations WHERE subject_type = 'COMPANY'
-UNION
-SELECT DISTINCT news_id, object_name, object_code
-FROM news_relations WHERE object_type = 'COMPANY';
-
-CREATE OR REPLACE VIEW entities_relations AS
-SELECT subject_name, subject_type, relation, object_name, object_type,
-       count(*)          AS news_count,
-       min(extracted_at) AS first_seen,
-       max(extracted_at) AS last_seen
-FROM news_relations
-GROUP BY 1, 2, 3, 4, 5;
+CREATE INDEX IF NOT EXISTS idx_news_companies_news    ON news_companies (news_id);
+CREATE INDEX IF NOT EXISTS idx_news_companies_company ON news_companies (company_id);
 
 -- ── themes ──────────────────────────────────────────────────────────────────
+--
+-- embedding / *_text_hash 는 이슈 인사이트 에이전트의 역발상 벡터 검색용이다.
+-- 가설 문장을 테마 설명·편입 사유와 코사인 유사도로 매칭한다.
+-- 임베딩 모델은 amazon.titan-embed-text-v2:0 (dimensions=1024) 으로 고정 —
+-- kg-api(질의 측)와 반드시 동일해야 하며, 모델·차원을 바꾸면 vector(1024) 타입
+-- 변경과 함께 embedding 전체를 NULL 리셋(전량 재임베딩)해야 한다. 해시 컬럼은
+-- 모델 교체를 감지하지 못한다.
+--
+-- 테마 리프레시는 전량 삭제-재적재라 매 리프레시마다 전 행이 재임베딩된다.
+-- *_text_hash 는 임베딩 잡이 중간에 죽었을 때의 재개 기준이다: 현재 텍스트의
+-- md5 와 저장된 해시를 비교해 다르거나 embedding 이 NULL 인 행만 재임베딩한다.
 CREATE TABLE IF NOT EXISTS themes (
-    id          BIGSERIAL PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    description TEXT
+    id                  BIGSERIAL PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    description         TEXT,
+    embedding           vector(1024),
+    embedding_text_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS theme_stocks (
-    id       BIGSERIAL PRIMARY KEY,
-    theme_id BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
-    stock_id BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
-    reason   TEXT,
+    id               BIGSERIAL PRIMARY KEY,
+    theme_id         BIGINT NOT NULL REFERENCES themes (id) ON DELETE CASCADE,
+    stock_id         BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
+    reason           TEXT,
+    reason_embedding vector(1024),
+    reason_text_hash TEXT,
     UNIQUE (theme_id, stock_id)
 );
 
 CREATE INDEX IF NOT EXISTS theme_stocks_theme_idx ON theme_stocks (theme_id);
 CREATE INDEX IF NOT EXISTS theme_stocks_stock_idx ON theme_stocks (stock_id);
 
+-- kg-api 가 `embedding <=> :qvec` (코사인) 로 조회하는 경로.
+CREATE INDEX IF NOT EXISTS themes_embedding_hnsw_idx
+  ON themes USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS theme_stocks_reason_embedding_hnsw_idx
+  ON theme_stocks USING hnsw (reason_embedding vector_cosine_ops);
+
 -- ── search_keywords ─────────────────────────────────────────────────────────
--- news_pipeline이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
+-- news_pipeline 이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
 -- 콤마 등 네이버 검색식은 문자열 그대로 query 파라미터로 전달된다.
 CREATE TABLE IF NOT EXISTS search_keywords (
     id               BIGSERIAL PRIMARY KEY,
@@ -312,7 +323,7 @@ CREATE INDEX IF NOT EXISTS idx_search_keywords_last_searched
 
 INSERT INTO search_keywords (keyword)
 VALUES
-    ('특징주,공급'), ('특징주,계약')
+    ('특징주,공급'), ('특징주,계약'), ('특징주,수주'), ('특징주,납품')
 ON CONFLICT (keyword) DO NOTHING;
 
 -- ── disclosures ─────────────────────────────────────────────────────────────
@@ -364,6 +375,7 @@ CREATE TABLE IF NOT EXISTS disclosures (
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- relation_sources.rcept_no FK 의 참조 대상이기도 하다 (유니크 인덱스로 충분).
 CREATE UNIQUE INDEX IF NOT EXISTS disclosures_rcept_no_uk ON disclosures (rcept_no);
 CREATE INDEX IF NOT EXISTS disclosures_company_id_idx ON disclosures (company_id);
 CREATE INDEX IF NOT EXISTS disclosures_rcept_dt_idx ON disclosures (rcept_dt);
@@ -377,3 +389,81 @@ CREATE INDEX IF NOT EXISTS disclosures_counterparty_corp_code_idx
 CREATE INDEX IF NOT EXISTS disclosures_counterparty_company_idx
   ON disclosures (((fields ->> 'counterparty_company_id')::bigint))
   WHERE fields ->> 'counterparty_company_id' IS NOT NULL;
+
+-- ── relation_sources: 근거 원장 ─────────────────────────────────────────────
+-- 한 행 = (출처 1건 × 삼중항 1개). 출처는 뉴스 XOR 공시. Neo4j 간선의 근거를 전부 담는
+-- 원장이며, 간선 식별은 (subject_name, relation, object_name) 자연키다 — elementId 는
+-- 간선 재생성·백업 복원에 깨지지만 자연키는 불변이다.
+-- 엔티티 식별은 정규명(+타입)이 기본, code(ticker/ISO)는 적재 시 사전 조회로 채우는
+-- 보조 키(미상장 등 미해석이면 NULL). type 은 엔티티 확장 대비(현재 COMPANY 만).
+CREATE TABLE IF NOT EXISTS relation_sources (
+    id            BIGSERIAL PRIMARY KEY,
+
+    -- 출처 (news XOR disclosure — 아래 CHECK 로 강제)
+    source_type   TEXT NOT NULL CHECK (source_type IN ('news', 'disclosure')),
+    news_id       BIGINT REFERENCES news (id) ON DELETE CASCADE,
+    rcept_no      TEXT REFERENCES disclosures (rcept_no),
+
+    -- 삼중항 (Neo4j 간선 자연키). relation 은 PREDICATE_DICT 의 닫힌 어휘
+    -- (SUPPLIES_TO / INVESTS_IN / ACQUIRES).
+    subject_name  TEXT NOT NULL,
+    subject_type  VARCHAR(20) NOT NULL DEFAULT 'COMPANY',
+    subject_code  VARCHAR(20),          -- COMPANY: KRX ticker. 미해석이면 NULL → 백필
+    relation      VARCHAR(30) NOT NULL,
+    object_name   TEXT NOT NULL,
+    object_type   VARCHAR(20) NOT NULL DEFAULT 'COMPANY',
+    object_code   VARCHAR(20),
+
+    -- 근거 상세 (공통)
+    evidence      TEXT,                 -- UI 노출용 자립 근거 문장
+    mentioned_at  DATE NOT NULL,        -- 뉴스: 보도일 / 공시: rcept_dt
+    item          TEXT,                 -- 뉴스: 추출 품목 구
+                                        -- 공시: COALESCE(contract_name, contract_type)
+
+    -- 뉴스 전용 (공시면 NULL)
+    source_sentence TEXT,               -- 원문 문장 (verbatim)
+
+    -- 뉴스: LLM 판정 / 공시: 확정 사실이므로 항상 affirmed + past_or_present_fact
+    polarity        TEXT,               -- affirmed / denied / terminated
+    tense           TEXT,               -- past_or_present_fact / future_or_planned / modal_possibility
+
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- 출처 XOR: source_type 과 출처 키의 존재가 정확히 일치해야 한다.
+    CONSTRAINT chk_relsrc_news_key       CHECK ((source_type = 'news')       = (news_id  IS NOT NULL)),
+    CONSTRAINT chk_relsrc_disclosure_key CHECK ((source_type = 'disclosure') = (rcept_no IS NOT NULL)),
+
+    -- 재추출·재적재 멱등 (ON CONFLICT DO NOTHING).
+    -- NULL 은 서로 다른 값으로 취급되므로 뉴스 행은 uq_disclosure 에, 공시 행은
+    -- uq_news 에 걸리지 않는다.
+    CONSTRAINT uq_relsrc_news       UNIQUE (news_id,  subject_name, relation, object_name),
+    CONSTRAINT uq_relsrc_disclosure UNIQUE (rcept_no, subject_name, relation, object_name)
+);
+
+-- 서빙 핵심 경로: 간선 자연키 → 근거 목록 최신순
+CREATE INDEX IF NOT EXISTS idx_relsrc_edge
+    ON relation_sources (subject_name, relation, object_name, mentioned_at DESC);
+
+-- 서빙 보조 경로: 기업별 근거 조회 (code 우선, 없으면 name)
+CREATE INDEX IF NOT EXISTS idx_relsrc_subject_code
+    ON relation_sources (subject_code) WHERE subject_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_relsrc_object_code
+    ON relation_sources (object_code) WHERE object_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_relsrc_subject_name ON relation_sources (subject_name);
+CREATE INDEX IF NOT EXISTS idx_relsrc_object_name  ON relation_sources (object_name);
+
+-- 출처별 역조회 ("이 뉴스/공시가 만든 관계 전부")
+CREATE INDEX IF NOT EXISTS idx_relsrc_news     ON relation_sources (news_id)  WHERE news_id  IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_relsrc_rcept_no ON relation_sources (rcept_no) WHERE rcept_no IS NOT NULL;
+
+-- ── entities_relations: 간선 수준 집계 (Neo4j 간선 속성의 원천) ─────────────
+-- 한 행 = 그래프 간선 하나. Neo4j 간선의 요약값은 항상 이 뷰와 대조·재작성 가능하다.
+-- 조회가 무거워지면 MATERIALIZED VIEW 로 승격.
+CREATE OR REPLACE VIEW entities_relations AS
+SELECT subject_name, subject_type, relation, object_name, object_type,
+       count(*) FILTER (WHERE source_type = 'news')       AS news_mention_count,
+       count(*) FILTER (WHERE source_type = 'disclosure') AS disclosure_count,
+       min(mentioned_at) AS first_mentioned_at,
+       max(mentioned_at) AS last_mentioned_at
+FROM relation_sources
+GROUP BY 1, 2, 3, 4, 5;
