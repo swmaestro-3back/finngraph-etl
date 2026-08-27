@@ -184,8 +184,8 @@ CREATE TABLE IF NOT EXISTS stock_period_candles (
     high        NUMERIC NOT NULL,
     low         NUMERIC NOT NULL,
     close       NUMERIC NOT NULL,
-    volume      BIGINT  NOT NULL,
-    trade_value BIGINT,
+    volume      BIGINT  NOT NULL,   -- 거래량
+    trade_value BIGINT,     -- 거래대금
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (stock_id, period, base_date)
 );
@@ -193,10 +193,10 @@ CREATE TABLE IF NOT EXISTS stock_period_candles (
 CREATE TABLE IF NOT EXISTS investor_flows (
     stock_id            BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date          DATE   NOT NULL,
-    individual_net_qty  BIGINT,
-    institution_net_qty BIGINT,
-    foreign_net_qty     BIGINT,
-    foreign_hold_ratio  NUMERIC,
+    individual_net_qty  BIGINT,     -- 개인순매수량
+    institution_net_qty BIGINT,     -- 기관순매수량
+    foreign_net_qty     BIGINT,     -- 외국인순매수량
+    foreign_hold_ratio  NUMERIC,    -- 외국인보유율
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (stock_id, trade_date)
 );
