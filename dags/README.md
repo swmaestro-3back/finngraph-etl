@@ -27,7 +27,7 @@ dags/
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 * * * *` (매시 정각) |
+| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
@@ -60,7 +60,7 @@ Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 D
 
 ```mermaid
 flowchart TB
-    NP["news_pipeline<br/><code>0 * * * *</code>"]
+    NP["news_pipeline<br/><code>0 6-21 * * *</code>"]
     CDP["companies_dart_pipeline<br/><code>0 9 * * *</code>"]
     CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]

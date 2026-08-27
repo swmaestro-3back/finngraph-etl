@@ -17,7 +17,8 @@ if dag and task:
     @dag(
         dag_id="news_pipeline",
         start_date=pendulum.datetime(2026, 1, 1, tz="Asia/Seoul"),
-        schedule="0 * * * *",
+        # 뉴스가 뜸한 심야(22~05시)는 건너뛴다. 06~21시 매 정각, KST 기준.
+        schedule="0 6-21 * * *",
         catchup=False,
         max_active_runs=1,
         tags=["news", "triples"],

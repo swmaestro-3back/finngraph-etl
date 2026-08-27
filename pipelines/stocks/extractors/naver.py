@@ -30,11 +30,11 @@ REQUEST_TIMEOUT_SECONDS = 10
 # 차단 신호로 취급하는 상태 코드. 429는 명시적 과다 호출, 403은 봇 판정이다.
 BLOCK_STATUS_CODES = (403, 429)
 
-# 공식 한도가 공개돼 있지 않다. 요청 간격에 지터를 주고(평균 ~1.3회/초) 200회마다
+# 공식 한도가 공개돼 있지 않다. 요청 간격에 지터를 주고(평균 ~2.5회/초) 200회마다
 # 길게 쉬어, 일정한 기계적 패턴과 윈도우당 과다 호출 둘 다 피한다.
 _pacer = BurstPacer(
-    min_interval_seconds=0.4,
-    max_interval_seconds=1.2,
+    min_interval_seconds=0.2,
+    max_interval_seconds=0.6,
     burst_size=200,
     min_cooldown_seconds=45,
     max_cooldown_seconds=90,
