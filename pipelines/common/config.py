@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # 장애로 빠진 날을 못 채우고, 길면 매일 그만큼 재조회한다. rcept_no UNIQUE 덕에 재조회
     # 비용은 목록 API 페이지 수뿐이라 겹쳐 잡아도 원문을 다시 받지는 않는다.
     disclosure_backfill_years: int = Field(
-        default=3,
+        default=1,
         validation_alias="DISCLOSURE_BACKFILL_YEARS",
     )
     disclosure_daily_lookback_days: int = Field(
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
         validation_alias="DISCLOSURE_DAILY_LOOKBACK_DAYS",
     )
     # 한 회차에 새로 조회할 원문 문서 수 상한. 인증키의 일 호출 한도를 지키는 안전판으로,
-    # 3개년 백필(문서 ~1.1만 건)이 다른 DART job 과 하루 한도를 나눠 쓰게 한다.
+    # 백필(3개년 기준 문서 ~1.1만 건)이 다른 DART job 과 하루 한도를 나눠 쓰게 한다.
     disclosure_fetch_batch_size: int = Field(
         default=8000,
         validation_alias="DISCLOSURE_FETCH_BATCH_SIZE",
