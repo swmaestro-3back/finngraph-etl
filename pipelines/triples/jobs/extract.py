@@ -9,12 +9,18 @@ from pipelines.news.loaders.postgres import (
     fetch_unprocessed_triple_news_items,
     mark_triple_extraction_result,
 )
-from pipelines.triples.loaders.neo4j import upsert_triplets
+from pipelines.triples.edges import source_row_of
+from pipelines.triples.loaders.neo4j import sync_edge_summaries
 from pipelines.triples.loaders.postgres import (
     insert_news_companies,
     insert_relation_sources,
 )
-from pipelines.triples.transformers.company_links import resolve_company_ids
+from pipelines.triples.references.graph import fetch_company_tickers
+from pipelines.triples.references.rdb import fetch_edge_summaries
+from pipelines.triples.transformers.company_links import (
+    collect_company_names,
+    resolve_company_ids,
+)
 from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)
@@ -25,8 +31,9 @@ DEFAULT_LIMIT = 100
 async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     """
     1. LangGraph Runner 실행
-    2. GraphDB에 트리플관계 반영 + relation_source(간선 출처)·news_companies(기업 매핑) 적재
-    3. News 테이블에 is_processed / relation_extracted 마킹
+    2. relation_sources(근거 원장)에 뉴스 근거 적재 + news_companies(기업 매핑) 적재
+    3. entities_relations 뷰 기준으로 Neo4j 간선 요약 동기화
+    4. News 테이블에 is_processed / relation_extracted 마킹
     """
     news_id = item["news_id"]
 
@@ -36,13 +43,30 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
         triplets = final_state.get("triplets") or []
 
         if triplets:
-            # Neo4j 반영 후 간선 elementId를 받아 relation_source에 기록
-            edge_rows = await upsert_triplets(str(news_id), triplets)
-            insert_relation_sources(news_id, edge_rows)
+            # 기업명→ticker 매핑은 원장 code 백필과 news_companies 해석에 공유한다.
+            names = collect_company_names(triplets)
+            name_to_ticker = await fetch_company_tickers(names)
+
+            # 같은 뉴스 안에서 여러 문장이 같은 삼중항으로 수렴하면 첫 문장만 남긴다.
+            source_rows: list[dict] = []
+            seen_keys: set[tuple[str, str, str]] = set()
+            for triplet in triplets:
+                row = source_row_of(triplet, name_to_ticker)
+                if row is None:
+                    continue
+                key = (row["subject_name"], row["relation"], row["object_name"])
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                source_rows.append(row)
+
+            # 원장 먼저, 그래프는 원장 집계의 캐시 — 순서가 정합성의 근거다.
+            insert_relation_sources(news_id, item["mentioned_at"], source_rows)
+            summaries = fetch_edge_summaries(sorted(seen_keys))
+            await sync_edge_summaries(summaries)
 
             # 삼중항에 등장한 상장사를 news_companies에 연결
-            company_ids = await resolve_company_ids(triplets)
-            insert_news_companies(news_id, company_ids)
+            insert_news_companies(news_id, resolve_company_ids(name_to_ticker))
 
         has_triplets = bool(triplets)
         mark_triple_extraction_result(
@@ -63,7 +87,7 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
 
 async def extract_unprocessed_triples(limit: int = DEFAULT_LIMIT) -> dict[str, int]:
     """
-    미처리(material) 뉴스를 폴링해 트리플을 추출하고 Neo4j에 적재
+    미처리(material) 뉴스를 폴링해 트리플을 추출하고 원장·그래프에 적재
     """
 
     items = fetch_unprocessed_triple_news_items(limit=limit)
