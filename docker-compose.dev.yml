@@ -1,0 +1,148 @@
+# dev 서버용 스택. 로컬 compose 와 파일을 나눈 이유는 override 로는 서비스를 제거할 수 없고,
+# 실수로 로컬 postgres 가 뜨면 앱이 조용히 잘못된 DB 를 쓰기 때문이다.
+#
+#   scripts/dev-env.sh
+#   docker compose --env-file .env.dev -f docker-compose.dev.yml up -d
+
+x-airflow-common: &airflow-common
+  # 서버에서 빌드하지 않는다. CI 가 ECR 에 올린 것을 받는다.
+  image: ${ECR_REGISTRY}/finngraph/etl-airflow:${IMAGE_TAG:?IMAGE_TAG 를 지정하세요 (커밋 SHA 권장)}
+  user: "50000:0"
+  restart: unless-stopped
+
+  env_file:
+    - path: .env.dev
+      required: true
+
+  environment: &airflow-common-env
+    LOG_LEVEL: ${LOG_LEVEL:?Parameter Store 에 LOG_LEVEL 이 없습니다}
+    AIRFLOW__LOGGING__LOGGING_LEVEL: ${LOG_LEVEL:?Parameter Store 에 LOG_LEVEL 이 없습니다}
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+
+  # 코드는 이미지에 구워져 있어 마운트하지 않는다.
+  volumes:
+    - etl_airflow_logs:/opt/airflow/logs
+
+services:
+  # 마이그레이션 파일은 이미지에 없어 저장소 경로를 읽는다.
+  db-init:
+    image: postgres:16
+    restart: "no"
+    env_file:
+      - path: .env.dev
+        required: true
+    environment:
+      PGSSLMODE: require   # rds.force_ssl=1
+    volumes:
+      - ./migrations/versions:/migrations:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        q() { PGPASSWORD="$$DB_PASSWORD" psql -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME" "$$@"; }
+        # 0000 이 옛 이름 테이블을 다시 만들고 0001 이 개명하려다 충돌한다. 한 번만 돌린다.
+        q -v ON_ERROR_STOP=1 -q -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+        for f in /migrations/*.sql; do
+          n=$$(basename "$$f")
+          if [ -n "$$(q -tAc "SELECT 1 FROM schema_migrations WHERE filename = '$$n'")" ]; then
+            echo "skip $$n"
+            continue
+          fi
+          echo "applying $$n"
+          q -v ON_ERROR_STOP=1 -q -f "$$f"
+          q -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations(filename) VALUES ('$$n')"
+        done
+
+  # cypher-shell 을 쓰려고 neo4j 이미지를 빌린다. 대상은 원격 인스턴스다.
+  neo4j-init:
+    image: neo4j:5
+    restart: "no"
+    env_file:
+      - path: .env.dev
+        required: true
+    volumes:
+      - ./migrations/neo4j:/migrations:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        for f in /migrations/*.cypher; do
+          echo "applying $$(basename "$$f")"
+          cypher-shell -a "$$NEO4J_URI" -u "$$NEO4J_USERNAME" -p "$$NEO4J_PASSWORD" \
+            -d "$$NEO4J_DATABASE" -f "$$f"
+        done
+
+  # RDS·Neo4j 가 죽어 있으면 여기서 실패해 나머지가 뜨지 않는다. 외부 의존의 사실상 게이트다.
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    restart: "no"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      neo4j-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:?Parameter Store 에 AIRFLOW_ADMIN_USER 가 없습니다}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD 가 .env.dev 에 없습니다}
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    # 인스턴스 로컬에만 연다. SSM 포트포워딩으로 접근한다.
+    ports:
+      - "127.0.0.1:${AIRFLOW_WEB_PORT:?Parameter Store 에 AIRFLOW_WEB_PORT 가 없습니다}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # LocalExecutor 라 태스크가 scheduler 안에서 돌고 Execution API 로 보고한다 → apiserver 선행.
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-apiserver:
+        condition: service_healthy
+
+  # Airflow 3 은 DAG 파싱을 전용 프로세스가 맡는다.
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  # 데이터는 전부 RDS·Neo4j 에 있어 이 서버는 로그 외에 상태를 갖지 않는다.
+  etl_airflow_logs:
