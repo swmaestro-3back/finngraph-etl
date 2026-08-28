@@ -1,6 +1,6 @@
 """일봉·주봉·월봉 일별 갱신.
 
-과거 구간은 FDR 백필(backfill_daily)이 채우고, 여기서는 KIS 기간별시세로 최근 구간만
+과거 구간은 FDR 백필(backfill_daily_candles)이 채우고, 여기서는 KIS 기간별시세로 최근 구간만
 덧붙인다. 같은 (stock_id, trade_date)를 양쪽이 채울 수 있으므로 upsert가 덮어쓴다.
 
 lookback을 하루가 아니라 열흘로 잡는 이유는 정정·수정주가 반영 때문이다. 액면분할이

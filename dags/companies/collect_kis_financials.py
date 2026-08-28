@@ -32,14 +32,14 @@ if dag and task:
     companies_financials_updated = Asset("etl://companies/financials")
 
     @dag(
-        dag_id="companies_kis_financials",
+        dag_id="companies_collect_kis_financials",
         start_date=datetime(2026, 1, 1),
         schedule="0 19 * * 1-5",
         catchup=False,
         max_active_runs=1,
         tags=["companies"],
     )
-    def companies_kis_financials():
+    def companies_collect_kis_financials():
         @task(retries=2, outlets=[companies_financials_updated])
         def collect_kis_financials() -> None:
             from pipelines.companies.jobs.collect_kis_financials import run
@@ -48,4 +48,4 @@ if dag and task:
 
         collect_kis_financials()
 
-    companies_kis_financials()
+    companies_collect_kis_financials()

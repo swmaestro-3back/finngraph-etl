@@ -78,30 +78,21 @@ class TickerSyncResult:
 class InvestorFlow:
     """종목별 일별 투자자 수급.
 
-    KIS `investor-trade-by-stock-daily`가 101개 필드를 주지만 프론트 스펙이 요구하는
-    주체만 컬럼으로 승격한다. 단위는 전부 주(수량)이다.
-
-    순매수는 30영업일치가 오지만 보유율은 현재가 조회 스냅샷이라 최신 한 시점뿐이다.
-    그래서 보유율은 수집 회차의 최신 거래일 행에만 채워진다.
+    네이버 증권 trend API가 주는 값만 컬럼으로 승격한다. 순매수량 단위는 주다.
+    외국인 보유율이 순매수와 같은 응답에 일별 이력으로 실려 와 백필은 그대로 쓰고,
+    일일 수집은 최신 행만 KIS 현재가 조회 스냅샷으로 덮어쓴다.
 
     Attributes:
-        pension_net (int | None): 연기금(기금, `fund_ntby_qty`) 순매수. 기관계에 포함된
-            하위 주체라 institution_net과 더하면 이중 계산이 된다.
-        foreign_ratio (Decimal | None): 외국인 보유율(%). 보유주식수 ÷ 상장주식수다.
-            KIS의 `hts_frgn_ehrt`는 외국인 한도로 나눈 소진율이라 쓰지 않는다.
+        foreign_hold_ratio (Decimal | None): 외국인 보유율(%). 원천이 float 잡음을
+            실어 보내는 날이 있어(46.709999…) 소수 4자리로 정규화해 담는다.
     """
 
     ticker: str
     trade_date: date
-    foreign_net: int | None = None
-    personal_net: int | None = None
-    institution_net: int | None = None
-    pension_net: int | None = None
-    trust_net: int | None = None
-    insurance_net: int | None = None
-    bank_net: int | None = None
-    etc_corp_net: int | None = None
-    foreign_ratio: Decimal | None = None
+    individual_net_qty: int | None = None
+    institution_net_qty: int | None = None
+    foreign_net_qty: int | None = None
+    foreign_hold_ratio: Decimal | None = None
 
 
 @dataclass(frozen=True)

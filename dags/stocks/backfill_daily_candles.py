@@ -12,20 +12,20 @@ except ImportError:
 if dag and task:
 
     @dag(
-        dag_id="stocks_daily_backfill",
+        dag_id="stocks_backfill_daily_candles",
         start_date=datetime(2026, 1, 1),
         schedule=None,
         catchup=False,
         max_active_runs=1,
         tags=["stocks"],
     )
-    def stocks_daily_backfill():
+    def stocks_backfill_daily_candles():
         @task
-        def run_backfill_daily() -> None:
-            from pipelines.stocks.jobs.backfill_daily import run
+        def backfill_daily_candles() -> None:
+            from pipelines.stocks.jobs.backfill_daily_candles import run
 
             run()
 
-        run_backfill_daily()
+        backfill_daily_candles()
 
-    stocks_daily_backfill()
+    stocks_backfill_daily_candles()

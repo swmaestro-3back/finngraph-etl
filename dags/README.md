@@ -18,21 +18,23 @@ dags/
 
 | 도메인 | 파일 | `dag_id` | `tags` | 스케줄 |
 |--------|------|----------|--------|--------|
-| companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | Asset ← `etl://stocks/master` |
-| companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 3 * * *` (03시) |
-| companies | `companies/kis_financials.py` | `companies_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
-| companies | `companies/descriptions.py` | `companies_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
+| companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | Asset ← `etl://stocks/master` **＋** `etl://companies/corp_codes` |
+| companies | `companies/sync_dart_corp_codes.py` | `companies_sync_dart_corp_codes` | `companies` | `0 3 * * *` (03시) |
+| companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 9 * * *` (09시) |
+| companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
+| companies | `companies/generate_descriptions.py` | `companies_generate_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
+| companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 * * * *` (매시 정각) |
+| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
-| stocks | `stocks/weekly_dividends.py` | `stocks_weekly_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
-| stocks | `stocks/daily_backfill.py` | `stocks_daily_backfill` | `stocks` | 수동 |
-| stocks | `stocks/intraday_1m.py` | `stocks_intraday_1m` | `stocks` | **정지** (분봉 수집 제외) |
-| themes | `themes/refresh.py` | `themes_refresh` | `themes` | `0 0 * * *` (자정) |
+| stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
+| stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
+| stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
+| themes | `themes/pipeline.py` | `themes_pipeline` | `themes` | 수동 |
 
 ## Asset 의존
 
@@ -45,7 +47,7 @@ stocks_sync_master ──────────► etl://stocks/master ──�
 
 stocks_daily_pipeline ───────► etl://stocks/daily ───┐
   (평일 18시, 일봉→기간봉→수급)                       ├──► stocks_compute_derived
-companies_kis_financials ────► etl://companies/financials ┘      (PER·PBR·수익률)
+companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PBR·수익률)
   (평일 19시)
 ```
 
@@ -58,19 +60,19 @@ Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 D
 
 ```mermaid
 flowchart TB
-    NP["news_pipeline<br/><code>0 * * * *</code>"]
-    CDP["companies_dart_pipeline<br/><code>0 3 * * *</code>"]
-    CDE["companies_descriptions<br/><code>0 4 * * 6</code>"]
-    SWD["stocks_weekly_dividends<br/><code>0 6 * * 6</code>"]
-    SDB["stocks_daily_backfill<br/>수동"]
-    SI1["stocks_intraday_1m<br/>정지"]
-    TR["themes_refresh<br/><code>0 0 * * *</code>"]
+    NP["news_pipeline<br/><code>0 6-21 * * *</code>"]
+    CDP["companies_dart_pipeline<br/><code>0 9 * * *</code>"]
+    CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
+    SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
+    SBD["stocks_backfill_daily_candles<br/>수동"]
+    SBI["stocks_backfill_investor_flows<br/>수동"]
+    TR["themes_pipeline<br/>수동"]
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class NP,CDP,CDE,SWD,SDB,SI1,TR,HC,DCD,DBF cron
+    class NP,CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
 ```
 
 ## `dag_id`
@@ -87,8 +89,10 @@ flowchart TB
 ### 규칙
 - **전역 유일** — 두 DAG가 같은 `dag_id`를 쓰면 충돌한다.
   - 폴더가 이미 도메인을 나타내지만, UI는 평면(flat) 네임스페이스라 **`dag_id`에는 도메인 접두사를 유지**한다.
-- **파일명과 일치시킨다** — UI에서 본 `dag_id`로 소스 파일을 바로 찾을 수 있어야 한다.
-  - 예: `dag_id="news_pipeline"` ↔ `dags/news/pipeline.py`
+- **파일명 = `dag_id`에서 도메인 접두사를 뺀 것** — UI에서 본 `dag_id`로 소스 파일을 바로 찾을 수 있어야 한다.
+  - 예: `dag_id="news_pipeline"` ↔ `dags/news/pipeline.py`, `dag_id="companies_collect_kis_financials"` ↔ `dags/companies/collect_kis_financials.py`
+- **단일 task DAG는 job 이름(동사구)을, 복수 task 오케스트레이션 DAG는 `*_pipeline` 명사형을 쓴다.**
+  세부 규칙과 동사 사전은 루트 `README.md`의 "네이밍" 섹션을 따른다.
 
 ### 주의 사항
 `dag_id`를 바꾸면 Airflow는 **완전히 다른 새 DAG로 인식**한다. 기존 실행 히스토리·스케줄 상태가 UI에서 분리되므로, **운영 중인 DAG의 `dag_id`는 함부로 바꾸지 않는다.**

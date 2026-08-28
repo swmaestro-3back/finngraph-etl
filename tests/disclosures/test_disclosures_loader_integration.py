@@ -28,6 +28,7 @@ from pipelines.disclosures.loaders.postgres import (
     fetch_disclosure_edge_keys,
     fetch_existing_rcept_nos,
     fetch_supply_edges,
+    resolve_original_rcept_nos,
     upsert_disclosures,
     upsert_relation_sources,
 )
@@ -36,7 +37,12 @@ from pipelines.disclosures.models import DisclosureRecord
 pytestmark = pytest.mark.integration
 
 # 운영 데이터와 섞이지 않도록 테스트 전용 접수번호·ticker 대역.
-TEST_RCEPT_NOS = ("99999901000001", "99999901000002")
+TEST_RCEPT_NOS = (
+    "99999901000001",
+    "99999901000002",
+    "99999901000003",
+    "99999901000004",
+)
 TEST_TICKERS = {"999901": "테스트공급사", "999902": "테스트수요사"}
 
 
@@ -75,6 +81,9 @@ def make_record(
     contract_amount: int,
     ticker: str | None = None,
     counterparty_ticker: str | None = None,
+    rcept_dt: date = date(2026, 8, 21),
+    is_correction: bool = False,
+    correction_target_date: date | None = None,
 ) -> DisclosureRecord:
     return DisclosureRecord(
         rcept_no=rcept_no,
@@ -83,8 +92,12 @@ def make_record(
         ticker=ticker,
         corp_cls="KOSDAQ",
         report_nm="단일판매ㆍ공급계약체결",
-        is_correction=False,
-        rcept_dt=date(2026, 8, 21),
+        is_correction=is_correction,
+        correction_target_report="단일판매공급계약" if is_correction else None,
+        correction_target_date=correction_target_date,
+        correction_reason="테스트 정정" if is_correction else None,
+        original_rcept_no=None if is_correction else rcept_no,
+        rcept_dt=rcept_dt,
         flr_nm="파이테스트",
         link=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
         contract_type="기타 판매ㆍ공급계약",
@@ -204,6 +217,86 @@ def test_upsert_relation_sources_is_idempotent_and_overwrites() -> None:
     # 공시는 확정 사실 — 상수로 들어간다
     assert row.polarity == "affirmed"
     assert row.tense == "past_or_present_fact"
+
+
+def _chain_records() -> list[DisclosureRecord]:
+    """원공시(7/9) → 1차 정정(7/21) → 2차 정정(8/21) 체인 + 부모 없는 정정 한 건."""
+
+    return [
+        make_record(
+            TEST_RCEPT_NOS[0],
+            100,
+            ticker="999901",
+            counterparty_ticker="999902",
+            rcept_dt=date(2026, 7, 9),
+        ),
+        make_record(
+            TEST_RCEPT_NOS[1],
+            150,
+            ticker="999901",
+            counterparty_ticker="999902",
+            rcept_dt=date(2026, 7, 21),
+            is_correction=True,
+            correction_target_date=date(2026, 7, 9),
+        ),
+        make_record(
+            TEST_RCEPT_NOS[2],
+            200,
+            ticker="999901",
+            counterparty_ticker="999902",
+            rcept_dt=date(2026, 8, 21),
+            is_correction=True,
+            correction_target_date=date(2026, 7, 21),
+        ),
+        # 부모가 DB에 없는 정정 — 보수적으로 자기 자신을 루트로 삼아야 한다.
+        make_record(
+            TEST_RCEPT_NOS[3],
+            300,
+            ticker="999902",
+            counterparty_ticker="999901",
+            rcept_dt=date(2026, 8, 21),
+            is_correction=True,
+            correction_target_date=date(2026, 6, 1),
+        ),
+    ]
+
+
+def test_resolve_original_rcept_nos_follows_chain_to_root() -> None:
+    with session_scope() as session:
+        upsert_disclosures(session, _chain_records())
+        resolve_original_rcept_nos(session)
+
+        rows = dict(
+            session.execute(
+                text(
+                    "SELECT rcept_no, original_rcept_no FROM disclosures"
+                    " WHERE rcept_no = ANY(:rcept_nos)"
+                ),
+                {"rcept_nos": list(TEST_RCEPT_NOS)},
+            ).all()
+        )
+
+    assert rows[TEST_RCEPT_NOS[0]] == TEST_RCEPT_NOS[0]  # 원공시는 자기 자신
+    assert rows[TEST_RCEPT_NOS[1]] == TEST_RCEPT_NOS[0]  # 1차 정정 → 원공시
+    assert rows[TEST_RCEPT_NOS[2]] == TEST_RCEPT_NOS[0]  # 2차 정정 → 재귀로 원공시
+    assert rows[TEST_RCEPT_NOS[3]] == TEST_RCEPT_NOS[3]  # 부모 없음 → 자기 자신 폴백
+
+
+def test_fetch_supply_edges_dedupes_chain_to_latest_revision() -> None:
+    """체인당 최신 회차 1행만 — 근거 링크는 최신 정정본, 시점은 원공시 접수일."""
+
+    with session_scope() as session:
+        upsert_disclosures(session, _chain_records())
+        resolve_original_rcept_nos(session)
+        edges = {e.rcept_no: e for e in fetch_supply_edges(session) if e.rcept_no in TEST_RCEPT_NOS}
+
+    # 3건짜리 체인은 최신 정정본 1행으로 접힌다.
+    assert TEST_RCEPT_NOS[0] not in edges
+    assert TEST_RCEPT_NOS[1] not in edges
+    latest = edges[TEST_RCEPT_NOS[2]]
+    assert latest.rcept_dt == date(2026, 7, 9)  # mentioned_at 은 원공시 접수일
+    # 부모 없는 정정은 독립 체인으로 남는다.
+    assert TEST_RCEPT_NOS[3] in edges
 
 
 def test_delete_stale_relation_sources_reconciles_ledger() -> None:

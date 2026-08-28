@@ -1,12 +1,4 @@
-"""Neo4j 적재.
-
-Theme 노드와 Company-[:BELONGS_TO]->Theme 간선을 쓴다. 읽기(참조 조회)는
-`references/graph.py`에 있다.
-
-Postgres 적재(`loaders/postgres.py`)와 달리 여기에는 트랜잭션 경계가 없다 —
-Neo4j 드라이버의 `execute_query`는 쿼리 단위로 커밋한다. 중간에 실패하면 앞선 쿼리는
-이미 반영된 상태이므로, 파이프라인은 `reset()` 후 전량 재적재로 복구한다.
-"""
+"""Neo4j 적재."""
 
 from __future__ import annotations
 
@@ -18,9 +10,9 @@ from pipelines.themes.models import Theme
 
 logger = get_logger(__name__)
 
-# GraphRAG 조회 경로: db.index.vector.queryNodes('theme_embedding', k, $qvec)
-# → BELONGS_TO 1-hop 확장. 차원(1024)은 pgvector 스키마와 같은 모델에 결합된 값이라
-# execute 의 LiteralString 제약상 쿼리에 직접 박는다.
+# 벡터 인덱스(theme_embedding, belongs_to_reason_embedding)는 migrations/neo4j 에서
+# 수동 적용한다. GraphRAG 조회 경로: db.index.vector.queryNodes('theme_embedding', k, $qvec)
+# → BELONGS_TO 1-hop 확장.
 
 
 async def delete_all_themes() -> None:
@@ -32,6 +24,17 @@ MATCH (t:Theme)
 DETACH DELETE t
 """
     )
+
+
+async def replace_all_themes(themes: list[Theme]) -> dict[str, Any]:
+    """검증된 스냅샷으로 Theme 전량 삭제-재적재. RDB(load_themes)와 같은 전략이다.
+
+    Postgres와 달리 호출 단위 자동 커밋이라 삭제-적재가 한 트랜잭션은 아니다.
+    """
+
+    await delete_all_themes()
+    await upsert_themes(themes)
+    return {"themes": len(themes)}
 
 
 async def upsert_themes(themes: list[Theme]) -> None:
@@ -68,28 +71,36 @@ ON CREATE SET r.reason = company.reason
     logger.info("%d개 Theme 및 BELONGS_TO 관계 적재 완료", len(themes))
 
 
-async def ensure_theme_vector_index() -> None:
-    """Theme.embedding 벡터 인덱스를 보장한다. IF NOT EXISTS 라 멱등이다."""
+async def fetch_theme_embedding_targets() -> list[dict[str, Any]]:
+    """전체 Theme 의 임베딩 대상 재료. 매 회차 전량 재임베딩한다."""
 
-    await neo4j_database.execute(
+    records = await neo4j_database.execute(
         """
-CREATE VECTOR INDEX theme_embedding IF NOT EXISTS
-FOR (t:Theme) ON t.embedding
-OPTIONS {indexConfig: {
-    `vector.dimensions`: 1024,
-    `vector.similarity_function`: 'cosine'
-}}
+MATCH (t:Theme)
+RETURN t.name AS name,
+       t.description AS description
 """
     )
+    return [dict(record) for record in records]
+
+
+async def fetch_reason_embedding_targets() -> list[dict[str, Any]]:
+    """reason 이 있는 BELONGS_TO 간선의 임베딩 대상 재료. 간선 키는 (ticker, 테마명)이다."""
+
+    records = await neo4j_database.execute(
+        """
+MATCH (c:Company)-[r:BELONGS_TO]->(t:Theme)
+WHERE r.reason IS NOT NULL
+RETURN c.ticker AS ticker,
+       t.name AS theme_name,
+       r.reason AS reason
+"""
+    )
+    return [dict(record) for record in records]
 
 
 async def update_theme_embeddings(rows: list[dict[str, Any]]) -> None:
-    """(name, embedding) 목록을 Theme 노드에 기록한다.
-
-    원천은 Postgres(themes.embedding)다 — 여기 값은 GraphRAG 조회용 복사본이라
-    언제든 pg 에서 전량 재작성할 수 있다. setNodeVectorProperty 는 float32 로
-    저장해 프로퍼티 크기를 절반으로 줄인다.
-    """
+    """(name, embedding) 목록을 Theme 노드에 기록한다."""
 
     if not rows:
         return
@@ -104,3 +115,21 @@ CALL db.create.setNodeVectorProperty(t, 'embedding', row.embedding)
     )
 
     logger.info("%d개 Theme 노드에 임베딩 기록 완료", len(rows))
+
+
+async def update_reason_embeddings(rows: list[dict[str, Any]]) -> None:
+    """(ticker, theme_name, embedding) 목록을 BELONGS_TO 간선에 기록한다."""
+
+    if not rows:
+        return
+
+    await neo4j_database.execute(
+        """
+UNWIND $batch AS row
+MATCH (c:Company {ticker: row.ticker})-[r:BELONGS_TO]->(t:Theme {name: row.theme_name})
+CALL db.create.setRelationshipVectorProperty(r, 'reason_embedding', row.embedding)
+""",
+        parameters={"batch": rows},
+    )
+
+    logger.info("%d개 BELONGS_TO 간선에 편입 사유 임베딩 기록 완료", len(rows))

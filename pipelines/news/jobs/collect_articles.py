@@ -1,4 +1,4 @@
-"""뉴스 수집 + 클러스터링 job (news_pipeline DAG의 1번 task).
+"""뉴스 수집 + 클러스터링 job (news_pipeline DAG의 collect_articles task).
 
 수집 → 중복 제거 → 기사 유형 필터 → DB 기존 기사 제외 → 클러스터링(클러스터당
 최대 N개 선별) → 본문 크롤링 → news INSERT 순서로 진행한다. 클러스터링을 본문

@@ -1,6 +1,6 @@
 """소스 이름 → Extractor 구현 생성.
 
-실제로 돌리는 소스 목록은 `dags/themes/refresh.py`의 SOURCES가 단일 출처다.
+실제로 돌리는 소스 목록은 `dags/themes/init.py`의 SOURCES가 단일 출처다.
 소스를 추가할 때는 거기와 이 팩토리 두 곳을 함께 고친다.
 """
 

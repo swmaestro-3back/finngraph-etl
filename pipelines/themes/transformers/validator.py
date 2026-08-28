@@ -100,8 +100,11 @@ async def validate_theme(themes: list[Theme]) -> list[Theme]:
     크롤링한 THEME이 이미 Neo4j에 존재하는 THEME인지 검증한다.
 
     이름이 동일하거나, 이름이 포함 관계(예: "반도체" ⊂ "반도체소재")이면서
-    종목이 CONTAINMENT_OVERLAP_THRESHOLD 이상 겹치는 테마는 새 노드를 만들지 않고
-    기존(Neo4j) 또는 같은 배치 내 먼저 발견된 테마로 종목을 병합한다.
+    종목이 CONTAINMENT_OVERLAP_THRESHOLD 이상 겹치면 중복으로 본다.
+
+    - 같은 배치 내 중복: 먼저 발견된 테마에 종목을 합친다.
+    - Neo4j 기존 테마와 중복: 이름만 기존 테마명으로 통일한다. 적재가 전량
+      삭제-재적재라 종목은 이번 크롤 결과로 대체된다.
     """
     existing_stocks: dict[str, set[str]] = {}
     if await theme_exists():
@@ -137,8 +140,9 @@ async def validate_theme(themes: list[Theme]) -> list[Theme]:
                 len(target_srtn),
             )
         else:
-            # Neo4j에 이미 있는 테마와 병합: 이름을 기존 테마명으로 맞춰서
-            # loader의 MERGE (t:Theme {name: ...})가 같은 노드에 종목을 붙이게 한다.
+            # Neo4j 기존 테마와 중복: 이름만 기존 테마명으로 통일한다. 적재가 전량
+            # 삭제-재적재(replace_all_themes)라 기존 종목과의 합집합은 만들지 않으며,
+            # merged_srtn 은 로그와 이후 배치 내 중복 판정에만 쓰인다.
             merged_srtn = existing_stocks[dup_name] | candidate_stocks
             logger.info(
                 "[%s] Neo4j 기존 테마 [%s]에 병합 (병합 종목 %d개, 최종 종목 %d개)",

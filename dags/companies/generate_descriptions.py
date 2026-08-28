@@ -21,14 +21,14 @@ except ImportError:
 if dag and task:
 
     @dag(
-        dag_id="companies_descriptions",
+        dag_id="companies_generate_descriptions",
         start_date=datetime(2026, 1, 1),
         schedule="0 4 * * 6",
         catchup=False,
         max_active_runs=1,
         tags=["companies"],
     )
-    def companies_descriptions():
+    def companies_generate_descriptions():
         @task(retries=1)
         def generate_descriptions() -> None:
             from pipelines.companies.jobs.generate_descriptions import run
@@ -37,4 +37,4 @@ if dag and task:
 
         generate_descriptions()
 
-    companies_descriptions()
+    companies_generate_descriptions()

@@ -4,7 +4,7 @@
 다른 DAG가 서로 다른 시각에 채운다.
 
     stocks_daily_pipeline    (18:00) → etl://stocks/daily
-    companies_kis_financials (19:00) → etl://companies/financials
+    companies_collect_kis_financials (19:00) → etl://companies/financials
                                               ↓ 둘 다 갱신되면
                                        stocks_compute_derived
 

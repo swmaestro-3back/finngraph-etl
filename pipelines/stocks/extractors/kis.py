@@ -17,7 +17,7 @@ from typing import Any
 
 from pipelines.common.clients.kis import KisClient, get_kis_client
 from pipelines.common.logging import get_logger
-from pipelines.stocks.models import Dividend, ForeignHolding, InvestorFlow
+from pipelines.stocks.models import Dividend, ForeignHolding
 from pipelines.stocks.types import DailyCandle, PeriodCandle
 
 logger = get_logger(__name__)
@@ -25,11 +25,9 @@ logger = get_logger(__name__)
 CHART_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
 CHART_TR_ID = "FHKST03010100"
 
-INVESTOR_PATH = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
-INVESTOR_TR_ID = "FHPTJ04160001"
-
 DIVIDEND_PATH = "/uapi/domestic-stock/v1/ksdinfo/dividend"
 DIVIDEND_TR_ID = "HHKDB669102C0"
+
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 PRICE_TR_ID = "FHKST01010100"
 
@@ -101,65 +99,6 @@ def fetch_period_candles(
         for parsed_date, open_, high, low, close, volume, trade_value in rows
     ]
     return sorted(candles, key=lambda candle: candle.base_date)
-
-
-# -- 내부 --------------------------------------------------------------------
-
-
-def fetch_investor_flows(
-    ticker: str,
-    base_date: date,
-    client: KisClient | None = None,
-) -> list[InvestorFlow]:
-    """base_date 기준 직전 30영업일의 투자자 수급을 가져온다.
-
-    소급 조회가 되므로 base_date를 30영업일씩 과거로 옮기면 백필이 된다(task.md 3-9).
-
-    Args:
-        ticker (str): 단축코드.
-        base_date (date): 조회 기준일.
-        client (KisClient | None): 재사용할 클라이언트.
-
-    Returns:
-        list[InvestorFlow]: 거래일 오름차순. 최대 30건.
-    """
-
-    client = client or get_kis_client()
-    data = client.request(
-        INVESTOR_PATH,
-        INVESTOR_TR_ID,
-        {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": ticker,
-            "FID_INPUT_DATE_1": base_date.strftime("%Y%m%d"),
-            "FID_ORG_ADJ_PRC": "0",
-            "FID_PERIOD_DIV_CODE": "D",
-            "FID_ETC_CLS_CODE": "0",
-        },
-    )
-
-    flows: list[InvestorFlow] = []
-    for row in data.get("output2") or []:
-        trade_date = _parse_date(row.get("stck_bsop_date"))
-        if trade_date is None:
-            continue
-
-        flows.append(
-            InvestorFlow(
-                ticker=ticker,
-                trade_date=trade_date,
-                foreign_net=_parse_int(row.get("frgn_ntby_qty")),
-                personal_net=_parse_int(row.get("prsn_ntby_qty")),
-                institution_net=_parse_int(row.get("orgn_ntby_qty")),
-                pension_net=_parse_int(row.get("fund_ntby_qty")),
-                trust_net=_parse_int(row.get("ivtr_ntby_qty")),
-                insurance_net=_parse_int(row.get("insu_ntby_qty")),
-                bank_net=_parse_int(row.get("bank_ntby_qty")),
-                etc_corp_net=_parse_int(row.get("etc_corp_ntby_vol")),
-            )
-        )
-
-    return sorted(flows, key=lambda flow: flow.trade_date)
 
 
 def fetch_dividends(

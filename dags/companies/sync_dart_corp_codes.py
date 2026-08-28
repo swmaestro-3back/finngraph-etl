@@ -25,20 +25,20 @@ if dag and task:
     companies_corp_codes = Asset("etl://companies/corp_codes")
 
     @dag(
-        dag_id="companies_corp_codes",
+        dag_id="companies_sync_dart_corp_codes",
         start_date=datetime(2026, 1, 1),
         schedule="0 3 * * *",
         catchup=False,
         max_active_runs=1,
         tags=["companies"],
     )
-    def companies_corp_codes_dag():
+    def companies_sync_dart_corp_codes():
         @task(retries=2, outlets=[companies_corp_codes])
-        def sync_corp_codes() -> None:
+        def sync_dart_corp_codes() -> None:
             from pipelines.companies.jobs.sync_dart_corp_codes import run
 
             run()
 
-        sync_corp_codes()
+        sync_dart_corp_codes()
 
-    companies_corp_codes_dag()
+    companies_sync_dart_corp_codes()

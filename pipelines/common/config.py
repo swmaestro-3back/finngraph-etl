@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     # 일봉 백필 소급 연수와, 일별 갱신 시 되짚어볼 구간. 갱신 구간이 짧으면 휴장·장애로 빠진
     # 날을 영영 못 채우고, 길면 매일 그만큼 재조회한다.
     stock_daily_backfill_years: int = Field(
-        default=10,
+        default=5,
         validation_alias="STOCK_DAILY_BACKFILL_YEARS",
     )
     stock_daily_lookback_days: int = Field(

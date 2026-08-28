@@ -24,14 +24,17 @@ class CorpMasterRow:
 
 @dataclass(frozen=True)
 class SupplyContractEdge:
-    """SUPPLIES_TO 근거 원장 행 한 개의 재료 — 계약상대 ticker 매칭에 성공한 공시만.
+    """SUPPLIES_TO 근거 원장 행 한 개의 재료 — 계약상대 ticker 매칭에 성공한 공시를
+    정정 체인당 최신 회차 1행으로 접은 것.
 
     relation_sources(근거 원장)의 disclosure 행이 되고, 간선 자연키의 정규명은
     companies 조인으로 해석한다 — Neo4j 시드 노드의 name과 같은 원천이라 일치한다.
 
     Attributes:
-        rcept_no (str): 접수번호. 원장의 출처 키. 뷰어 URL 은 disclosures.link 조인으로 얻는다.
-        rcept_dt (date): 접수일자. 원장의 mentioned_at.
+        rcept_no (str): 체인 최신 회차의 접수번호(계약 내용의 최종 확정본). 원장의 출처
+            키. 뷰어 URL 은 disclosures.link 조인으로 얻는다.
+        rcept_dt (date): 체인 루트(원공시)의 접수일자 — 계약이 처음 알려진 시점. 원장의
+            mentioned_at.
         item (str | None): COALESCE(contract_name, contract_type).
         filer_ticker (str): 제출사(공급자) 종목 단축코드.
         filer_name (str): 제출사 정규명 (companies.name).
@@ -60,6 +63,13 @@ class DisclosureRecord:
         corp_cls (str | None): 'KOSPI' | 'KOSDAQ' | 'KONEX' | 'UNLISTED'.
         report_nm (str | None): 보고서명. 정정이면 '[기재정정]' 류 접두가 붙는다.
         is_correction (bool): 원문에 정정신고 블록이 있는지.
+        correction_target_report (str | None): 정정신고 블록의 "정정관련 공시서류".
+        correction_target_date (date | None): 정정신고 블록의 "정정관련 공시서류제출일" —
+            직전 회차의 접수일. 체인 해소(원공시 찾기)의 매칭 키다.
+        correction_reason (str | None): 정정신고 블록의 "정정사유".
+        original_rcept_no (str | None): 체인 루트(최초 원공시) 접수번호. 원공시는 자기
+            자신으로 확정하고, 정정공시는 원문에 부모 접수번호가 없어 None 으로 두면
+            link job 의 체인 해소가 채운다.
         rcept_dt (date): 접수일자.
         flr_nm (str | None): 공시 제출인명.
         link (str): DART 뷰어 URL.
@@ -83,6 +93,10 @@ class DisclosureRecord:
     corp_cls: str | None
     report_nm: str | None
     is_correction: bool
+    correction_target_report: str | None
+    correction_target_date: date | None
+    correction_reason: str | None
+    original_rcept_no: str | None
     rcept_dt: date
     flr_nm: str | None
     link: str

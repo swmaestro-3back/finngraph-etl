@@ -1,9 +1,11 @@
 """공급계약 공시를 근거 원장과 그래프 간선 요약에 반영한다.
 
-disclosures 테이블에서 계약상대 ticker 매칭에 성공한 공시 전량을 읽어
-relation_sources(근거 원장)의 disclosure 행으로 재구성한다 — upsert 와 함께 이번
-원천에 없는 행(정정으로 상대가 바뀌었거나 상폐로 매칭에서 빠진 공시)을 삭제해야
-전량 재적재다. 이어서 영향받은 간선(이전에 실려 있던 키 포함)의 요약을
+먼저 정정 체인을 재귀로 풀어 각 공시의 original_rcept_no(최초 원공시)를 확정한 뒤,
+disclosures 테이블에서 계약상대 ticker 매칭에 성공한 공시를 체인당 최신 회차 1행으로
+접어 relation_sources(근거 원장)의 disclosure 행으로 재구성한다 — 같은 계약의 정정
+회차들이 disclosure_count 를 부풀리지 않는다. upsert 와 함께 이번 원천에 없는 행
+(구 회차로 밀려났거나, 정정으로 상대가 바뀌었거나, 상폐로 매칭에서 빠진 공시)을
+삭제해야 전량 재적재다. 이어서 영향받은 간선(이전에 실려 있던 키 포함)의 요약을
 entities_relations 뷰 기준으로 Neo4j에 동기화하고, 근거가 모두 사라진 간선은
 그래프에서 지운다. 원천이 Postgres 라 매 실행이 멱등이다 — 수집 job 과 분리해 둔
 덕에 매칭 로직이 바뀌어도 재수집 없이 이 job 만 다시 돌리면 원장과 그래프가 따라온다.
@@ -20,6 +22,7 @@ from pipelines.disclosures.loaders.postgres import (
     delete_stale_relation_sources,
     fetch_disclosure_edge_keys,
     fetch_supply_edges,
+    resolve_original_rcept_nos,
     upsert_relation_sources,
 )
 from pipelines.triples.loaders.neo4j import delete_edges, sync_edge_summaries
@@ -30,6 +33,9 @@ logger = get_logger(__name__)
 
 async def _link() -> None:
     with session_scope() as session:
+        # 정정 체인 해소가 먼저다 — fetch_supply_edges 의 체인당 dedupe 가
+        # original_rcept_no 를 키로 쓴다.
+        resolved = resolve_original_rcept_nos(session)
         edges = fetch_supply_edges(session)
 
         # 원천이 비면 아무것도 회수하지 않고 끝낸다 — disclosures 는 append-only 라
@@ -59,8 +65,9 @@ async def _link() -> None:
         deleted = await delete_edges(gone_keys)
 
     logger.info(
-        "공급계약 원장 반영: 공시 %d건 → 회사쌍 %d개, "
+        "공급계약 원장 반영: 체인 해소 %d행, 계약 %d건 → 회사쌍 %d개, "
         "원장 정리 %d행, 간선 동기화 %d개, 간선 삭제 %d개",
+        resolved,
         len(edges),
         len(current_keys),
         stale_count,

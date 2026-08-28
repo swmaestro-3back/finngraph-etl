@@ -31,11 +31,11 @@ if dag and task:
     )
     def disclosures_collect_daily_supply_contracts():
         @task(retries=2)
-        def collect_daily() -> None:
+        def collect_daily_supply_contracts() -> None:
             from pipelines.disclosures.jobs.collect_daily_supply_contracts import run
 
             run()
 
-        collect_daily()
+        collect_daily_supply_contracts()
 
     disclosures_collect_daily_supply_contracts()

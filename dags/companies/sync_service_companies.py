@@ -5,8 +5,8 @@
     theme_stocks           크롤링으로 테마 구성이 바뀜
     stocks.company_id      corpCode 로 새 법인이 생겨 종목에 붙음
 
-그래서 AND 가 아니라 AssetAny 다. 예전에는 themes_refresh 안에 있어서 크롤링이 실패한
-날에는 새로 연결된 법인이 반영되지 않았다.
+그래서 AND 가 아니라 AssetAny 다. 예전에는 테마 DAG(현 themes_pipeline) 안에 있어서
+크롤링이 실패한 날에는 새로 연결된 법인이 반영되지 않았다.
 
 DB 안에서 끝나는 INSERT ... SELECT 하나라 자주 돌아도 비용이 없다.
 """
@@ -27,7 +27,7 @@ except ImportError:
 if dag and task:
 
     @dag(
-        dag_id="companies_service_companies",
+        dag_id="companies_sync_service_companies",
         start_date=datetime(2026, 1, 1),
         schedule=AssetAny(
             Asset("etl://themes/stocks"),
@@ -37,7 +37,7 @@ if dag and task:
         max_active_runs=1,
         tags=["companies"],
     )
-    def companies_service_companies():
+    def companies_sync_service_companies():
         @task(retries=2)
         def sync_service_companies() -> None:
             from pipelines.companies.jobs.sync_service_companies import run
@@ -46,4 +46,4 @@ if dag and task:
 
         sync_service_companies()
 
-    companies_service_companies()
+    companies_sync_service_companies()

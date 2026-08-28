@@ -10,37 +10,30 @@ from pipelines.stocks.models import Dividend, InvestorFlow
 
 UPSERT_INVESTOR_FLOW_SQL = text(
     """
-    INSERT INTO investor_flows (
-      stock_id, trade_date, foreign_net, personal_net, institution_net,
-      pension_net, trust_net, insurance_net, bank_net, etc_corp_net,
-      foreign_ratio, updated_at
+    INSERT INTO stock_investor_flows (
+      stock_id, trade_date, individual_net_qty, institution_net_qty,
+      foreign_net_qty, foreign_hold_ratio, updated_at
     )
     VALUES (
-      :stock_id, :trade_date, :foreign_net, :personal_net, :institution_net,
-      :pension_net, :trust_net, :insurance_net, :bank_net, :etc_corp_net,
-      :foreign_ratio, now()
+      :stock_id, :trade_date, :individual_net_qty, :institution_net_qty,
+      :foreign_net_qty, :foreign_hold_ratio, now()
     )
     ON CONFLICT (stock_id, trade_date) DO UPDATE SET
-      foreign_net = EXCLUDED.foreign_net,
-      personal_net = EXCLUDED.personal_net,
-      institution_net = EXCLUDED.institution_net,
-      pension_net = EXCLUDED.pension_net,
-      trust_net = EXCLUDED.trust_net,
-      insurance_net = EXCLUDED.insurance_net,
-      bank_net = EXCLUDED.bank_net,
-      etc_corp_net = EXCLUDED.etc_corp_net,
-      -- 보유는 최신 거래일 행에만 실려 온다. 매 회차 30일을 다시 upsert하므로 그대로
-      -- 덮으면 어제 채운 값이 NULL로 지워진다.
-      foreign_ratio = COALESCE(
-        EXCLUDED.foreign_ratio, investor_flows.foreign_ratio
-      ),
+      individual_net_qty = EXCLUDED.individual_net_qty,
+      institution_net_qty = EXCLUDED.institution_net_qty,
+      foreign_net_qty = EXCLUDED.foreign_net_qty,
+      foreign_hold_ratio = EXCLUDED.foreign_hold_ratio,
       updated_at = now()
     """
 )
 
+SELECT_INVESTOR_FLOW_COUNTS_SQL = text(
+    "SELECT stock_id, COUNT(*) AS row_count FROM stock_investor_flows GROUP BY stock_id"
+)
+
 UPSERT_DIVIDEND_SQL = text(
     """
-    INSERT INTO dividends (listing_id, record_date, divi_kind, dps, pay_date, updated_at)
+    INSERT INTO stock_dividends (listing_id, record_date, divi_kind, dps, pay_date, updated_at)
     VALUES (:stock_id, :record_date, :divi_kind, :dps, :pay_date, now())
     ON CONFLICT (listing_id, record_date, divi_kind) DO UPDATE SET
       dps = EXCLUDED.dps,
@@ -65,15 +58,10 @@ def upsert_investor_flows(session: Session, flows: list[InvestorFlow]) -> int:
         {
             "stock_id": stock_ids[flow.ticker],
             "trade_date": flow.trade_date,
-            "foreign_net": flow.foreign_net,
-            "personal_net": flow.personal_net,
-            "institution_net": flow.institution_net,
-            "pension_net": flow.pension_net,
-            "trust_net": flow.trust_net,
-            "insurance_net": flow.insurance_net,
-            "bank_net": flow.bank_net,
-            "etc_corp_net": flow.etc_corp_net,
-            "foreign_ratio": flow.foreign_ratio,
+            "individual_net_qty": flow.individual_net_qty,
+            "institution_net_qty": flow.institution_net_qty,
+            "foreign_net_qty": flow.foreign_net_qty,
+            "foreign_hold_ratio": flow.foreign_hold_ratio,
         }
         for flow in flows
         if flow.ticker in stock_ids
@@ -83,6 +71,15 @@ def upsert_investor_flows(session: Session, flows: list[InvestorFlow]) -> int:
 
     session.execute(UPSERT_INVESTOR_FLOW_SQL, payload)
     return len(payload)
+
+
+def fetch_investor_flow_counts(session: Session) -> dict[int, int]:
+    """종목별 수급 적재 건수(stock_id → 행 수).
+
+    백필 재개 판정용이다 — 이미 목표 분량이 있는 종목은 API 호출 없이 건너뛴다.
+    """
+
+    return {row.stock_id: row.row_count for row in session.execute(SELECT_INVESTOR_FLOW_COUNTS_SQL)}
 
 
 def upsert_dividends(session: Session, dividends: list[Dividend]) -> int:
