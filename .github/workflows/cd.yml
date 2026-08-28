@@ -102,8 +102,10 @@ jobs:
           chown -R ec2-user:ec2-user /opt/finngraph-etl
           scripts/dev-env.sh .env.dev
           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+          # 명령 앞에 붙인 변수는 그 명령에만 적용된다. 아래 ps 도 같은 값을 쓰므로 export 한다.
+          export ECR_REGISTRY=$ECR_REGISTRY IMAGE_TAG="$SHA"
           # pull 진행률이 SSM 출력 한도(24000자)를 넘기면 파이프가 닫혀 compose 가 죽는다.
-          ECR_REGISTRY=$ECR_REGISTRY IMAGE_TAG="$SHA" docker compose --env-file .env.dev -f docker-compose.dev.yml \
+          docker compose --env-file .env.dev -f docker-compose.dev.yml \
             up -d --remove-orphans --quiet-pull > /tmp/deploy.log 2>&1 || { tail -40 /tmp/deploy.log; exit 1; }
           docker compose --env-file .env.dev -f docker-compose.dev.yml ps
           EOS
