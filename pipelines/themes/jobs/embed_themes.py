@@ -9,14 +9,8 @@ from pipelines.common.clients.bedrock import embed_texts
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
-from pipelines.themes.loaders.embeddings import (
-    EMBEDDING_DIM,
-    stale_targets,
-    theme_text,
-)
+from pipelines.themes.loaders.embeddings import EMBEDDING_DIM, theme_text
 from pipelines.themes.loaders.neo4j import (
-    ensure_reason_vector_index,
-    ensure_theme_vector_index,
     fetch_reason_embedding_targets,
     fetch_theme_embedding_targets,
     update_reason_embeddings,
@@ -29,7 +23,7 @@ EMBED_BATCH = 100
 
 
 async def _embed_and_store(targets: list[dict[str, Any]], update_fn) -> int:
-    """스테일 대상을 청크로 임베딩해 기록한다. 청크마다 커밋되어 재개 가능하다."""
+    """대상을 청크로 임베딩해 기록한다. 청크 단위로 커밋된다."""
 
     count = 0
     for chunk in chunked(targets, EMBED_BATCH):
@@ -43,36 +37,25 @@ async def _embed_and_store(targets: list[dict[str, Any]], update_fn) -> int:
 
 async def _run() -> tuple[int, int]:
     async with neo4j_database:
-        await ensure_theme_vector_index()
-        await ensure_reason_vector_index()
-
         theme_rows = await fetch_theme_embedding_targets()
-        theme_targets = stale_targets(
-            [
-                {
-                    "name": row["name"],
-                    "text": theme_text(row["name"], row["description"]),
-                    "stored_hash": row["stored_hash"],
-                    "has_embedding": row["has_embedding"],
-                }
-                for row in theme_rows
-            ]
-        )
+        theme_targets = [
+            {
+                "name": row["name"],
+                "text": theme_text(row["name"], row["description"]),
+            }
+            for row in theme_rows
+        ]
         theme_count = await _embed_and_store(theme_targets, update_theme_embeddings)
 
         reason_rows = await fetch_reason_embedding_targets()
-        reason_targets = stale_targets(
-            [
-                {
-                    "ticker": row["ticker"],
-                    "theme_name": row["theme_name"],
-                    "text": row["reason"],
-                    "stored_hash": row["stored_hash"],
-                    "has_embedding": row["has_embedding"],
-                }
-                for row in reason_rows
-            ]
-        )
+        reason_targets = [
+            {
+                "ticker": row["ticker"],
+                "theme_name": row["theme_name"],
+                "text": row["reason"],
+            }
+            for row in reason_rows
+        ]
         reason_count = await _embed_and_store(reason_targets, update_reason_embeddings)
 
     return theme_count, reason_count
