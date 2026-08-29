@@ -230,7 +230,7 @@ def test_upsert_relation_sources_is_idempotent_and_overwrites() -> None:
                 """
                 SELECT source_type, subject_name, relation, object_name,
                        subject_code, object_code, mentioned_at, item,
-                       polarity, tense
+                       polarity, tense, subject_impact, object_impact
                   FROM relation_sources
                  WHERE rcept_no = :rcept_no
                 """
@@ -248,9 +248,11 @@ def test_upsert_relation_sources_is_idempotent_and_overwrites() -> None:
     assert row.object_code == "999902"
     assert row.mentioned_at == date(2026, 8, 21)
     assert row.item == "기타 판매ㆍ공급계약: 테스트 계약"
-    # 공시는 확정 사실 — 상수로 들어간다
+    # 공시는 확정 사실 — 상수로 들어간다 (공급계약 체결 = 공급사 호재·수요사 중립)
     assert row.polarity == "affirmed"
     assert row.tense == "past_or_present_fact"
+    assert row.subject_impact == "positive"
+    assert row.object_impact == "neutral"
 
 
 def test_fetch_edge_summaries_includes_disclosure_arrays() -> None:

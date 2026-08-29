@@ -308,8 +308,8 @@ def save_news_items(
 def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
     """
     Triple ETL에서 사용.
-    삼중항 추출이 아직 시도되지 않은(is_processed=FALSE) 뉴스를 조회한다.
-    추출 중 예외가 난 뉴스는 FALSE로 남아 다음 런에서 자동 재시도된다.
+    삼중항 추출이 아직 시도되지 않은(triple_extracted IS NULL) 뉴스를 조회한다.
+    추출 중 예외가 난 뉴스는 NULL로 남아 다음 런에서 자동 재시도된다.
     """
 
     query = """
@@ -318,7 +318,7 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
             text,
             (COALESCE(published_at, collected_at, now()))::date AS mentioned_at
         FROM news
-        WHERE is_processed = FALSE
+        WHERE triple_extracted IS NULL
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
         ORDER BY id ASC
@@ -339,8 +339,8 @@ def mark_triple_extraction_result(
 ) -> dict[str, int]:
     """
     Triple ETL에서 호출.
-    삼중항 추출을 시도한 뉴스의 is_processed를 TRUE로 올리고,
-    삼중항 존재 여부를 relation_extracted에 마킹한다.
+    삼중항 추출을 시도한 뉴스의 triple_extracted에 삼중항 존재 여부를 마킹한다.
+    (NULL=미시도이므로 TRUE/FALSE 어느 쪽이든 "시도 완료"를 겸한다)
     """
 
     unique_true = sorted({int(news_id) for news_id in has_triples_ids if news_id})
@@ -355,8 +355,7 @@ def mark_triple_extraction_result(
                 text(
                     """
                     UPDATE news
-                    SET is_processed = TRUE,
-                        relation_extracted = TRUE
+                    SET triple_extracted = TRUE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -368,8 +367,7 @@ def mark_triple_extraction_result(
                 text(
                     """
                     UPDATE news
-                    SET is_processed = TRUE,
-                        relation_extracted = FALSE
+                    SET triple_extracted = FALSE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -482,7 +480,7 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
             title,
             text
         FROM news
-        WHERE relation_extracted = TRUE
+        WHERE triple_extracted = TRUE
           AND (summary IS NULL OR BTRIM(summary) = '')
           AND text IS NOT NULL
           AND BTRIM(text) <> ''

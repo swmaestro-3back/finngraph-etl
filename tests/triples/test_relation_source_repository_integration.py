@@ -71,6 +71,8 @@ def _source_row(subject: str, obj: str) -> dict:
         "source_sentence": "원문 문장",
         "polarity": "affirmed",
         "tense": "past_or_present_fact",
+        "subject_impact": "positive",
+        "object_impact": "neutral",
         "item": "HBM",
     }
 
