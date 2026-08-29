@@ -1,3 +1,7 @@
+"""
+Naver News API를 활용한 키워드 검색 수집기
+"""
+
 import logging
 import time
 from collections.abc import Iterator
@@ -45,7 +49,6 @@ def map_search_item_to_article(
         "link": link,
         "originallink": originallink,
         "pubDate": pub_date,
-        "pubLabel": "news",
         "_search_keyword": keyword,
     }
 

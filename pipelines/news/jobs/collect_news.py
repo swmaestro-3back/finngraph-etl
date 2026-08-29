@@ -32,16 +32,14 @@ from pipelines.news.loaders.postgres import (
     mark_news_source_type,
     save_news_items,
 )
+from pipelines.news.models import NewsArticle
 from pipelines.news.transformers.clustering import select_articles_by_cluster
-from pipelines.news.transformers.duplicate_filter import (
-    remove_duplicate_by_title,
-    remove_duplicate_by_url,
-)
+from pipelines.news.transformers.duplicate_filter import remove_duplicate_by_url
 from pipelines.news.transformers.news_type_filter import filter_official_source_news
 
 
-def collect_headline_items() -> list[dict[str, Any]]:
-    """전 카테고리 헤드라인을 수집하고 _source_type을 태깅한다.
+def collect_headline_items() -> list[NewsArticle]:
+    """전 카테고리 헤드라인을 수집해 경계 모델로 반환한다.
 
     페이지별 필터(DB 워터마크 중단·공식출처·목표 개수)는 수집기 내부의 크롤링
     제어 장치로 그대로 동작하며, 병합 배치에서 같은 필터가 한 번 더 적용된다.
@@ -50,39 +48,36 @@ def collect_headline_items() -> list[dict[str, Any]]:
     validate_anchor_headline_settings()
     settings = get_news_settings()
 
-    items: list[dict[str, Any]] = []
+    articles: list[NewsArticle] = []
 
     for category_id in settings.anchor_categories:
-        category_items, category_stats = collect_category_new_headlines(
+        category_articles, category_stats = collect_category_new_headlines(
             category_id=category_id,
             target_count=settings.max_total_collected_items,
             max_more_calls=settings.headline_more_count,
         )
-        items.extend(category_items)
+        articles.extend(category_articles)
         logging.info(
             "헤드라인 수집 %s: 선정 %d개 (raw %d)",
             category_stats.get("category_name", category_id),
-            category_stats.get("selected", len(category_items)),
+            category_stats.get("selected", len(category_articles)),
             category_stats.get("raw", 0),
         )
 
-    for item in items:
-        item["_source_type"] = "headline"
-
-    return items
+    return articles
 
 
-def collect_search_items() -> tuple[list[dict[str, Any]], list[int]]:
-    """search_keywords 기반 검색 수집. (기사 목록, 키워드 id 목록)을 반환한다."""
+def collect_search_items() -> list[NewsArticle]:
+    """search_keywords 기반 검색 수집. 수집 성공 시 키워드 last_searched_at을 마킹한다."""
 
     validate_search_settings()
     keywords = fetch_search_keywords()
 
     if not keywords:
         logging.info("search_keywords 테이블에 검색 쿼리가 없습니다.")
-        return [], []
+        return []
 
-    items, search_stats = collect_search_news([keyword["keyword"] for keyword in keywords])
+    articles, search_stats = collect_search_news([keyword["keyword"] for keyword in keywords])
     logging.info(
         "검색 수집: 쿼리 %d개 (raw %d, 중복제거 %d, 수집 %d)",
         search_stats["queries"],
@@ -91,13 +86,13 @@ def collect_search_items() -> tuple[list[dict[str, Any]], list[int]]:
         search_stats["collected"],
     )
 
-    for item in items:
-        item["_source_type"] = "search"
+    searched_count = mark_keywords_searched([keyword["id"] for keyword in keywords])
+    logging.info("검색 키워드 마킹 %d개", searched_count)
 
-    return items, [keyword["id"] for keyword in keywords]
+    return articles
 
 
-def collect_all_sources() -> tuple[list[dict[str, Any]], list[int], dict[str, Any]]:
+def collect_all_sources() -> list[NewsArticle]:
     """두 소스를 동시에 수집한다. 한쪽 실패는 건너뛰고, 둘 다 실패하면 예외."""
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -105,9 +100,8 @@ def collect_all_sources() -> tuple[list[dict[str, Any]], list[int], dict[str, An
         search_future = executor.submit(collect_search_items)
 
     errors: dict[str, Exception] = {}
-    headline_items: list[dict[str, Any]] = []
-    search_items: list[dict[str, Any]] = []
-    keyword_ids: list[int] = []
+    headline_items: list[NewsArticle] = []
+    search_items: list[NewsArticle] = []
 
     try:
         headline_items = headline_future.result()
@@ -116,7 +110,7 @@ def collect_all_sources() -> tuple[list[dict[str, Any]], list[int], dict[str, An
         logging.warning("헤드라인 수집 실패, 다른 소스로 진행: %s", e)
 
     try:
-        search_items, keyword_ids = search_future.result()
+        search_items = search_future.result()
     except Exception as e:  # noqa: BLE001 - 소스 단위 격리가 목적
         errors["search"] = e
         logging.warning("검색 수집 실패, 다른 소스로 진행: %s", e)
@@ -124,27 +118,22 @@ def collect_all_sources() -> tuple[list[dict[str, Any]], list[int], dict[str, An
     if len(errors) == 2:
         raise RuntimeError(f"헤드라인·검색 수집이 모두 실패했습니다: {errors}")
 
-    stats = {
-        "headline_collected": len(headline_items),
-        "search_collected": len(search_items),
-        "failed_sources": sorted(errors),
-    }
+    logging.info("수집 완료: 헤드라인 %d개 + 검색 %d개", len(headline_items), len(search_items))
 
-    return headline_items + search_items, keyword_ids, stats
+    return headline_items + search_items
 
 
 def apply_batch_filters(
     items: list[dict[str, Any]],
     official_source_threshold: int,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """병합 배치에 통합 필터를 적용한다: URL중복 → 제목중복 → 기사유형 → DB기존.
+    """병합 배치에 통합 필터를 적용한다: URL중복 → 기사유형 → DB기존.
 
     수집기 내부 필터와 겹치지만 멱등이라 비용이 거의 없고, 소스 간 교차 중복을
     여기서 잡는다.
     """
 
     unique_items, url_removed = remove_duplicate_by_url(items)
-    unique_items, title_removed = remove_duplicate_by_title(unique_items)
 
     typed_items, type_removed = filter_official_source_news(
         unique_items,
@@ -156,7 +145,7 @@ def apply_batch_filters(
 
     stats = {
         "merged": len(items),
-        "duplicate_removed": len(url_removed) + len(title_removed),
+        "duplicate_removed": len(url_removed),
         "type_removed": len(type_removed),
         "db_existing_removed": len(existing_items),
         "new": len(new_items),
@@ -168,10 +157,11 @@ def apply_batch_filters(
 def run() -> dict[str, Any]:
     settings = get_news_settings()
 
-    # 1. 두 소스 동시 수집 (부분 실패 허용)
-    merged, keyword_ids, collect_stats = collect_all_sources()
+    # 1. 두 소스 동시 수집 (부분 실패 허용). 경계 모델(NewsArticle)로 검증된 상태
+    merged_articles = collect_all_sources()
 
-    # 2. 통합 필터: URL/제목 중복 → 기사유형 → DB 기존 제외
+    # 2. 다운스트림 dict 계약으로 전환 후 통합 필터: URL/제목 중복 → 기사유형 → DB 기존 제외
+    merged = [article.to_pipeline_item() for article in merged_articles]
     new_items, filter_stats = apply_batch_filters(
         merged, official_source_threshold=settings.official_source_threshold
     )
@@ -201,7 +191,7 @@ def run() -> dict[str, Any]:
     ]
     clustered_count = assign_cluster_representatives(saved_groups)
 
-    # 7. 후처리: 수집 경로 태깅 + 검색 키워드 마킹 (검색 실패 시 keyword_ids가 비어 자연 스킵)
+    # 7. 후처리: 수집 경로 태깅 (키워드 마킹은 collect_search_items가 수집 직후 수행)
     for source_type in ("headline", "search"):
         source_ids = [
             item["_news_id"]
@@ -210,17 +200,10 @@ def run() -> dict[str, Any]:
         ]
         mark_news_source_type(source_ids, source_type)
 
-    searched_count = mark_keywords_searched(keyword_ids)
-
     print("\n" + "=" * 70)
     print("뉴스 통합 수집·클러스터링 결과")
     print("=" * 70)
-    if collect_stats["failed_sources"]:
-        print(f"- 수집 실패 소스: {', '.join(collect_stats['failed_sources'])}")
-    print(
-        f"- 수집: 헤드라인 {collect_stats['headline_collected']}개 "
-        f"+ 검색 {collect_stats['search_collected']}개 = {filter_stats['merged']}개"
-    )
+    print(f"- 수집 합계 {filter_stats['merged']}개")
     print(
         f"- 통합 필터: 중복 {filter_stats['duplicate_removed']}, "
         f"유형 {filter_stats['type_removed']}, DB기존 {filter_stats['db_existing_removed']} "
@@ -232,16 +215,13 @@ def run() -> dict[str, Any]:
     )
     print(f"- 본문 성공 {len(storable)} / 실패 {len(enriched) - len(storable)}")
     print(f"- 저장 결과 {save_result}, 클러스터 대표 기록 {clustered_count}건")
-    print(f"- 키워드 마킹 {searched_count}개")
     print("=" * 70)
 
     return {
-        "collect": collect_stats,
         "filter": filter_stats,
         "cluster": cluster_stats,
         "saved": save_result,
         "clustered": clustered_count,
-        "keywords_marked": searched_count,
     }
 
 

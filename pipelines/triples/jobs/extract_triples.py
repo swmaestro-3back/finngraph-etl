@@ -33,7 +33,7 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     1. LangGraph Runner 실행
     2. relation_sources(근거 원장)에 뉴스 근거 적재 + news_companies(기업 매핑) 적재
     3. entities_relations 뷰 기준으로 Neo4j 간선 요약 동기화
-    4. News 테이블에 is_processed / relation_extracted 마킹
+    4. News 테이블에 relation_extracted 마킹
     """
     news_id = item["news_id"]
 
@@ -75,7 +75,7 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
         )
     except Exception as e:
         logger.warning(
-            "트리플 추출 실패 (is_processed=FALSE 유지, 다음 런 재시도): news_id=%s, %s: %s",
+            "트리플 추출 실패 (relation_extracted=NULL 유지, 다음 런 재시도): news_id=%s, %s: %s",
             news_id,
             type(e).__name__,
             e,

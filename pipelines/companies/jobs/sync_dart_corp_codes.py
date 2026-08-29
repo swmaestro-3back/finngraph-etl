@@ -15,7 +15,12 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.companies.extractors.dart import fetch_corp_codes
-from pipelines.companies.loaders.dart import link_listed_corp_codes, upsert_unlisted_companies
+from pipelines.companies.loaders.dart import (
+    insert_dart_name_aliases,
+    link_listed_corp_codes,
+    seed_curated_aliases,
+    upsert_unlisted_companies,
+)
 
 logger = get_logger(__name__)
 
@@ -42,11 +47,24 @@ def run(load_unlisted: bool = True) -> None:
     )
 
     linked = 0
+    aliased = 0
     for chunk in chunked(listed, CHUNK_SIZE):
         with session_scope() as session:
             linked += link_listed_corp_codes(session, chunk)
+            # DART 법인명은 KIS 종목명에 매일 덮이므로 별칭이 유일한 보존처다.
+            # 공시 계약상대 역매칭이 source='DART' 별칭을 마스터명과 함께 쓴다.
+            aliased += insert_dart_name_aliases(session, chunk)
 
-    logger.info("상장사 corp_code 연결: %d건", linked)
+    # 사명변경·통용표기 시드는 마스터명이 있어야 해석되므로 상장사 연결 뒤에 돈다.
+    with session_scope() as session:
+        curated = seed_curated_aliases(session)
+
+    logger.info(
+        "상장사 corp_code 연결: %d건, DART 법인명 별칭 추가: %d건, 수동 별칭 시드: %d건",
+        linked,
+        aliased,
+        curated,
+    )
 
     if not load_unlisted:
         return

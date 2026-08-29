@@ -7,13 +7,13 @@ from typing import Any
 from pipelines.news.extractors.search_collector import (
     iter_search_news_pages,
 )
+from pipelines.news.models import NewsArticle, to_articles
 from pipelines.news.transformers.duplicate_filter import (
-    remove_duplicate_by_title,
     remove_duplicate_by_url,
 )
 
 
-def collect_search_news(queries: list[str]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def collect_search_news(queries: list[str]) -> tuple[list[NewsArticle], dict[str, int]]:
     """쿼리 목록으로 네이버 검색 API를 순회 수집하고 배치 내 중복을 제거한다."""
 
     collected: list[dict[str, Any]] = []
@@ -25,13 +25,14 @@ def collect_search_news(queries: list[str]) -> tuple[list[dict[str, Any]], dict[
             collected.extend(page_items)
 
     unique_items, url_removed = remove_duplicate_by_url(collected)
-    unique_items, title_removed = remove_duplicate_by_title(unique_items)
+
+    articles = to_articles(unique_items, "search")
 
     stats = {
         "queries": len(queries),
         "raw": raw_count,
-        "duplicate_removed": len(url_removed) + len(title_removed),
-        "collected": len(unique_items),
+        "duplicate_removed": len(url_removed),
+        "collected": len(articles),
     }
 
-    return unique_items, stats
+    return articles, stats

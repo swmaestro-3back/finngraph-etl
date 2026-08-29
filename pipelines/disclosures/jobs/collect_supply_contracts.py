@@ -26,7 +26,7 @@ from pipelines.disclosures.loaders.postgres import (
     upsert_disclosures,
 )
 from pipelines.disclosures.models import DisclosureRecord
-from pipelines.disclosures.references.companies import fetch_corp_master
+from pipelines.disclosures.references.companies import fetch_corp_master, fetch_counterparty_aliases
 from pipelines.disclosures.transformers.counterparty import CorpMaster
 from pipelines.disclosures.transformers.parser import build_disclosure
 
@@ -56,7 +56,7 @@ def run(start: date, end: date, batch_size: int | None = None) -> None:
 
     client = get_dart_client()
     with session_scope() as session:
-        corp_master = CorpMaster(fetch_corp_master(session))
+        corp_master = CorpMaster(fetch_corp_master(session), fetch_counterparty_aliases(session))
 
     listed_total = fetched = written = missing = 0
     failed: list[str] = []

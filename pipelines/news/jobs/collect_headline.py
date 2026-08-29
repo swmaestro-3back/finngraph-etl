@@ -9,9 +9,9 @@ from pipelines.news.extractors.headline_collector import (
 from pipelines.news.loaders.postgres import (
     filter_new_news_by_db,
 )
+from pipelines.news.models import NewsArticle, to_articles
 from pipelines.news.transformers.duplicate_filter import (
     normalize_title_for_duplicate,
-    remove_duplicate_by_title,
     remove_duplicate_by_url,
 )
 from pipelines.news.transformers.news_type_filter import filter_official_source_news
@@ -21,7 +21,7 @@ def collect_category_new_headlines(
     category_id: int,
     target_count: int,
     max_more_calls: int | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[NewsArticle], dict[str, Any]]:
 
     settings = get_news_settings()
     category_name = settings.anchor_categories.get(category_id, str(category_id))
@@ -55,12 +55,9 @@ def collect_category_new_headlines(
         page_url_unique, page_url_removed = remove_duplicate_by_url(page_items)
         stats["url_duplicate_removed"] += len(page_url_removed)
 
-        page_title_unique, page_title_removed = remove_duplicate_by_title(page_url_unique)
-        stats["title_duplicate_removed"] += len(page_title_removed)
-
-        # 카테고리 내 페이지 간 제목 중복 제거 (배치 헬퍼는 페이지 내부만 처리)
+        # 카테고리 내 제목 중복 제거 (seen_titles가 페이지 내부·페이지 간 모두 커버)
         page_candidates: list[dict[str, Any]] = []
-        for item in page_title_unique:
+        for item in page_url_unique:
             normalized_title = normalize_title_for_duplicate(item.get("title", ""))
 
             if normalized_title and normalized_title in seen_titles:
@@ -96,6 +93,7 @@ def collect_category_new_headlines(
             stats["stopped_by_target"] = True
             break
 
-    stats["selected"] = len(collected)
+    articles = to_articles(collected, "headline")
+    stats["selected"] = len(articles)
 
-    return collected, stats
+    return articles, stats
