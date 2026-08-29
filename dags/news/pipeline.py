@@ -25,10 +25,22 @@ if dag and task:
     )
     def news_pipeline():
         @task(retries=2, retry_delay=timedelta(minutes=5))
-        def collect_articles() -> dict[str, Any]:
-            from pipelines.news.jobs.collect_articles import run
+        def collect_news() -> dict[str, Any]:
+            from pipelines.news.jobs.collect_news import run
 
             return run()
+
+        @task(retries=1, retry_delay=timedelta(minutes=10))
+        def filter_meaningless() -> dict[str, Any]:
+            from pipelines.news.jobs.filter_meaningless_news import run
+
+            result = run()
+            # removed_items에는 기사 원문이 들어 있어 XCom에는 카운트만 남긴다
+            return {
+                "fetched": result["fetched"],
+                "kept": result["kept"],
+                "dropped": result["dropped"],
+            }
 
         @task(retries=1, retry_delay=timedelta(minutes=10))
         def extract_triples() -> dict[str, int]:
@@ -43,6 +55,6 @@ if dag and task:
             result = run()
             return {"fetched": result["fetched"], "saved": result["saved"]}
 
-        collect_articles() >> extract_triples() >> summarize_articles()
+        (collect_news() >> filter_meaningless() >> extract_triples() >> summarize_articles())
 
     news_pipeline()
