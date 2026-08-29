@@ -12,8 +12,13 @@ from datetime import date
 
 import pytest
 
-from pipelines.common.clients.neo4j import neo4j_database
-from pipelines.triples.loaders.neo4j import sync_edge_summaries
+pytest.importorskip(
+    "pipelines.triples.ontology.predicate_dict",
+    reason="비공개 ontology가 없는 체크아웃(CI)에서는 스킵",
+)
+
+from pipelines.common.clients.neo4j import neo4j_database  # noqa: E402
+from pipelines.triples.loaders.neo4j import sync_edge_summaries  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
