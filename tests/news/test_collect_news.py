@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import pipelines.news.jobs.collect_news as collect_news
+from pipelines.news.models import NewsArticle
 
 
 def _item(title: str, description: str = "", link: str | None = None) -> dict:
@@ -17,6 +18,17 @@ def _item(title: str, description: str = "", link: str | None = None) -> dict:
         "originallink": "",
         "pubDate": "",
     }
+
+
+def _article(
+    title: str, source_type: str = "headline", link: str | None = None, **kwargs
+) -> NewsArticle:
+    return NewsArticle(
+        title=title,
+        link=link or f"https://n.news.naver.com/{title}",
+        source_type=source_type,
+        **kwargs,
+    )
 
 
 def _stub_settings() -> SimpleNamespace:
@@ -31,22 +43,30 @@ def _stub_settings() -> SimpleNamespace:
     )
 
 
-def test_collect_headline_items_tags_source_type(monkeypatch):
+def test_collect_headline_items_merges_category_articles(monkeypatch):
     monkeypatch.setattr(collect_news, "validate_anchor_headline_settings", lambda: None)
     monkeypatch.setattr(collect_news, "get_news_settings", _stub_settings)
 
     def fake_collect(category_id, target_count, max_more_calls):
-        return [_item(f"카테고리{category_id} 기사", link=f"https://n/{category_id}")], {}
+        article = _article(
+            f"카테고리{category_id} 기사",
+            link=f"https://n/{category_id}",
+            category_id=category_id,
+            category_name=f"카테고리{category_id}",
+        )
+        return [article], {}
 
     monkeypatch.setattr(collect_news, "collect_category_new_headlines", fake_collect)
 
-    items = collect_news.collect_headline_items()
+    articles = collect_news.collect_headline_items()
 
-    assert len(items) == 2  # 카테고리 2개 × 1건
-    assert all(item["_source_type"] == "headline" for item in items)
+    assert len(articles) == 2  # 카테고리 2개 × 1건
+    assert all(isinstance(article, NewsArticle) for article in articles)
+    assert all(article.source_type == "headline" for article in articles)
+    assert {article.category_id for article in articles} == {101, 103}
 
 
-def test_collect_search_items_tags_source_and_returns_keyword_ids(monkeypatch):
+def test_collect_search_items_returns_articles_and_marks_keywords(monkeypatch):
     monkeypatch.setattr(collect_news, "validate_search_settings", lambda: None)
     monkeypatch.setattr(
         collect_news,
@@ -57,38 +77,50 @@ def test_collect_search_items_tags_source_and_returns_keyword_ids(monkeypatch):
         collect_news,
         "collect_search_news",
         lambda queries: (
-            [_item(f"{q} 기사") for q in queries],
+            [_article(f"{q} 기사", source_type="search", search_keyword=q) for q in queries],
             {"queries": 2, "raw": 2, "duplicate_removed": 0, "collected": 2},
         ),
     )
+    marked_calls: list[list[int]] = []
+    monkeypatch.setattr(
+        collect_news,
+        "mark_keywords_searched",
+        lambda ids: marked_calls.append(ids) or len(ids),
+    )
 
-    items, keyword_ids = collect_news.collect_search_items()
+    articles = collect_news.collect_search_items()
 
-    assert keyword_ids == [7, 9]
-    assert all(item["_source_type"] == "search" for item in items)
+    assert all(isinstance(article, NewsArticle) for article in articles)
+    assert all(article.source_type == "search" for article in articles)
+    assert {article.search_keyword for article in articles} == {"유상증자", "리콜"}
+    assert marked_calls == [[7, 9]]  # 수집 성공 직후 last_searched_at 마킹
 
 
 def test_collect_search_items_empty_keywords(monkeypatch):
     monkeypatch.setattr(collect_news, "validate_search_settings", lambda: None)
     monkeypatch.setattr(collect_news, "fetch_search_keywords", lambda: [])
+    marked_calls: list[list[int]] = []
+    monkeypatch.setattr(
+        collect_news,
+        "mark_keywords_searched",
+        lambda ids: marked_calls.append(ids) or len(ids),
+    )
 
-    items, keyword_ids = collect_news.collect_search_items()
+    articles = collect_news.collect_search_items()
 
-    assert items == []
-    assert keyword_ids == []
+    assert articles == []
+    assert marked_calls == []
 
 
 def test_collect_all_sources_merges_headline_first(monkeypatch):
-    headline = [_item("헤드라인 기사")]
-    search = [_item("검색 기사")]
+    headline = [_article("헤드라인 기사")]
+    search = [_article("검색 기사", source_type="search")]
     monkeypatch.setattr(collect_news, "collect_headline_items", lambda: headline)
-    monkeypatch.setattr(collect_news, "collect_search_items", lambda: (search, [7]))
+    monkeypatch.setattr(collect_news, "collect_search_items", lambda: search)
 
-    merged, keyword_ids, stats = collect_news.collect_all_sources()
+    merged = collect_news.collect_all_sources()
 
     assert merged == headline + search
-    assert keyword_ids == [7]
-    assert stats == {"headline_collected": 1, "search_collected": 1, "failed_sources": []}
 
 
 def test_collect_all_sources_continues_when_headline_fails(monkeypatch):
@@ -96,27 +128,27 @@ def test_collect_all_sources_continues_when_headline_fails(monkeypatch):
         raise RuntimeError("crawl down")
 
     monkeypatch.setattr(collect_news, "collect_headline_items", boom)
-    monkeypatch.setattr(collect_news, "collect_search_items", lambda: ([_item("검색 기사")], [7]))
+    monkeypatch.setattr(
+        collect_news,
+        "collect_search_items",
+        lambda: [_article("검색 기사", source_type="search")],
+    )
 
-    merged, keyword_ids, stats = collect_news.collect_all_sources()
+    merged = collect_news.collect_all_sources()
 
-    assert len(merged) == 1
-    assert keyword_ids == [7]
-    assert stats["failed_sources"] == ["headline"]
+    assert [article.title for article in merged] == ["검색 기사"]
 
 
-def test_collect_all_sources_skips_keywords_when_search_fails(monkeypatch):
+def test_collect_all_sources_continues_when_search_fails(monkeypatch):
     def boom():
         raise RuntimeError("api down")
 
-    monkeypatch.setattr(collect_news, "collect_headline_items", lambda: [_item("헤드라인 기사")])
+    monkeypatch.setattr(collect_news, "collect_headline_items", lambda: [_article("헤드라인 기사")])
     monkeypatch.setattr(collect_news, "collect_search_items", boom)
 
-    merged, keyword_ids, stats = collect_news.collect_all_sources()
+    merged = collect_news.collect_all_sources()
 
-    assert len(merged) == 1
-    assert keyword_ids == []  # 마킹 스킵 → 다음 실행에서 재검색
-    assert stats["failed_sources"] == ["search"]
+    assert [article.title for article in merged] == ["헤드라인 기사"]
 
 
 def test_collect_all_sources_raises_when_both_fail(monkeypatch):
@@ -163,19 +195,11 @@ def test_run_wires_full_pipeline(monkeypatch):
     # 실제 기사유형 필터를 통과한다
     monkeypatch.setattr(collect_news, "get_news_settings", _stub_settings)
 
-    items = [
-        _item("삼성전자 유상증자 결정", link="https://n/1") | {"_source_type": "headline"},
-        _item("현대차 리콜 확대", link="https://n/2") | {"_source_type": "search"},
+    articles = [
+        _article("삼성전자 유상증자 결정", link="https://n/1"),
+        _article("현대차 리콜 확대", source_type="search", link="https://n/2"),
     ]
-    monkeypatch.setattr(
-        collect_news,
-        "collect_all_sources",
-        lambda: (
-            items,
-            [7],
-            {"headline_collected": 1, "search_collected": 1, "failed_sources": []},
-        ),
-    )
+    monkeypatch.setattr(collect_news, "collect_all_sources", lambda: articles)
     monkeypatch.setattr(collect_news, "filter_new_news_by_db", lambda batch: (batch, []))
 
     def fake_enrich(selected):
@@ -208,12 +232,6 @@ def test_run_wires_full_pipeline(monkeypatch):
         "mark_news_source_type",
         lambda ids, source_type: source_calls.append((source_type, ids)) or len(ids),
     )
-    keyword_calls: list[list[int]] = []
-    monkeypatch.setattr(
-        collect_news,
-        "mark_keywords_searched",
-        lambda ids: keyword_calls.append(ids) or len(ids),
-    )
 
     result = collect_news.run()
 
@@ -221,29 +239,22 @@ def test_run_wires_full_pipeline(monkeypatch):
     assert result["cluster"]["cluster_count"] == 2
     assert result["saved"]["inserted_count"] == 2
     assert result["clustered"] == 2
-    assert result["keywords_marked"] == 1
     assert rep_calls and len(rep_calls[0]) == 2
 
     by_source = dict(source_calls)
     assert set(by_source) == {"headline", "search"}
     assert len(by_source["headline"]) == 1 and len(by_source["search"]) == 1
-    assert keyword_calls == [[7]]
 
 
 def test_run_handles_empty_collection(monkeypatch):
     """양쪽 다 0건이어도(실패 아님) 예외 없이 0 카운트로 끝난다."""
 
     monkeypatch.setattr(collect_news, "get_news_settings", _stub_settings)
-    monkeypatch.setattr(
-        collect_news,
-        "collect_all_sources",
-        lambda: ([], [], {"headline_collected": 0, "search_collected": 0, "failed_sources": []}),
-    )
+    monkeypatch.setattr(collect_news, "collect_all_sources", lambda: [])
     monkeypatch.setattr(collect_news, "filter_new_news_by_db", lambda batch: (batch, []))
     monkeypatch.setattr(collect_news, "save_news_items", lambda **kwargs: {"inserted_count": 0})
     monkeypatch.setattr(collect_news, "assign_cluster_representatives", lambda groups: 0)
     monkeypatch.setattr(collect_news, "mark_news_source_type", lambda ids, source_type: 0)
-    monkeypatch.setattr(collect_news, "mark_keywords_searched", lambda ids: 0)
 
     result = collect_news.run()
 
@@ -258,17 +269,17 @@ def test_run_cluster_representative_falls_back_when_medoid_body_fails(monkeypatc
 
     monkeypatch.setattr(collect_news, "get_news_settings", _stub_settings)
 
-    items = [
-        _item("삼성전자 대규모 유상증자 확정", link="https://n/1") | {"_source_type": "headline"},
-        _item("삼성전자 유상증자 결정", link="https://n/2") | {"_source_type": "headline"},
-        _item("삼성전자 유상증자 발표", link="https://n/3") | {"_source_type": "headline"},
+    articles = [
+        _article("삼성전자 대규모 유상증자 확정", link="https://n/1"),
+        _article("삼성전자 유상증자 결정", link="https://n/2"),
+        _article("삼성전자 유상증자 발표", link="https://n/3"),
     ]
 
     # test_select_articles.py와 동일한 절차로 대표(메도이드)를 독립적으로 파악한다:
     # 이 3건은 threshold=0.35에서 한 군집으로 묶이고 group[0]이 대표가 된다.
     settings = _stub_settings()
     groups, _ = select_articles_by_cluster(
-        items,
+        [article.to_pipeline_item() for article in articles],
         threshold=settings.cluster_threshold,
         description_weight=settings.cluster_description_weight,
         max_per_cluster=settings.cluster_max_articles,
@@ -276,29 +287,23 @@ def test_run_cluster_representative_falls_back_when_medoid_body_fails(monkeypatc
     assert len(groups) == 1
     [group] = groups
     assert len(group) == 3
-    medoid_item, fallback_item = group[0], group[1]
+    medoid_title, fallback_title = group[0]["title"], group[1]["title"]
 
-    monkeypatch.setattr(
-        collect_news,
-        "collect_all_sources",
-        lambda: (
-            items,
-            [],
-            {"headline_collected": 3, "search_collected": 0, "failed_sources": []},
-        ),
-    )
+    monkeypatch.setattr(collect_news, "collect_all_sources", lambda: articles)
     monkeypatch.setattr(collect_news, "filter_new_news_by_db", lambda batch: (batch, []))
     monkeypatch.setattr(collect_news, "enrich_items_with_article_body", lambda selected: selected)
     # 대표(메도이드)만 본문 크롤링 실패로 취급
     monkeypatch.setattr(
-        collect_news, "has_article_body", lambda item: item["title"] != medoid_item["title"]
+        collect_news, "has_article_body", lambda item: item["title"] != medoid_title
     )
 
     next_id = iter(range(201, 300))
+    saved_by_title: dict[str, int] = {}
 
     def fake_save(items, save_summary, skip_existing):
         for item in items:
             item["_news_id"] = next(next_id)
+            saved_by_title[item["title"]] = item["_news_id"]
         return {"inserted_count": len(items), "updated_count": 0}
 
     monkeypatch.setattr(collect_news, "save_news_items", fake_save)
@@ -310,7 +315,6 @@ def test_run_cluster_representative_falls_back_when_medoid_body_fails(monkeypatc
         lambda groups: rep_calls.append(groups) or sum(len(g) for g in groups),
     )
     monkeypatch.setattr(collect_news, "mark_news_source_type", lambda ids, source_type: len(ids))
-    monkeypatch.setattr(collect_news, "mark_keywords_searched", lambda ids: len(ids))
 
     collect_news.run()
 
@@ -319,6 +323,6 @@ def test_run_cluster_representative_falls_back_when_medoid_body_fails(monkeypatc
     assert len(saved_groups) == 1  # 그룹 1개만 대표 기록 대상
     [saved_group] = saved_groups
 
-    assert "_news_id" not in medoid_item  # 본문 실패로 저장되지 않음
-    assert medoid_item.get("_news_id") not in saved_group  # 실패 기사의 id는 포함되지 않음
-    assert saved_group[0] == fallback_item["_news_id"]  # 두 번째 멤버가 대체 대표가 됨
+    assert medoid_title not in saved_by_title  # 본문 실패로 저장되지 않음
+    assert len(saved_group) == 2  # 실패 기사의 id는 포함되지 않음
+    assert saved_group[0] == saved_by_title[fallback_title]  # 두 번째 멤버가 대체 대표가 됨

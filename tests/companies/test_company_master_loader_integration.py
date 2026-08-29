@@ -31,7 +31,11 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.companies.loaders.dart import link_listed_corp_codes
+from pipelines.companies.loaders.dart import (
+    insert_dart_name_aliases,
+    link_listed_corp_codes,
+    seed_curated_aliases,
+)
 from pipelines.companies.loaders.postgres import sync_listed_companies
 from pipelines.companies.models import CompanySyncResult, DartCorp
 from pipelines.stocks.loaders.tickers import sync_tickers
@@ -246,6 +250,82 @@ def test_delisting_turns_the_flag_off_and_keeps_the_company() -> None:
     # delisted_at을 채워야 활성 ticker 부분 유니크에서 빠진다. 안 그러면 단축코드가
     # 재사용될 때 새 법인을 넣을 수 없다.
     assert companies[0]["delisted_at"] is not None
+
+
+def test_dart_corp_name_saved_as_alias_for_listed_only() -> None:
+    """상장 법인의 DART 법인명은 source='DART' 별칭으로 보존된다.
+
+    companies.name은 매일 KIS 종목명으로 덮이므로(테스트전자), DART 법인명(법인999901)은
+    별칭이 유일한 보존처다 — 공시 계약상대 역매칭이 이 별칭을 쓴다.
+    비상장 법인에는 별칭을 자동으로 붙이지 않는다(동명 법인이 많아 모호해진다).
+    """
+    _load_stocks(_stock(COMMON_SYMBOL, "테스트전자"))
+    _load_corp_codes(COMMON_SYMBOL)
+    _sync()
+
+    corps = [
+        DartCorp(corp_code=CORP_CODES[COMMON_SYMBOL], name="법인999901", stock_code=COMMON_SYMBOL),
+        # 비상장(stock_code 없음) — 별칭이 생기면 안 된다.
+        DartCorp(corp_code=CORP_CODES[UNKNOWN_SYMBOL], name="비상장법인", stock_code=None),
+        # 마스터에 법인 행이 없는 corp_code — 조용히 건너뛴다.
+        DartCorp(corp_code="99999999", name="유령법인", stock_code="999999"),
+    ]
+    with session_scope() as session:
+        added = insert_dart_name_aliases(session, corps)
+
+    assert added == 1
+    assert "법인999901" in _aliases()
+    assert "비상장법인" not in _aliases()
+    assert "유령법인" not in _aliases()
+
+    with session_scope() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT a.source
+                  FROM company_aliases AS a
+                  JOIN companies AS c ON c.id = a.company_id
+                 WHERE a.alias = '법인999901' AND c.corp_code = :corp_code
+                """
+            ),
+            {"corp_code": CORP_CODES[COMMON_SYMBOL]},
+        ).all()
+    assert [row.source for row in rows] == ["DART"]
+
+    # 매주 도는 job이므로 재실행은 멱등이어야 한다.
+    with session_scope() as session:
+        assert insert_dart_name_aliases(session, corps) == 0
+
+
+def test_curated_aliases_seed_resolves_master_name_uniquely() -> None:
+    """수동 관리 별칭(사명변경·통용표기)은 마스터명이 유일하게 해석될 때만 들어간다.
+
+    시드는 (별칭, 마스터명) 쌍이라 company_id를 이름으로 찾아야 하는데, 같은 이름의
+    법인이 둘이면 어느 쪽인지 알 수 없다 — 그때는 넣지 않는 게 맞다.
+    """
+    _load_stocks(_stock(COMMON_SYMBOL, "테스트전자"))
+    _load_corp_codes(COMMON_SYMBOL)
+    _sync()
+
+    seed = [
+        ("구테스트전자", "테스트전자"),  # 마스터명 유일 → 들어간다
+        ("유령별칭", "존재하지않는법인"),  # 마스터에 없음 → 건너뛴다
+    ]
+    with session_scope() as session:
+        added = seed_curated_aliases(session, seed)
+
+    assert added == 1
+    assert "구테스트전자" in _aliases()
+    assert "유령별칭" not in _aliases()
+
+    with session_scope() as session:
+        source = session.execute(
+            text("SELECT source FROM company_aliases WHERE alias = '구테스트전자'")
+        ).scalar_one()
+    assert source == "CURATED"
+
+    with session_scope() as session:
+        assert seed_curated_aliases(session, seed) == 0, "재실행은 멱등이어야 한다"
 
 
 def test_rerun_is_idempotent() -> None:

@@ -131,7 +131,10 @@ SELECT_SUPPLY_EDGES_SQL = text(
     )
     SELECT l.rcept_no,
            o.rcept_dt,
-           COALESCE(l.contract_name, l.contract_type) AS item,
+           CASE WHEN l.contract_name IS NOT NULL AND l.contract_type IS NOT NULL
+                THEN l.contract_type || ': ' || l.contract_name
+                ELSE COALESCE(l.contract_name, l.contract_type)
+           END AS item,
            l.ticker,
            f.name AS filer_name,
            l.counterparty_ticker,

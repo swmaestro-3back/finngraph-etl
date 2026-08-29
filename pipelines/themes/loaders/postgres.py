@@ -13,18 +13,20 @@ from pipelines.stocks.loaders.tickers import fetch_active_stock_ids
 logger = get_logger(__name__)
 
 
-def _insert_theme(session, name: str, description: str) -> int:
+def _insert_theme(session, name: str, description: str, sources: list[str]) -> int:
     # 스냅샷 내 중복 테마명은 한 행으로 병합한다.
     row = session.execute(
         text(
             """
-            INSERT INTO themes (name, description)
-            VALUES (:name, :description)
-            ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+            INSERT INTO themes (name, description, sources)
+            VALUES (:name, :description, :sources)
+            ON CONFLICT (name) DO UPDATE
+            SET description = EXCLUDED.description,
+                sources = EXCLUDED.sources
             RETURNING id;
             """
         ),
-        {"name": name, "description": description},
+        {"name": name, "description": description, "sources": sources},
     ).fetchone()
 
     return row[0]
@@ -83,7 +85,10 @@ def load_themes(themes: list[dict[str, Any]]) -> dict[str, Any]:
             try:
                 with session.begin_nested():
                     theme_id = _insert_theme(
-                        session, name=name, description=theme.get("description", "") or ""
+                        session,
+                        name=name,
+                        description=theme.get("description", "") or "",
+                        sources=theme.get("sources") or [],
                     )
                     linked, unmatched = _insert_theme_stocks(
                         session, theme_id, theme.get("companies", []) or [], stock_ids

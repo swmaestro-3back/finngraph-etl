@@ -76,38 +76,3 @@ def remove_duplicate_by_url(
             seen_url_map[url_key] = item
 
     return unique_items, removed_items
-
-
-def remove_duplicate_by_title(
-    items: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-
-    unique_items = []
-    removed_items = []
-    seen_title_map = {}
-
-    for item in items:
-        title = get_printable_text(item.get("title", ""))
-        normalized_title = normalize_title_for_duplicate(title)
-
-        if not normalized_title:
-            unique_items.append(item)
-            continue
-
-        if normalized_title in seen_title_map:
-            removed_items.append(
-                {
-                    "removed_item": item,
-                    "matched_item": seen_title_map[normalized_title],
-                    "reason": f"제목 중복: {title}",
-                    "similarity": 1.0,
-                }
-            )
-
-            logging.info(f"제목 중복 제거: {title}")
-            continue
-
-        unique_items.append(item)
-        seen_title_map[normalized_title] = item
-
-    return unique_items, removed_items

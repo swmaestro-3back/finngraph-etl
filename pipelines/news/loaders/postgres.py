@@ -318,8 +318,9 @@ def save_news_items(
 def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
     """
     Triple ETL에서 사용.
-    삼중항 추출이 아직 시도되지 않은(is_processed=FALSE) 뉴스를 조회한다.
-    추출 중 예외가 난 뉴스는 FALSE로 남아 다음 런에서 자동 재시도된다.
+    삼중항 추출이 아직 시도되지 않은(relation_extracted IS NULL) 뉴스를 조회한다.
+    추출 중 예외가 난 뉴스는 NULL로 남아 다음 런에서 자동 재시도된다.
+    material 판정에서 걸러진(is_material=FALSE) 뉴스는 제외한다.
     """
 
     query = """
@@ -328,7 +329,8 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
             text,
             (COALESCE(published_at, collected_at, now()))::date AS mentioned_at
         FROM news
-        WHERE is_processed = FALSE
+        WHERE relation_extracted IS NULL
+          AND is_material IS DISTINCT FROM FALSE
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
         ORDER BY id ASC
@@ -349,8 +351,8 @@ def mark_triple_extraction_result(
 ) -> dict[str, int]:
     """
     Triple ETL에서 호출.
-    삼중항 추출을 시도한 뉴스의 is_processed를 TRUE로 올리고,
-    삼중항 존재 여부를 relation_extracted에 마킹한다.
+    삼중항 추출을 시도한 뉴스의 relation_extracted에 삼중항 존재 여부를 마킹한다.
+    NULL(미시도)에서 TRUE/FALSE로 바뀌는 것 자체가 시도 완료 표시다.
     """
 
     unique_true = sorted({int(news_id) for news_id in has_triples_ids if news_id})
@@ -365,8 +367,7 @@ def mark_triple_extraction_result(
                 text(
                     """
                     UPDATE news
-                    SET is_processed = TRUE,
-                        relation_extracted = TRUE
+                    SET relation_extracted = TRUE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -378,8 +379,7 @@ def mark_triple_extraction_result(
                 text(
                     """
                     UPDATE news
-                    SET is_processed = TRUE,
-                        relation_extracted = FALSE
+                    SET relation_extracted = FALSE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -545,6 +545,117 @@ def filter_new_news_by_db(
     return new_items, existing_items
 
 
+def fetch_unchecked_news_items(limit: int = 300) -> list[dict[str, Any]]:
+    """material 판정(is_material)이 아직 없는 뉴스를 조회한다."""
+
+    query = """
+        SELECT
+            id,
+            title,
+            summary,
+            text,
+            link,
+            originallink,
+            published_at
+        FROM news
+        WHERE is_material IS NULL
+          AND text IS NOT NULL
+          AND BTRIM(text) <> ''
+        ORDER BY id ASC
+        LIMIT :limit;
+    """
+
+    with session_scope() as session:
+        rows = session.execute(text(query), {"limit": limit}).fetchall()
+
+        items = []
+
+        for row in rows:
+            (
+                news_id,
+                title,
+                summary,
+                news_text,
+                link,
+                originallink,
+                published_at,
+            ) = row
+
+            items.append(
+                {
+                    "_news_id": news_id,
+                    "title": title or "",
+                    "description": summary or "",
+                    "_text": news_text or "",
+                    "link": link or "",
+                    "originallink": originallink or "",
+                    "pubDate": (
+                        published_at.strftime("%a, %d %b %Y %H:%M:%S %z") if published_at else ""
+                    ),
+                }
+            )
+
+        return items
+
+
+def mark_news_material_checked(kept_ids: list[int], dropped_ids: list[int]) -> dict[str, int]:
+
+    unique_kept = sorted({int(news_id) for news_id in kept_ids if news_id})
+    unique_dropped = sorted({int(news_id) for news_id in dropped_ids if news_id})
+
+    if not unique_kept and not unique_dropped:
+        logging.info("판정 결과 기록 대상이 없습니다.")
+        return {"kept_count": 0, "dropped_count": 0}
+
+    with session_scope() as session:
+        if unique_kept:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET is_material = TRUE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_kept},
+            )
+
+        if unique_dropped:
+            session.execute(
+                text(
+                    """
+                    UPDATE news
+                    SET is_material = FALSE
+                    WHERE id = ANY(:ids);
+                    """
+                ),
+                {"ids": unique_dropped},
+            )
+
+    result = {"kept_count": len(unique_kept), "dropped_count": len(unique_dropped)}
+
+    logging.info(
+        f"material 판정 기록 완료: 유지 {result['kept_count']}개, "
+        f"소프트삭제 {result['dropped_count']}개"
+    )
+
+    return result
+
+
+def extract_news_ids_from_removed_items(removed_items: list[dict[str, Any]]) -> list[int]:
+
+    news_ids = []
+
+    for removed in removed_items:
+        item = removed.get("removed_item", {})
+        news_id = item.get("_news_id")
+
+        if news_id:
+            news_ids.append(int(news_id))
+
+    return news_ids
+
+
 def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
 
     query = """
@@ -694,3 +805,30 @@ def mark_keywords_searched(keyword_ids: list[int]) -> int:
         )
 
         return result.rowcount or 0
+
+
+def mark_news_source_type(news_ids: list[int], source_type: str) -> int:
+    """수집 경로(headline/keyword)를 태깅한다. 기존 값이 있으면 보존한다."""
+
+    unique_ids = sorted({int(news_id) for news_id in news_ids if news_id})
+
+    if not unique_ids:
+        return 0
+
+    with session_scope() as session:
+        result = session.execute(
+            text(
+                """
+                UPDATE news
+                SET source_type = :source_type
+                WHERE id = ANY(:ids)
+                  AND (source_type IS NULL OR BTRIM(source_type) = '');
+                """
+            ),
+            {"source_type": source_type, "ids": unique_ids},
+        )
+        updated_count = result.rowcount
+
+    logging.info("news.source_type='%s' 기록: %d개", source_type, updated_count)
+
+    return updated_count

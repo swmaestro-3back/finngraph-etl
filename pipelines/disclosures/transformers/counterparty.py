@@ -30,22 +30,6 @@ _SYMBOLS = r"[\s·․.,'\"\-()\[\]]+"
 _LEGAL_PAREN = re.compile(r"\((주|유|재|사)\)|㈜")
 _TRAILING_PAREN = re.compile(r"^(.*?)\(([^)]+)\)\s*$")
 
-# 사명변경·통용표기. 정규화만으로는 흡수되지 않아 사전이 필요하다.
-# 키는 norm() 결과, 값은 마스터에 실린 표기.
-ALIASES = {
-    "엘지씨엔에스": "LG CNS",
-    "포스코건설": "포스코이앤씨",
-    "엘지화학": "LG화학",
-    "엘지전자": "LG전자",
-    "엘지유플러스": "LG유플러스",
-    "엘지디스플레이": "LG디스플레이",
-    "에스케이하이닉스": "SK하이닉스",
-    "에스케이텔레콤": "SK텔레콤",
-    "에스케이이노베이션": "SK이노베이션",
-    "지에스건설": "GS건설",
-    "케이씨씨": "KCC",
-}
-
 # 상대를 감춘 기재 — 회사명이 아예 아니므로 조회하지 않는다.
 _ANONYMOUS = re.compile(
     r"(국내|해외|국외|북미|미국|유럽|중국|일본|아시아|글로벌)\s*\S{0,8}\s*(기업|업체|회사|고객사|바이어)"
@@ -101,17 +85,38 @@ def candidates(name: str) -> list[tuple[str, str]]:
 
 
 class CorpResolver:
-    """이름 -> 법인 식별자. 모호하거나 못 찾으면 전부 None."""
+    """이름 -> 법인 식별자. 모호하거나 못 찾으면 전부 None.
 
-    def __init__(self, rows: Iterable[CorpMasterRow]) -> None:
+    db_aliases 는 company_aliases(source DART·CURATED)에서 온 (별칭, company_id) 쌍이다.
+    상장사의 companies.name 은 KIS 종목명("현대차")으로 매일 덮여 DART 법인명
+    ("현대자동차")이 마스터에서 사라지고, 사명변경·통용표기(CURATED)는 현행 등록부
+    어디에도 없으므로, 별칭으로 보존한 표기를 여기서 되살린다.
+    """
+
+    def __init__(
+        self,
+        rows: Iterable[CorpMasterRow],
+        db_aliases: Iterable[tuple[str, int]] = (),
+    ) -> None:
+        rows = list(rows)
         listed_index: dict[str, list[CorpMasterRow]] = {}
         all_index: dict[str, list[CorpMasterRow]] = {}
         for row in rows:
             all_index.setdefault(norm(row.name), []).append(row)
             if row.ticker:
                 listed_index.setdefault(norm(row.name), []).append(row)
+
+        by_company_id = {row.company_id: row for row in rows}
+        alias_index: dict[str, list[CorpMasterRow]] = {}
+        for alias, company_id in db_aliases:
+            row = by_company_id.get(company_id)
+            if row is None:  # 마스터에 없는 법인(corp_code 미부여 등)의 별칭은 버린다
+                continue
+            alias_index.setdefault(norm(alias), []).append(row)
+
         self.listed = listed_index
         self.all = all_index
+        self.db_alias = alias_index
         self._cache: dict[str, dict[str, Any]] = {}
 
     @staticmethod
@@ -123,11 +128,13 @@ class CorpResolver:
         return rows[0]
 
     def _lookup(self, key: str) -> tuple[str, CorpMasterRow] | None:
-        # 모호성은 마스터 전체로 판정한다. 이름이 여러 법인에 걸리는데 상장사를
-        # 우선하면, 틀린 추측이 자신 있어 보이게 될 뿐이다.
-        if key in self.all and self._unique(self.all[key]) is None:
+        # 모호성은 마스터명과 DB 별칭을 합친 키 공간으로 판정한다. 이름이 여러 법인에
+        # 걸리는데 상장사(혹은 마스터명)를 우선하면, 틀린 추측이 자신 있어 보이게 될
+        # 뿐이다. 같은 법인을 가리키는 중복은 _unique 가 corp_code 기준으로 허용한다.
+        combined = (self.all.get(key) or []) + (self.db_alias.get(key) or [])
+        if combined and self._unique(combined) is None:
             return None
-        for source in ("listed", "all"):
+        for source in ("listed", "all", "db_alias"):
             hit = self._unique(getattr(self, source).get(key))
             if hit:
                 return source, hit
@@ -150,12 +157,7 @@ class CorpResolver:
         for rule, spelling in candidates(name):
             if looks_anonymous(spelling):
                 continue
-            key = norm(spelling)
-            alias = ALIASES.get(key)
-            if alias:
-                key, rule = norm(alias), f"{rule}+alias"
-
-            found = self._lookup(key)
+            found = self._lookup(norm(spelling))
             if found is None:
                 continue
             source, row = found
@@ -175,10 +177,14 @@ class CorpMaster:
     job 시작 시 한 번 만들어 전체 공시에 재사용한다 — 공시마다 DB를 오가지 않는다.
     """
 
-    def __init__(self, rows: Iterable[CorpMasterRow]) -> None:
+    def __init__(
+        self,
+        rows: Iterable[CorpMasterRow],
+        db_aliases: Iterable[tuple[str, int]] = (),
+    ) -> None:
         rows = list(rows)
         self.by_corp_code: dict[str, CorpMasterRow] = {row.corp_code: row for row in rows}
-        self._resolver = CorpResolver(rows)
+        self._resolver = CorpResolver(rows, db_aliases=db_aliases)
 
     def resolve_counterparty(self, name: str | None) -> dict[str, Any]:
         return self._resolver.resolve(name)
