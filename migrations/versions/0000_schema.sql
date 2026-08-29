@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS service_companies (
 );
 
 -- ── 시세 · 수급 · 배당 · 밸류에이션 ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS daily_candles (
+CREATE TABLE IF NOT EXISTS stock_candles_daily (
     stock_id    BIGINT  NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date  DATE    NOT NULL,
     open        NUMERIC NOT NULL,
@@ -173,10 +173,10 @@ CREATE TABLE IF NOT EXISTS daily_candles (
     PRIMARY KEY (stock_id, trade_date)
 );
 
-CREATE INDEX IF NOT EXISTS daily_candles_date_idx ON daily_candles (trade_date);
+CREATE INDEX IF NOT EXISTS stock_candles_daily_date_idx ON stock_candles_daily (trade_date);
 
 -- 주봉·월봉 ────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS stock_period_candles (
+CREATE TABLE IF NOT EXISTS stock_candles_period (
     stock_id    BIGINT  NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     period      TEXT    NOT NULL,   -- 'W' | 'M'
     base_date   DATE    NOT NULL,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS stock_period_candles (
     PRIMARY KEY (stock_id, period, base_date)
 );
 
-CREATE TABLE IF NOT EXISTS investor_flows (
+CREATE TABLE IF NOT EXISTS stock_investor_flows (
     stock_id            BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date          DATE   NOT NULL,
     individual_net_qty  BIGINT,     -- 개인순매수량
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS investor_flows (
     PRIMARY KEY (stock_id, trade_date)
 );
 
-CREATE TABLE IF NOT EXISTS dividends (
+CREATE TABLE IF NOT EXISTS stock_dividends (
     listing_id  BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     record_date DATE   NOT NULL,
     divi_kind   TEXT   NOT NULL,
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS dividends (
     PRIMARY KEY (listing_id, record_date, divi_kind)
 );
 
-CREATE TABLE IF NOT EXISTS valuation_daily (
+CREATE TABLE IF NOT EXISTS stock_valuations_daily (
     listing_id     BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date     DATE   NOT NULL,
     market_cap     BIGINT,
@@ -227,10 +227,8 @@ CREATE TABLE IF NOT EXISTS valuation_daily (
 );
 
 -- ── news ────────────────────────────────────────────────────────────────────
--- relation_extracted: 삼중항 추출 상태. NULL=미시도(extract_triples 대상),
---   TRUE=삼중항 1개 이상, FALSE=시도했으나 없음. 실패(예외)는 NULL 로 남아 재시도된다.
--- is_material: LLM material 판정 결과. NULL=미판정(filter_meaningless 대상),
---   FALSE 는 소프트삭제 — 삼중항 추출에서 제외된다.
+-- is_processed: 삼중항 추출 시도 완료 여부. FALSE 인 행이 extract_triples 대상.
+-- relation_extracted: 삼중항이 1개 이상 나왔는지. is_processed=TRUE 일 때만 유의미.
 -- cluster_rep_news_id: 같은 런에서 같은 사건(클러스터)으로 묶인 기사들의 대표 뉴스 id.
 --   대표 기사와 단독 기사는 자기 자신을 가리킨다. 런 단위 정보라 런 간 병합은 없다.
 CREATE TABLE IF NOT EXISTS news (
@@ -242,15 +240,14 @@ CREATE TABLE IF NOT EXISTS news (
     originallink        TEXT,
     published_at        TIMESTAMPTZ,
     collected_at        TIMESTAMPTZ DEFAULT now(),
+    is_processed        BOOLEAN NOT NULL DEFAULT FALSE,
     relation_extracted  BOOLEAN,
-    source_type         TEXT,     -- 수집 경로: 'headline' | 'search'
-    is_material         BOOLEAN,  -- LLM material 판정 결과. NULL=미판정
     cluster_rep_news_id BIGINT REFERENCES news (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_cluster_rep ON news (cluster_rep_news_id);
 CREATE INDEX IF NOT EXISTS idx_news_unprocessed
-  ON news (id) WHERE relation_extracted IS NULL;
+  ON news (id) WHERE NOT is_processed;
 
 -- ── news_companies ──────────────────────────────────────────────────────────
 -- 뉴스-기업 매핑. 삼중항의 COMPANY 엔티티를 ticker → companies.id 로 해석해 적재한다.
@@ -460,6 +457,13 @@ SELECT subject_name, subject_type, relation, object_name, object_type,
            FILTER (WHERE source_type = 'disclosure')      AS disclosure_rcept_nos,
        array_agg(item ORDER BY mentioned_at, rcept_no)
            FILTER (WHERE source_type = 'disclosure' AND item IS NOT NULL)
-                                                          AS disclosure_items
+                                                          AS disclosure_items,
+       -- 뉴스 근거 배열 — 근거 뉴스(원장 news_id)와 품목 요약의 캐시. 규칙은 공시와 동일:
+       -- item 이 NULL 인 행은 news_items 에서만 빠진다.
+       array_agg(news_id ORDER BY mentioned_at, news_id)
+           FILTER (WHERE source_type = 'news')            AS news_ids,
+       array_agg(item ORDER BY mentioned_at, news_id)
+           FILTER (WHERE source_type = 'news' AND item IS NOT NULL)
+                                                          AS news_items
 FROM relation_sources
 GROUP BY 1, 2, 3, 4, 5;

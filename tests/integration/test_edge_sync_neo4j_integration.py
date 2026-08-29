@@ -1,4 +1,4 @@
-"""sync_edge_summaries Neo4j 통합 테스트 — 공시 근거 배열의 간선 반영.
+"""sync_edge_summaries Neo4j 통합 테스트 — 공시·뉴스 근거 배열의 간선 반영.
 
 로컬 Neo4j 필요: docker compose up -d neo4j neo4j-init 후 `pytest -m integration`.
 테스트 노드는 uuid 마커가 붙은 이름으로 만들고 끝나면 DETACH DELETE 로 지운다.
@@ -26,12 +26,14 @@ def test_sync_edge_summaries_sets_disclosure_arrays() -> None:
         "subject_name": subject,
         "relation": "SUPPLIES_TO",
         "object_name": obj,
-        "news_mention_count": 0,
+        "news_mention_count": 2,
         "disclosure_count": 2,
         "first_mentioned_at": date(2026, 8, 1),
         "last_mentioned_at": date(2026, 8, 21),
         "disclosure_rcept_nos": ["99999901000001", "99999901000002"],
         "disclosure_items": ["기타 판매ㆍ공급계약: 계약A", "계약B"],
+        "news_ids": [101, 102],
+        "news_items": ["카메라 모듈"],
     }
 
     async def _run() -> list:
@@ -43,7 +45,9 @@ def test_sync_edge_summaries_sets_disclosure_arrays() -> None:
                     MATCH (s:Company {name: $subject})-[r:SUPPLIES_TO]->(o:Company {name: $object})
                     RETURN r.disclosure_count AS disclosure_count,
                            r.disclosure_rcept_nos AS rcept_nos,
-                           r.disclosure_items AS items
+                           r.disclosure_items AS items,
+                           r.news_ids AS news_ids,
+                           r.news_items AS news_items
                     """,
                     {"subject": subject, "object": obj},
                 )
@@ -59,3 +63,5 @@ def test_sync_edge_summaries_sets_disclosure_arrays() -> None:
     assert records[0]["disclosure_count"] == 2
     assert records[0]["rcept_nos"] == ["99999901000001", "99999901000002"]
     assert records[0]["items"] == ["기타 판매ㆍ공급계약: 계약A", "계약B"]
+    assert records[0]["news_ids"] == [101, 102]
+    assert records[0]["news_items"] == ["카메라 모듈"]
