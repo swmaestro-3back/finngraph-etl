@@ -21,7 +21,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from pipelines.companies.models import CompanyProfile, DartCorp
-from pipelines.companies.transformers.dart import normalize_corp_name
 
 # 상장 법인 적재 — 법인의 존재 여부는 DART가 정한다
 #
@@ -160,10 +159,6 @@ UPDATE_COMPANY_PROFILE_SQL = text(
     """
 )
 
-SELECT_COMPANY_BY_CORP_CODE_SQL = text(
-    "SELECT id, fiscal_month FROM companies WHERE corp_code = :corp_code"
-)
-
 # 개요 수집 대상 — corp_code가 붙었고 개요가 아직 비어 있는 법인부터
 #
 # **service_companies로 대상을 좁힌다.** 목록이 법인 단위라 여기서는 종목을 거치지 않고
@@ -199,16 +194,6 @@ SELECT_DART_FINANCIAL_TARGETS_SQL = text(
      LIMIT :limit
     """
 )
-
-SELECT_COMPANY_IDS_BY_NORMALIZED_NAME_SQL = text(
-    """
-    SELECT id, name
-      FROM companies
-     WHERE country = 'KR'
-       AND NOT is_listed
-    """
-)
-
 
 # 서비스 대상인데 수집 경로가 이어지지 않는 법인
 #
@@ -388,13 +373,6 @@ def update_company_profile(session: Session, profile: CompanyProfile) -> int:
     return result.rowcount or 0
 
 
-def fetch_company_by_corp_code(session: Session, corp_code: str) -> tuple[int, str | None] | None:
-    """corp_code로 (company_id, fiscal_month)를 찾는다."""
-
-    row = session.execute(SELECT_COMPANY_BY_CORP_CODE_SQL, {"corp_code": corp_code}).first()
-    return (row.id, row.fiscal_month) if row else None
-
-
 def fetch_profile_targets(session: Session, limit: int) -> list[str]:
     """개요를 채울 corp_code 목록. 아직 비어 있는 법인이 먼저 온다."""
 
@@ -410,22 +388,3 @@ def fetch_dart_financial_targets(
 
     rows = session.execute(SELECT_DART_FINANCIAL_TARGETS_SQL, {"limit": limit})
     return [(row.id, row.corp_code, row.fiscal_month) for row in rows]
-
-
-def find_unlisted_company_by_name(session: Session, name: str) -> int | None:
-    """정규화한 법인명이 **유일하게** 일치하는 비상장 법인 id.
-
-    2건 이상 걸리면 None을 준다. 잘못 붙는 것보다 안 붙는 게 낫다 — 재무가 엉뚱한
-    법인에 붙으면 조용히 틀린 값이 서비스에 나간다.
-    """
-
-    target = normalize_corp_name(name)
-    if not target:
-        return None
-
-    matches = [
-        row.id
-        for row in session.execute(SELECT_COMPANY_IDS_BY_NORMALIZED_NAME_SQL)
-        if normalize_corp_name(row.name) == target
-    ]
-    return matches[0] if len(matches) == 1 else None

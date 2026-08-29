@@ -1,4 +1,4 @@
-"""news 상태 컬럼(relation_extracted/is_material) 규약 통합 테스트.
+"""news 상태 컬럼(is_processed/relation_extracted) 규약 통합 테스트.
 
 로컬 DB 필요: docker compose up -d db 후 0000 베이스라인 적용 상태.
 """
@@ -46,43 +46,31 @@ def test_new_row_is_fetched_as_unprocessed(news_row):
     assert news_row in ids
 
 
-def test_mark_with_triples_sets_extracted_true(news_row):
+def test_mark_with_triples_sets_processed_and_extracted(news_row):
     mark_triple_extraction_result([news_row], [])
 
     ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items(limit=10000)]
     assert news_row not in ids
 
     with session_scope() as session:
-        relation_extracted = session.execute(
-            text("SELECT relation_extracted FROM news WHERE id = :id"),
+        is_processed, relation_extracted = session.execute(
+            text("SELECT is_processed, relation_extracted FROM news WHERE id = :id"),
             {"id": news_row},
-        ).scalar_one()
+        ).one()
+    assert is_processed is True
     assert relation_extracted is True
 
 
-def test_mark_without_triples_sets_extracted_false(news_row):
+def test_mark_without_triples_sets_processed_only(news_row):
     mark_triple_extraction_result([], [news_row])
 
-    # FALSE도 "시도 완료"라 추출 큐에서 빠진다
-    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items(limit=10000)]
-    assert news_row not in ids
-
     with session_scope() as session:
-        relation_extracted = session.execute(
-            text("SELECT relation_extracted FROM news WHERE id = :id"),
+        is_processed, relation_extracted = session.execute(
+            text("SELECT is_processed, relation_extracted FROM news WHERE id = :id"),
             {"id": news_row},
-        ).scalar_one()
+        ).one()
+    assert is_processed is True
     assert relation_extracted is False
-
-
-def test_immaterial_news_is_excluded_from_triple_queue(news_row):
-    with session_scope() as session:
-        session.execute(
-            text("UPDATE news SET is_material = FALSE WHERE id = :id"), {"id": news_row}
-        )
-
-    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items(limit=10000)]
-    assert news_row not in ids
 
 
 def test_only_relation_extracted_news_is_summarize_target(news_row):

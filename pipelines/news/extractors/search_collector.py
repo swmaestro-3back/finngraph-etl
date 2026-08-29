@@ -1,7 +1,3 @@
-"""
-Naver News API를 활용한 키워드 검색 수집기
-"""
-
 import logging
 import time
 from collections.abc import Iterator
@@ -49,6 +45,7 @@ def map_search_item_to_article(
         "link": link,
         "originallink": originallink,
         "pubDate": pub_date,
+        "pubLabel": "news",
         "_search_keyword": keyword,
     }
 
@@ -99,7 +96,6 @@ def iter_search_news_pages(
     max_pages: int | None = None,
     display: int | None = None,
     sort: str | None = None,
-    wait_seconds: int = 10,
 ) -> Iterator[list[dict[str, Any]]]:
 
     if not keyword or not keyword.strip():
@@ -161,23 +157,3 @@ def iter_search_news_pages(
 
     finally:
         session.close()
-
-
-def search_news(
-    keyword: str,
-    max_pages: int | None = None,
-    display: int | None = None,
-    sort: str | None = None,
-) -> list[dict[str, Any]]:
-
-    items: list[dict[str, Any]] = []
-
-    for page_items in iter_search_news_pages(
-        keyword=keyword,
-        max_pages=max_pages,
-        display=display,
-        sort=sort,
-    ):
-        items.extend(page_items)
-
-    return items

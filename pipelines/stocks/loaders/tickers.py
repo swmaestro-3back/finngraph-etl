@@ -190,10 +190,6 @@ def sync_tickers(session: Session, tickers: list[StockTicker]) -> TickerSyncResu
     )
 
 
-def upsert_tickers(session: Session, tickers: list[StockTicker]) -> int:
-    return sync_tickers(session, tickers).upserted_count
-
-
 def _to_payload(ticker: StockTicker) -> dict[str, object]:
     """SQL문에 사용할 dict 자료형으로 변환합니다.
 

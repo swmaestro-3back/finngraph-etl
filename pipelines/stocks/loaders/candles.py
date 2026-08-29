@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from pipelines.stocks.loaders.tickers import fetch_active_stock_ids
-from pipelines.stocks.types import DailyCandle, MinuteCandle, PeriodCandle
+from pipelines.stocks.types import DailyCandle, PeriodCandle
 
 UPSERT_DAILY_CANDLE_SQL = text(
     """
@@ -100,12 +100,6 @@ def upsert_daily_candles(session: Session, candles: list[DailyCandle], source: s
 
     session.execute(UPSERT_DAILY_CANDLE_SQL, payload)
     return len(payload)
-
-
-def upsert_minute_candles(session: Session, interval: str, candles: list[MinuteCandle]) -> int:
-    """분봉 적재. 분봉 수집은 이번 범위 밖이라 아직 구현하지 않는다."""
-
-    raise NotImplementedError(f"{interval} candle upsert is not implemented yet.")
 
 
 def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:

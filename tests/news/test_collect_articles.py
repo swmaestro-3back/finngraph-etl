@@ -1,4 +1,4 @@
-"""select_articles_by_cluster 순수 로직 단위 테스트 (API/DB 불필요)."""
+"""collect_articles job의 순수 로직 단위 테스트 (API/DB 불필요)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ def _item(title: str, description: str = "") -> dict:
 
 
 def test_select_articles_by_cluster_caps_each_cluster():
-    from pipelines.news.transformers.clustering import select_articles_by_cluster
+    from pipelines.news.jobs.collect_articles import select_articles_by_cluster
 
     # 같은 사건 4건 + 다른 사건 1건
     items = [
@@ -42,12 +42,8 @@ def test_select_articles_by_cluster_first_is_medoid_when_under_cap():
     early-return 분기(len(members) <= cap)가 인덱스 정렬 순서를 그대로 돌려주던
     회귀를 실제로 잡아낸다.
     """
-    from pipelines.news.transformers.clustering import (
-        build_clusters,
-        build_tfidf,
-        document_terms,
-        select_articles_by_cluster,
-    )
+    from pipelines.news.jobs.collect_articles import select_articles_by_cluster
+    from pipelines.news.transformers.clustering import build_clusters, build_tfidf, document_terms
 
     # 이 3건은 threshold=0.35에서 한 군집으로 묶이고, 대표(메도이드)는 1번(0번이 아님)이다.
     items = [
@@ -74,7 +70,7 @@ def test_select_articles_by_cluster_first_is_medoid_when_under_cap():
 
 
 def test_select_articles_by_cluster_handles_empty():
-    from pipelines.news.transformers.clustering import select_articles_by_cluster
+    from pipelines.news.jobs.collect_articles import select_articles_by_cluster
 
     groups, stats = select_articles_by_cluster(
         [], threshold=0.35, description_weight=0.4, max_per_cluster=3

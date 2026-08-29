@@ -2,10 +2,6 @@ import html
 import re
 from typing import Any
 
-DEFAULT_ARTICLE_BODY_FRONT_LIMIT = 1000
-DEFAULT_COMPANY_CONTEXT_WINDOW = 250
-
-
 ARTICLE_BODY_HTML_BREAK_PATTERN = re.compile(
     r"<\s*/?\s*(?:br|p|div|section|article|li|ul|ol|h[1-6]|blockquote)\b[^>]*>",
     re.IGNORECASE,
@@ -876,19 +872,6 @@ def is_trailing_noise_sentence(sentence: str) -> bool:
     return score >= 5
 
 
-def remove_trailing_noise_sentences(
-    text: str,
-    max_sentences: int | None = None,
-) -> str:
-
-    cleaned_text, _ = remove_trailing_noise_sentences_with_details(
-        text=text,
-        max_sentences=max_sentences,
-    )
-
-    return cleaned_text
-
-
 def remove_trailing_noise_sentences_with_details(
     text: str,
     max_sentences: int | None = None,
@@ -1169,129 +1152,3 @@ def clean_article_body_for_storage(
     cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text).strip()
 
     return cleaned_text
-
-
-def split_korean_sentences(text: str) -> list[str]:
-    if not text:
-        return []
-
-    text = re.sub(r"\s+", " ", text).strip()
-    sentences = re.split(r"(?<=[.!?다요죠음임])\s+", text)
-
-    return [sentence.strip() for sentence in sentences if sentence.strip()]
-
-
-def get_front_sentences(text: str, max_chars: int = 1000) -> str:
-    sentences = split_korean_sentences(text)
-
-    selected = []
-    total_length = 0
-
-    for sentence in sentences:
-        if total_length + len(sentence) > max_chars:
-            break
-
-        selected.append(sentence)
-        total_length += len(sentence)
-
-    return " ".join(selected)
-
-
-def get_company_names(company: dict[str, Any]) -> list[str]:
-    names = []
-
-    company_name = company.get("company_name", "")
-    aliases = company.get("aliases", [])
-
-    if company_name:
-        names.append(company_name)
-
-    names.extend(aliases)
-
-    return [clean_text(name) for name in names if name]
-
-
-def get_company_link_keywords(company: dict[str, Any]) -> list[str]:
-    keywords = []
-
-    inclusion_reason = company.get("inclusion_reason", "")
-    theme_link_keywords = company.get("theme_link_keywords", [])
-
-    keywords.extend(theme_link_keywords)
-
-    reason_text = clean_text(inclusion_reason)
-
-    for token in reason_text.split():
-        if len(token) >= 2:
-            keywords.append(token)
-
-    return list(dict.fromkeys([clean_text(keyword) for keyword in keywords if keyword]))
-
-
-def shorten_article_body_for_analysis(
-    item: dict[str, Any],
-    pipeline_input: dict[str, Any],
-    front_limit: int | None = None,
-    context_window: int | None = None,
-) -> str:
-    if front_limit is None:
-        front_limit = DEFAULT_ARTICLE_BODY_FRONT_LIMIT
-
-    if context_window is None:
-        context_window = DEFAULT_COMPANY_CONTEXT_WINDOW
-
-    text = get_printable_text(item.get("_text", ""))
-
-    if not text:
-        return ""
-
-    parts = []
-
-    front_body = get_front_sentences(text=text, max_chars=front_limit)
-
-    if front_body:
-        parts.append(front_body)
-
-    lowered_body = clean_text(text)
-
-    company_names = []
-
-    for company in pipeline_input.get("companies", []):
-        company_names.extend(get_company_names(company))
-
-    for name in company_names:
-        if not name:
-            continue
-
-        for match in re.finditer(re.escape(name), lowered_body):
-            start = max(match.start() - context_window, 0)
-            end = min(match.end() + context_window, len(lowered_body))
-
-            context = lowered_body[start:end]
-
-            if context:
-                parts.append(context)
-
-    unique_parts = []
-    seen = set()
-
-    for part in parts:
-        cleaned_part = clean_text(part)
-
-        if cleaned_part and cleaned_part not in seen:
-            unique_parts.append(cleaned_part)
-            seen.add(cleaned_part)
-
-    return " ".join(unique_parts)
-
-
-def get_article_text(item: dict[str, Any], pipeline_input: dict[str, Any] | None = None) -> str:
-    title = clean_text(item.get("title", ""))
-    description = clean_text(item.get("description", ""))
-
-    if pipeline_input:
-        text = shorten_article_body_for_analysis(item=item, pipeline_input=pipeline_input)
-    else:
-        text = clean_text(item.get("_text", ""))[:DEFAULT_ARTICLE_BODY_FRONT_LIMIT]
-
-    return f"{title} {title} {description} {text}".strip()

@@ -23,14 +23,6 @@ class TfidfMatrix:
         """행 벡터가 L2 정규화돼 있으므로 내적이 곧 코사인 유사도다."""
         return np.clip(self.matrix @ self.matrix.T, 0.0, 1.0)
 
-    def top_terms(self, rows: list[int], k: int = 5) -> list[str]:
-        """주어진 문서들의 TF-IDF 를 합해 상위 k개 단어를 뽑는다(클러스터 라벨용)."""
-        if not rows:
-            return []
-        scores = self.matrix[rows].sum(axis=0)
-        order = np.argsort(scores)[::-1][:k]
-        return [self.vocabulary[i] for i in order if scores[i] > 0]
-
 
 def build_tfidf(documents: list[list[tuple[str, float]]], min_df: int = 1) -> TfidfMatrix:
     """(토큰, 가중치) 목록들로부터 TF-IDF 행렬을 만든다."""

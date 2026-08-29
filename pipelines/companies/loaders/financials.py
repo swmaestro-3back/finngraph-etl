@@ -39,21 +39,6 @@ UPSERT_FINANCIAL_SQL = text(
     """
 )
 
-# 재무 수집 대상 — 법인에 연결된 활성 상장 종목
-#
-# stocks를 거치는 이유는 KIS 재무 API가 법인이 아니라 종목코드로 조회되기 때문이다.
-# 우선주·ETP·SPAC는 company_id가 NULL이라 조인에서 자연히 빠진다.
-SELECT_LISTED_COMPANY_SYMBOLS_SQL = text(
-    """
-    SELECT s.company_id, s.ticker
-      FROM stocks AS s
-     WHERE EXISTS (SELECT 1 FROM service_companies AS u WHERE u.company_id = s.company_id)
-       AND s.is_active
-       AND s.company_id IS NOT NULL
-     ORDER BY s.ticker
-    """
-)
-
 # 이번 회차에 처리할 법인 — 재무가 가장 오래 갱신되지 않은 순
 #
 # 종목별 조회라 전 종목을 매일 돌 수 없다. 갱신이 오래된 것부터 batch_size만큼 처리하면
@@ -117,14 +102,6 @@ def upsert_financials(session: Session, financials: list[CompanyFinancial]) -> i
         ],
     )
     return len(financials)
-
-
-def fetch_listed_company_symbols(session: Session) -> list[tuple[int, str]]:
-    """법인에 연결된 활성 상장 종목 (company_id, ticker) 전체."""
-
-    return [
-        (row.company_id, row.ticker) for row in session.execute(SELECT_LISTED_COMPANY_SYMBOLS_SQL)
-    ]
 
 
 def fetch_stale_financial_targets(
