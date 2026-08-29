@@ -82,7 +82,14 @@ def collect_search_items() -> tuple[list[dict[str, Any]], list[int]]:
         logging.info("search_keywords 테이블에 검색 쿼리가 없습니다.")
         return [], []
 
-    items, _stats = collect_search_news([keyword["keyword"] for keyword in keywords])
+    items, search_stats = collect_search_news([keyword["keyword"] for keyword in keywords])
+    logging.info(
+        "검색 수집: 쿼리 %d개 (raw %d, 중복제거 %d, 수집 %d)",
+        search_stats["queries"],
+        search_stats["raw"],
+        search_stats["duplicate_removed"],
+        search_stats["collected"],
+    )
 
     for item in items:
         item["_source_type"] = "search"
