@@ -19,7 +19,8 @@ SELECT_EDGE_SUMMARIES_SQL = text(
     SELECT subject_name, relation, object_name,
            news_mention_count, disclosure_count,
            first_mentioned_at, last_mentioned_at,
-           disclosure_rcept_nos, disclosure_items
+           disclosure_rcept_nos, disclosure_items,
+           news_ids, news_items
       FROM entities_relations
      WHERE (subject_name, relation, object_name) IN (
            SELECT * FROM unnest(
@@ -62,9 +63,11 @@ def fetch_edge_summaries(keys: list[tuple[str, str, str]]) -> list[dict]:
             "disclosure_count": int(row.disclosure_count),
             "first_mentioned_at": row.first_mentioned_at,
             "last_mentioned_at": row.last_mentioned_at,
-            # 공시 근거가 없는 간선은 뷰가 NULL 을 주므로 빈 배열로 정규화한다.
+            # 해당 출처 근거가 없는 간선은 뷰가 NULL 을 주므로 빈 배열로 정규화한다.
             "disclosure_rcept_nos": list(row.disclosure_rcept_nos or []),
             "disclosure_items": list(row.disclosure_items or []),
+            "news_ids": [int(news_id) for news_id in (row.news_ids or [])],
+            "news_items": list(row.news_items or []),
         }
         for row in rows
     ]

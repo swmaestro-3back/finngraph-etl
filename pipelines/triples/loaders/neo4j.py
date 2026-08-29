@@ -27,7 +27,7 @@ async def sync_edge_summaries(summaries: list[dict]) -> int:
     summaries 항목 형식은 fetch_edge_summaries 반환값:
     {subject_name, relation, object_name,
      news_mention_count, disclosure_count, first_mentioned_at, last_mentioned_at,
-     disclosure_rcept_nos, disclosure_items}
+     disclosure_rcept_nos, disclosure_items, news_ids, news_items}
 
     노드는 정규명으로 MERGE한다 — 시드된 노드(name, ticker)와 정규명이 일치하고,
     미시드 기업은 name만 가진 노드가 생겼다가 시드 시 병합된다. 값을 통째로 SET하는
@@ -59,7 +59,9 @@ async def sync_edge_summaries(summaries: list[dict]) -> int:
                 r.first_mentioned_at = row.first_mentioned_at,
                 r.last_mentioned_at = row.last_mentioned_at,
                 r.disclosure_rcept_nos = row.disclosure_rcept_nos,
-                r.disclosure_items = row.disclosure_items
+                r.disclosure_items = row.disclosure_items,
+                r.news_ids = row.news_ids,
+                r.news_items = row.news_items
             RETURN count(r) AS synced
             """,
             {"rows": rows},
