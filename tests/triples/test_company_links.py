@@ -21,6 +21,8 @@ def _triplet(subject: str, obj: str, predicate: str = "SUPPLIES_TO") -> Triplet:
         evidence="근거 문장",
         polarity="affirmed",
         tense="past_or_present_fact",
+        subject_impact="positive",
+        object_impact="neutral",
     )
 
 

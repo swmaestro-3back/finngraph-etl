@@ -1,8 +1,8 @@
 """뉴스 수집 + 클러스터링 job (news_pipeline DAG의 collect_articles task).
 
-수집 → 중복 제거 → 기사 유형 필터 → DB 기존 기사 제외 → 클러스터링(클러스터당
-최대 N개 선별) → 본문 크롤링 → news INSERT 순서로 진행한다. 클러스터링을 본문
-수집보다 앞에 두어, 버려질 기사의 본문은 크롤링하지 않는다.
+수집 → 중복 제거 → 기사 유형 필터 → 제목 선두 태그 제거 → DB 기존 기사 제외 →
+클러스터링(클러스터당 최대 N개 선별) → 본문 크롤링 → news INSERT 순서로 진행한다.
+클러스터링을 본문 수집보다 앞에 두어, 버려질 기사의 본문은 크롤링하지 않는다.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from pipelines.news.transformers.duplicate_filter import (
     remove_duplicate_by_url,
 )
 from pipelines.news.transformers.news_type_filter import filter_official_source_news
+from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
 
 def collect_search_news(queries: list[str]) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -135,10 +136,15 @@ def run() -> dict[str, Any]:
         collected, pipeline_input={}, official_source_threshold=settings.official_source_threshold
     )
 
-    # 4. DB에 이미 있는 기사 제외
+    # 4. 제목 선두 "[속보]" 같은 브라켓 태그 제거 — 유형 필터가 태그를 봐야 하므로 그 뒤,
+    #    제목 기반 DB 중복 비교·클러스터링·저장이 같은 제목을 쓰도록 그 앞에 둔다
+    for item in typed_items:
+        item["title"] = remove_leading_title_brackets(item.get("title", ""))
+
+    # 5. DB에 이미 있는 기사 제외
     new_items, existing_items = filter_new_news_by_db(typed_items)
 
-    # 5. 클러스터링 + 클러스터당 최대 N개 선별 (그룹 첫 번째가 대표)
+    # 6. 클러스터링 + 클러스터당 최대 N개 선별 (그룹 첫 번째가 대표)
     groups, cluster_stats = select_articles_by_cluster(
         new_items,
         threshold=settings.cluster_threshold,
@@ -147,14 +153,14 @@ def run() -> dict[str, Any]:
     )
     selected = [item for group in groups for item in group]
 
-    # 6. 선별된 기사만 본문 크롤링
+    # 7. 선별된 기사만 본문 크롤링
     enriched = enrich_items_with_article_body(selected)
     storable = [item for item in enriched if has_article_body(item)]
 
-    # 7. 저장 (is_processed=FALSE는 DB 기본값). save_news_items가 각 item에 _news_id를 채운다
+    # 8. 저장 (triple_extracted는 NULL=미시도로 남는다). save_news_items가 _news_id를 채운다
     save_result = save_news_items(items=storable, save_summary=False, skip_existing=True)
 
-    # 8. 클러스터 대표 기록: 본문 실패로 저장 안 된 기사는 제외되고, 그룹에서
+    # 9. 클러스터 대표 기록: 본문 실패로 저장 안 된 기사는 제외되고, 그룹에서
     #    가장 먼저 저장에 성공한 기사(메도이드 우선순)가 대표가 된다
     saved_groups = [
         saved_ids
@@ -163,7 +169,7 @@ def run() -> dict[str, Any]:
     ]
     clustered_count = assign_cluster_representatives(saved_groups)
 
-    # 9. 검색 완료 마킹
+    # 10. 검색 완료 마킹
     searched_count = mark_keywords_searched([keyword["id"] for keyword in keywords])
 
     print("\n" + "=" * 70)

@@ -37,7 +37,7 @@ class NewsSettings(BaseSettings):
     request_delay: float = Field(default=1.0, validation_alias="REQUEST_DELAY")
 
     news_llm_body_limit: int = Field(default=12000, validation_alias="NEWS_LLM_BODY_LIMIT")
-    news_llm_max_tokens: int = Field(default=512, validation_alias="NEWS_LLM_MAX_TOKENS")
+    news_llm_max_tokens: int = Field(default=1024, validation_alias="NEWS_LLM_MAX_TOKENS")
     news_llm_max_concurrency: int = Field(default=4, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
     news_llm_max_items_per_run: int = Field(
         default=100,

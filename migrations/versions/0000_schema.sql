@@ -227,8 +227,10 @@ CREATE TABLE IF NOT EXISTS stock_valuations_daily (
 );
 
 -- ── news ────────────────────────────────────────────────────────────────────
--- is_processed: 삼중항 추출 시도 완료 여부. FALSE 인 행이 extract_triples 대상.
--- relation_extracted: 삼중항이 1개 이상 나왔는지. is_processed=TRUE 일 때만 유의미.
+-- triple_extracted: 삼중항 추출 상태. NULL=미시도(extract_triples 대상),
+--   TRUE=삼중항 1개 이상, FALSE=시도했으나 없음. 추출 실패 시 NULL로 남아 다음 런에
+--   재시도된다. 미시도는 IS NULL, 없음은 = FALSE 로 조회한다 — NOT triple_extracted 는
+--   3치 논리 탓에 NULL 행을 걸러버리므로 쓰지 않는다.
 -- cluster_rep_news_id: 같은 런에서 같은 사건(클러스터)으로 묶인 기사들의 대표 뉴스 id.
 --   대표 기사와 단독 기사는 자기 자신을 가리킨다. 런 단위 정보라 런 간 병합은 없다.
 CREATE TABLE IF NOT EXISTS news (
@@ -240,14 +242,13 @@ CREATE TABLE IF NOT EXISTS news (
     originallink        TEXT,
     published_at        TIMESTAMPTZ,
     collected_at        TIMESTAMPTZ DEFAULT now(),
-    is_processed        BOOLEAN NOT NULL DEFAULT FALSE,
-    relation_extracted  BOOLEAN,
+    triple_extracted    BOOLEAN,
     cluster_rep_news_id BIGINT REFERENCES news (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_cluster_rep ON news (cluster_rep_news_id);
 CREATE INDEX IF NOT EXISTS idx_news_unprocessed
-  ON news (id) WHERE NOT is_processed;
+  ON news (id) WHERE triple_extracted IS NULL;
 
 -- ── news_companies ──────────────────────────────────────────────────────────
 -- 뉴스-기업 매핑. 삼중항의 COMPANY 엔티티를 ticker → companies.id 로 해석해 적재한다.
@@ -412,6 +413,15 @@ CREATE TABLE IF NOT EXISTS relation_sources (
     polarity        TEXT,               -- affirmed / denied / terminated
     tense           TEXT,               -- past_or_present_fact / future_or_planned / modal_possibility
 
+    -- 이벤트가 각 엔드포인트 기업에 미치는 영향 (positive / negative / neutral).
+    -- 같은 이벤트라도 관점별로 다르므로(공급 체결 → 공급사 호재·수요사 중립) 양쪽을
+    -- 따로 담는다. 뉴스: LLM 판정 — 기사에 그 기업의 주가 반응이 명시되면 그 방향이
+    -- 우선(주가그래프와 나란히 노출), 없으면 이벤트의 펀더멘털 영향 / 공시: 상수 규칙
+    -- (공급계약 체결 = subject positive · object neutral). 종목 페이지는 자기 쪽
+    -- 컬럼을 CASE 로 선택한다.
+    subject_impact  TEXT,               -- positive / negative / neutral
+    object_impact   TEXT,               -- positive / negative / neutral
+
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     -- 출처 XOR: source_type 과 출처 키의 존재가 정확히 일치해야 한다.
@@ -464,6 +474,17 @@ SELECT subject_name, subject_type, relation, object_name, object_type,
            FILTER (WHERE source_type = 'news')            AS news_ids,
        array_agg(item ORDER BY mentioned_at, news_id)
            FILTER (WHERE source_type = 'news' AND item IS NOT NULL)
-                                                          AS news_items
+                                                          AS news_items,
+       -- 관점별 호재/악재 뉴스 건수 — 간선 요약에 "이 관계에서 A 기준 호재 n건"을
+       -- 바로 얹기 위한 집계. neutral 은 (news_mention_count - positive - negative)로
+       -- 유도 가능해 따로 담지 않는다.
+       count(*) FILTER (WHERE source_type = 'news' AND subject_impact = 'positive')
+                                                          AS subject_positive_count,
+       count(*) FILTER (WHERE source_type = 'news' AND subject_impact = 'negative')
+                                                          AS subject_negative_count,
+       count(*) FILTER (WHERE source_type = 'news' AND object_impact = 'positive')
+                                                          AS object_positive_count,
+       count(*) FILTER (WHERE source_type = 'news' AND object_impact = 'negative')
+                                                          AS object_negative_count
 FROM relation_sources
 GROUP BY 1, 2, 3, 4, 5;

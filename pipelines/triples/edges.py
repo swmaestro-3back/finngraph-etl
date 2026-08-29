@@ -57,5 +57,7 @@ def source_row_of(triplet: Triplet, name_to_ticker: dict[str, str]) -> dict | No
         "source_sentence": triplet.source_sentence,
         "polarity": triplet.polarity,
         "tense": triplet.tense,
+        "subject_impact": triplet.subject_impact,
+        "object_impact": triplet.object_impact,
         "item": triplet.item,
     }

@@ -952,6 +952,18 @@ def get_printable_text(text: str) -> str:
     return text.strip()
 
 
+TITLE_LEADING_BRACKET_PATTERN = re.compile(r"^(?:\s*\[[^\]]*\])+\s*")
+
+
+def remove_leading_title_brackets(title: str) -> str:
+    """제목 선두의 "[속보]" 같은 브라켓 태그들을 제거한다. 저장 전 제목 정리용."""
+
+    if not title:
+        return ""
+
+    return TITLE_LEADING_BRACKET_PATTERN.sub("", title).strip()
+
+
 def clean_article_body_for_storage(
     text: str,
     removed_noise: list[dict[str, Any]] | None = None,

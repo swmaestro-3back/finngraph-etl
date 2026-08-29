@@ -50,6 +50,8 @@ class TripletBuilder:
             evidence=frame.evidence,
             polarity=frame.polarity,
             tense=frame.tense,
+            subject_impact=frame.subject_impact,
+            object_impact=frame.object_impact,
         )
 
     def _violates_irreflexivity(self, frame: RelationFrame) -> bool:
