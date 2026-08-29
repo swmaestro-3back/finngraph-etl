@@ -20,6 +20,8 @@ jobs:
   review:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    # 기본값은 360분이라 응답이 멈추면 러너를 오래 붙잡는다.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
