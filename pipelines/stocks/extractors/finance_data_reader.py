@@ -13,7 +13,6 @@ from decimal import Decimal
 
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.retry import retry_external_call
-from pipelines.stocks.models import StockTicker
 from pipelines.stocks.types import DailyCandle
 
 logger = get_logger(__name__)
@@ -26,18 +25,6 @@ _COLUMN_ALIASES = {
     "close": "close",
     "volume": "volume",
 }
-
-
-def fetch_tickers() -> list[StockTicker]:
-    """FDR 종목 목록.
-
-    종목 마스터의 원천은 KIS master다. FDR 목록은 상장폐지·관리종목 이력 보조용이며,
-    마스터 대신 쓰면 원천이 둘로 갈린다.
-    """
-
-    raise NotImplementedError(
-        "종목 목록의 원천은 KIS master다. pipelines.stocks.extractors.kis_stock_master를 쓴다."
-    )
 
 
 @retry_external_call()

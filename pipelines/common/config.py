@@ -22,7 +22,6 @@ class Settings(BaseSettings):
 
     kis_app_key: str = Field(default="", validation_alias="KIS_APP_KEY")
     kis_app_secret: str = Field(default="", validation_alias="KIS_APP_SECRET")
-    kis_account_no: str = Field(default="", validation_alias="KIS_ACCOUNT_NO")
     kis_rate_limit_per_second: int = Field(default=15, validation_alias="KIS_RATE_LIMIT_PER_SECOND")
     kis_base_url: str = Field(
         default="https://openapi.koreainvestment.com:9443",
@@ -74,15 +73,6 @@ class Settings(BaseSettings):
     disclosure_fetch_batch_size: int = Field(
         default=8000,
         validation_alias="DISCLOSURE_FETCH_BATCH_SIZE",
-    )
-
-    stock_intraday_retention_days: int = Field(
-        default=60,
-        validation_alias="STOCK_INTRADAY_RETENTION_DAYS",
-    )
-    stock_intraday_target_delay_minutes: int = Field(
-        default=5,
-        validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
     )
 
     # 일봉 백필 소급 연수와, 일별 갱신 시 되짚어볼 구간. 갱신 구간이 짧으면 휴장·장애로 빠진

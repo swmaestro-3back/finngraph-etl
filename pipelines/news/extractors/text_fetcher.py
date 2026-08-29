@@ -1,8 +1,3 @@
-"""
-뉴스 내 원문 수집기
-headline_collector와 search_collector에서 동시 활용
-"""
-
 import logging
 import time
 from typing import Any
@@ -12,33 +7,11 @@ import requests
 from bs4 import BeautifulSoup
 
 from pipelines.news.config import get_news_settings
+from pipelines.news.extractors.article_metadata import extract_anchor_published_at
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-
-
-def extract_anchor_published_at(soup: Any) -> str:
-
-    selectors_and_attributes = [
-        ("meta[property='article:published_time']", "content"),
-        ("meta[name='article:published_time']", "content"),
-        ("span._ARTICLE_DATE_TIME", "data-date-time"),
-        ("span.media_end_head_info_datestamp_time", "data-date-time"),
-    ]
-
-    for selector, attribute in selectors_and_attributes:
-        element = soup.select_one(selector)
-
-        if not element:
-            continue
-
-        published_at = str(element.get(attribute, "")).strip()
-
-        if published_at:
-            return published_at
-
-    return ""
 
 
 def is_anchor_link(url: str) -> bool:
@@ -58,30 +31,6 @@ def is_anchor_link(url: str) -> bool:
 
     except Exception:
         return False
-
-
-def filter_only_anchor_items(
-    items: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    anchor_items = []
-    removed_items = []
-
-    for item in items:
-        link = item.get("link", "")
-
-        if is_anchor_link(link):
-            anchor_items.append(item)
-        else:
-            removed_items.append(
-                {
-                    "removed_item": item,
-                    "reason": "지정된 링크가 아님",
-                    "link": link,
-                    "originallink": item.get("originallink", ""),
-                }
-            )
-
-    return anchor_items, removed_items
 
 
 def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
