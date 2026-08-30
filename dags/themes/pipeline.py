@@ -9,8 +9,7 @@ except ImportError:
     dag = None
     task = None
 
-# SOURCES: tuple[str, ...] = ("naver", "judal",)
-SOURCES: tuple[str, ...] = ("naver",)
+SOURCES: tuple[str, ...] = ("judal", "naver")
 
 if dag and task:
     # 테마 편입 확정 신호. 수집 대상 파생(companies_sync_service_companies)이 구독한다.

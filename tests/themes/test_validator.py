@@ -12,6 +12,12 @@ def test_normalize_name_strips_all_whitespace() -> None:
     assert _normalize_name("2차 전지") == _normalize_name("2차전지")
 
 
+def test_normalize_name_strips_special_characters() -> None:
+    assert _normalize_name("IT(소프트웨어/SI)") == _normalize_name("IT 소프트웨어 SI")
+    assert _normalize_name("2차전지(소재)") == _normalize_name("2차전지 소재")
+    assert _normalize_name("바이오-헬스케어") == _normalize_name("바이오헬스케어")
+
+
 def test_overlap_coefficient_empty_sets() -> None:
     assert _overlap_coefficient(set(), {"005930"}) == 0.0
     assert _overlap_coefficient({"005930"}, set()) == 0.0

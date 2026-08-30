@@ -46,6 +46,7 @@ async def upsert_themes(themes: list[Theme]) -> None:
             "source_theme_id": theme.source_theme_id,
             "description": theme.description,
             "source": theme.source,
+            "sources": theme.sources,
             "companies": [{"ticker": c.ticker, "reason": c.reason} for c in theme.companies],
         }
         for theme in themes
@@ -58,7 +59,8 @@ MERGE (t:Theme {name: theme.name})
 ON CREATE SET
     t.source_theme_id = theme.source_theme_id,
     t.description = theme.description,
-    t.source = theme.source
+    t.source = theme.source,
+    t.sources = theme.sources
 WITH t, theme
 UNWIND theme.companies AS company
 MATCH (c:Company {ticker: company.ticker})

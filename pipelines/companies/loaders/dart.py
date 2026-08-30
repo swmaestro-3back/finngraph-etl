@@ -21,7 +21,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from pipelines.companies.models import CompanyProfile, DartCorp
-from pipelines.companies.transformers.dart import normalize_corp_name
 
 # 상장 법인 적재 — 법인의 존재 여부는 DART가 정한다
 #
@@ -93,6 +92,59 @@ UPSERT_UNLISTED_COMPANY_SQL = text(
     """
 )
 
+# DART 법인명 별칭 적재 — 상장 법인만
+#
+# 상장사의 companies.name은 sync_listed_companies가 매일 KIS 종목명("현대차")으로 덮으므로
+# DART 법인명("현대자동차")은 여기 별칭이 유일한 보존처다. 공시 계약상대 역매칭이
+# source='DART' 별칭을 마스터명과 함께 조회한다.
+#
+# 비상장에는 붙이지 않는다(모듈 docstring 참고) — 비상장은 companies.name이 이미 DART
+# 법인명이라 별칭이 필요 없고, 붙이는 순간 동명 표기가 여러 법인에 걸린다.
+ALIAS_SOURCE_DART = "DART"
+
+INSERT_DART_NAME_ALIAS_SQL = text(
+    """
+    INSERT INTO company_aliases (company_id, alias, lang, source)
+    SELECT c.id, CAST(:name AS TEXT), 'ko', :source
+      FROM companies AS c
+     WHERE c.corp_code = :corp_code
+    ON CONFLICT (alias, company_id) DO NOTHING
+    """
+)
+
+# 수동 관리 별칭 시드 — 사명변경·통용표기
+#
+# DART 법인명으로도 흡수되지 않는 표기다. 포스코건설은 포스코이앤씨의 **옛 사명**이라
+# 현행 등록부 어디에도 없고, 통용 한글표기는 공시 원문에만 나온다. (별칭, 마스터명)
+# 쌍으로 두고 마스터명이 **유일하게** 해석될 때만 넣는다 — 같은 이름의 법인이 둘이면
+# 어느 쪽인지 알 수 없으므로 넣지 않는다.
+CURATED_ALIASES: list[tuple[str, str]] = [
+    ("엘지씨엔에스", "LG CNS"),
+    ("포스코건설", "포스코이앤씨"),
+    ("엘지화학", "LG화학"),
+    ("엘지전자", "LG전자"),
+    ("엘지유플러스", "LG유플러스"),
+    ("엘지디스플레이", "LG디스플레이"),
+    ("에스케이하이닉스", "SK하이닉스"),
+    ("에스케이텔레콤", "SK텔레콤"),
+    ("에스케이이노베이션", "SK이노베이션"),
+    ("지에스건설", "GS건설"),
+    ("케이씨씨", "KCC"),
+]
+
+INSERT_CURATED_ALIAS_SQL = text(
+    """
+    INSERT INTO company_aliases (company_id, alias, lang, source)
+    SELECT c.id, CAST(:alias AS TEXT), 'ko', 'CURATED'
+      FROM companies AS c
+     WHERE c.name = :name
+       AND c.corp_code IS NOT NULL
+       AND (SELECT count(*) FROM companies AS x
+             WHERE x.name = c.name AND x.corp_code IS NOT NULL) = 1
+    ON CONFLICT (alias, company_id) DO NOTHING
+    """
+)
+
 UPDATE_COMPANY_PROFILE_SQL = text(
     """
     UPDATE companies
@@ -105,10 +157,6 @@ UPDATE_COMPANY_PROFILE_SQL = text(
            updated_at = now()
      WHERE corp_code = :corp_code
     """
-)
-
-SELECT_COMPANY_BY_CORP_CODE_SQL = text(
-    "SELECT id, fiscal_month FROM companies WHERE corp_code = :corp_code"
 )
 
 # 개요 수집 대상 — corp_code가 붙었고 개요가 아직 비어 있는 법인부터
@@ -146,16 +194,6 @@ SELECT_DART_FINANCIAL_TARGETS_SQL = text(
      LIMIT :limit
     """
 )
-
-SELECT_COMPANY_IDS_BY_NORMALIZED_NAME_SQL = text(
-    """
-    SELECT id, name
-      FROM companies
-     WHERE country = 'KR'
-       AND NOT is_listed
-    """
-)
-
 
 # 서비스 대상인데 수집 경로가 이어지지 않는 법인
 #
@@ -254,6 +292,51 @@ def link_listed_corp_codes(session: Session, corps: list[DartCorp]) -> int:
     return touched
 
 
+def insert_dart_name_aliases(session: Session, corps: list[DartCorp]) -> int:
+    """상장 법인의 DART 법인명을 별칭으로 적재한다.
+
+    법인 행이 아직 없는 corp_code(동기화 순서상 뒤에 생기는 경우)는 조용히 건너뛴다 —
+    다음 주기 실행이 채운다.
+
+    Returns:
+        int: 새로 추가된 별칭 수.
+    """
+
+    added = 0
+    for corp in corps:
+        if not corp.stock_code or not corp.name.strip():
+            continue
+        result = session.execute(
+            INSERT_DART_NAME_ALIAS_SQL,
+            {"corp_code": corp.corp_code, "name": corp.name, "source": ALIAS_SOURCE_DART},
+        )
+        added += result.rowcount or 0
+    return added
+
+
+def seed_curated_aliases(
+    session: Session,
+    seed: list[tuple[str, str]] | None = None,
+) -> int:
+    """수동 관리 별칭(CURATED_ALIASES)을 적재한다.
+
+    마스터명이 아직 없거나 모호한 항목은 조용히 건너뛴다 — 다음 주기 실행이 채운다.
+
+    Args:
+        session (Session): DB 세션.
+        seed (list[tuple[str, str]] | None): (별칭, 마스터명) 쌍. 없으면 CURATED_ALIASES.
+
+    Returns:
+        int: 새로 추가된 별칭 수.
+    """
+
+    added = 0
+    for alias, name in CURATED_ALIASES if seed is None else seed:
+        result = session.execute(INSERT_CURATED_ALIAS_SQL, {"alias": alias, "name": name})
+        added += result.rowcount or 0
+    return added
+
+
 def upsert_unlisted_companies(session: Session, corps: list[DartCorp]) -> int:
     """비상장 법인을 corp_code 단위로 적재한다.
 
@@ -290,13 +373,6 @@ def update_company_profile(session: Session, profile: CompanyProfile) -> int:
     return result.rowcount or 0
 
 
-def fetch_company_by_corp_code(session: Session, corp_code: str) -> tuple[int, str | None] | None:
-    """corp_code로 (company_id, fiscal_month)를 찾는다."""
-
-    row = session.execute(SELECT_COMPANY_BY_CORP_CODE_SQL, {"corp_code": corp_code}).first()
-    return (row.id, row.fiscal_month) if row else None
-
-
 def fetch_profile_targets(session: Session, limit: int) -> list[str]:
     """개요를 채울 corp_code 목록. 아직 비어 있는 법인이 먼저 온다."""
 
@@ -312,22 +388,3 @@ def fetch_dart_financial_targets(
 
     rows = session.execute(SELECT_DART_FINANCIAL_TARGETS_SQL, {"limit": limit})
     return [(row.id, row.corp_code, row.fiscal_month) for row in rows]
-
-
-def find_unlisted_company_by_name(session: Session, name: str) -> int | None:
-    """정규화한 법인명이 **유일하게** 일치하는 비상장 법인 id.
-
-    2건 이상 걸리면 None을 준다. 잘못 붙는 것보다 안 붙는 게 낫다 — 재무가 엉뚱한
-    법인에 붙으면 조용히 틀린 값이 서비스에 나간다.
-    """
-
-    target = normalize_corp_name(name)
-    if not target:
-        return None
-
-    matches = [
-        row.id
-        for row in session.execute(SELECT_COMPANY_IDS_BY_NORMALIZED_NAME_SQL)
-        if normalize_corp_name(row.name) == target
-    ]
-    return matches[0] if len(matches) == 1 else None

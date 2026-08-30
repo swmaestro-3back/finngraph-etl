@@ -103,6 +103,8 @@ def merge_annotations(
                 evidence=evidence,
                 polarity=annotation.polarity,
                 tense=annotation.tense,
+                subject_impact=annotation.subject_impact,
+                object_impact=annotation.object_impact,
             )
         )
 

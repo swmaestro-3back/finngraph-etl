@@ -20,6 +20,11 @@ EXCLUDE_REPORT_KEYWORDS = [
 ]
 EXCLUDE_TITLE_TAG_PATTERN = re.compile(r"\[\s*(포토|표)\s*\]", re.IGNORECASE)
 
+# "[미국 특징주]"·"[홍콩 특징주]" 같은 해외 특징주 묶음 기사 태그.
+# 수식어 없는 "[특징주]"는 국내 개별 종목 뉴스라 매칭하지 않는다 — 태그 안에
+# 특징주 앞의 비공백 문자를 최소 하나 요구한다.
+EXCLUDE_FEATURED_STOCK_TAG_PATTERN = re.compile(r"\[\s*[^\]\s][^\]]*특징주[^\]]*\]")
+
 
 def calculate_official_source_score(
     item: dict[str, Any], pipeline_input: dict[str, Any]
@@ -37,6 +42,12 @@ def calculate_official_source_score(
         score -= 5
         debug_info["excluded_keywords"].append(
             {"keyword": title_tag, "position": "title_tag", "score": -5}
+        )
+
+    for match in EXCLUDE_FEATURED_STOCK_TAG_PATTERN.finditer(title):
+        score -= 5
+        debug_info["excluded_keywords"].append(
+            {"keyword": match.group(0), "position": "title_tag", "score": -5}
         )
 
     for keyword in EXCLUDE_REPORT_KEYWORDS:

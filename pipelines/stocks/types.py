@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 
@@ -27,24 +27,6 @@ class DailyCandle:
     close: Decimal
     volume: int
     trade_value: int | None = None
-
-
-@dataclass(frozen=True)
-class MinuteCandle:
-    """분봉.
-
-    Attributes:
-        ts (datetime): 봉의 **시작** 시각(KST). KIS는 체결시각(HHMMSS)을 주는데 이는 봉의
-            시작 시각이다. 09:00 봉은 09:00:00~09:00:59 구간을 뜻한다.
-    """
-
-    ticker: str
-    ts: datetime
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-    volume: int
 
 
 @dataclass(frozen=True)

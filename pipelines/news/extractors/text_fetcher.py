@@ -33,30 +33,6 @@ def is_anchor_link(url: str) -> bool:
         return False
 
 
-def filter_only_anchor_items(
-    items: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    anchor_items = []
-    removed_items = []
-
-    for item in items:
-        link = item.get("link", "")
-
-        if is_anchor_link(link):
-            anchor_items.append(item)
-        else:
-            removed_items.append(
-                {
-                    "removed_item": item,
-                    "reason": "지정된 링크가 아님",
-                    "link": link,
-                    "originallink": item.get("originallink", ""),
-                }
-            )
-
-    return anchor_items, removed_items
-
-
 def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
 
     if not url:

@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS service_companies (
 );
 
 -- ── 시세 · 수급 · 배당 · 밸류에이션 ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS daily_candles (
+CREATE TABLE IF NOT EXISTS stock_candles_daily (
     stock_id    BIGINT  NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date  DATE    NOT NULL,
     open        NUMERIC NOT NULL,
@@ -173,10 +173,10 @@ CREATE TABLE IF NOT EXISTS daily_candles (
     PRIMARY KEY (stock_id, trade_date)
 );
 
-CREATE INDEX IF NOT EXISTS daily_candles_date_idx ON daily_candles (trade_date);
+CREATE INDEX IF NOT EXISTS stock_candles_daily_date_idx ON stock_candles_daily (trade_date);
 
 -- 주봉·월봉 ────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS stock_period_candles (
+CREATE TABLE IF NOT EXISTS stock_candles_period (
     stock_id    BIGINT  NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     period      TEXT    NOT NULL,   -- 'W' | 'M'
     base_date   DATE    NOT NULL,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS stock_period_candles (
     PRIMARY KEY (stock_id, period, base_date)
 );
 
-CREATE TABLE IF NOT EXISTS investor_flows (
+CREATE TABLE IF NOT EXISTS stock_investor_flows (
     stock_id            BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date          DATE   NOT NULL,
     individual_net_qty  BIGINT,     -- 개인순매수량
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS investor_flows (
     PRIMARY KEY (stock_id, trade_date)
 );
 
-CREATE TABLE IF NOT EXISTS dividends (
+CREATE TABLE IF NOT EXISTS stock_dividends (
     listing_id  BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     record_date DATE   NOT NULL,
     divi_kind   TEXT   NOT NULL,
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS dividends (
     PRIMARY KEY (listing_id, record_date, divi_kind)
 );
 
-CREATE TABLE IF NOT EXISTS valuation_daily (
+CREATE TABLE IF NOT EXISTS stock_valuations_daily (
     listing_id     BIGINT NOT NULL REFERENCES stocks (id) ON DELETE CASCADE,
     trade_date     DATE   NOT NULL,
     market_cap     BIGINT,
@@ -227,8 +227,10 @@ CREATE TABLE IF NOT EXISTS valuation_daily (
 );
 
 -- ── news ────────────────────────────────────────────────────────────────────
--- is_processed: 삼중항 추출 시도 완료 여부. FALSE 인 행이 extract_triples 대상.
--- relation_extracted: 삼중항이 1개 이상 나왔는지. is_processed=TRUE 일 때만 유의미.
+-- triple_extracted: 삼중항 추출 상태. NULL=미시도(extract_triples 대상),
+--   TRUE=삼중항 1개 이상, FALSE=시도했으나 없음. 추출 실패 시 NULL로 남아 다음 런에
+--   재시도된다. 미시도는 IS NULL, 없음은 = FALSE 로 조회한다 — NOT triple_extracted 는
+--   3치 논리 탓에 NULL 행을 걸러버리므로 쓰지 않는다.
 -- cluster_rep_news_id: 같은 런에서 같은 사건(클러스터)으로 묶인 기사들의 대표 뉴스 id.
 --   대표 기사와 단독 기사는 자기 자신을 가리킨다. 런 단위 정보라 런 간 병합은 없다.
 CREATE TABLE IF NOT EXISTS news (
@@ -240,14 +242,13 @@ CREATE TABLE IF NOT EXISTS news (
     originallink        TEXT,
     published_at        TIMESTAMPTZ,
     collected_at        TIMESTAMPTZ DEFAULT now(),
-    is_processed        BOOLEAN NOT NULL DEFAULT FALSE,
-    relation_extracted  BOOLEAN,
+    triple_extracted    BOOLEAN,
     cluster_rep_news_id BIGINT REFERENCES news (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_cluster_rep ON news (cluster_rep_news_id);
 CREATE INDEX IF NOT EXISTS idx_news_unprocessed
-  ON news (id) WHERE NOT is_processed;
+  ON news (id) WHERE triple_extracted IS NULL;
 
 -- ── news_companies ──────────────────────────────────────────────────────────
 -- 뉴스-기업 매핑. 삼중항의 COMPANY 엔티티를 ticker → companies.id 로 해석해 적재한다.
@@ -266,7 +267,9 @@ CREATE INDEX IF NOT EXISTS idx_news_companies_company ON news_companies (company
 CREATE TABLE IF NOT EXISTS themes (
     id          BIGSERIAL PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
-    description TEXT
+    description TEXT,
+    -- 추출·병합된 소스 목록 (예: {judal,naver}). DAG SOURCES 우선순위 순서를 유지한다.
+    sources     TEXT[] NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS theme_stocks (
@@ -300,50 +303,52 @@ ON CONFLICT (keyword) DO NOTHING;
 
 -- ── disclosures ─────────────────────────────────────────────────────────────
 --
--- DART 단일판매ㆍ공급계약체결 공시(정정 포함)를 접수번호 단위로 적재한다. 지금은 이 한
--- 종류만 수집하지만 report_nm 이 컬럼이라 다른 정형 공시 유형도 스키마 변경 없이 담을 수
--- 있다.
---
--- **자주 조회하는 항목은 일반 컬럼으로 승격했다.** 
--- 부가 정보는 JSONB 칼럼으로 저장한다.
---
--- **company_id 는 제출사(공시를 낸 법인)다.** corp_code 는 목록 API 가 항상 주지만 신규
--- 법인이 corp_code 동기화를 기다리는 동안 companies 에 없을 수 있어 NULL 을 허용한다.
---
--- **원문 HTML 은 저장하지 않는다.** 파싱은 메모리에서만 하고 결과만 남긴다. 파서를 고치면
--- 해당 rcept_no 를 지우고 백필을 다시 돌려 ON CONFLICT 로 채운다. rcept_no UNIQUE 가
--- 수집 재개 상태 그 자체다 — 이미 있는 접수번호는 원문을 다시 받지 않는다.
+-- DART 단일판매ㆍ공급계약체결 공시(정정 포함)를 접수번호 단위로 적재한다.
 CREATE TABLE IF NOT EXISTS disclosures (
+    -- 식별자
     id                     BIGSERIAL PRIMARY KEY,
     rcept_no               TEXT NOT NULL,
-    corp_code              TEXT NOT NULL,
+
+    -- 공시 주체 (제출사)
     company_id             BIGINT REFERENCES companies (id),
+    corp_code              TEXT NOT NULL,
     ticker                 VARCHAR(20),
     corp_cls               TEXT,             -- 'KOSPI' | 'KOSDAQ' | 'KONEX' | 'UNLISTED'
+
+    -- 공시 문서 메타
     report_nm              TEXT NOT NULL,
+    rcept_dt               DATE NOT NULL,
+    flr_nm                 TEXT,
+    link                   TEXT NOT NULL,
+
+    -- 계약 내용
+    contract_type          TEXT,             -- 판매ㆍ공급계약 구분
+    contract_name          TEXT,             -- 체결계약명
+    order_date             DATE,             -- 계약(수주)일자 (ISO 기재만)
+    start_date             DATE,             -- 계약 시작일 (ISO 기재만)
+    end_date               DATE,             -- 계약 종료일 (ISO 기재만)
+
+    -- 계약 상대방
+    counterparty           TEXT,             -- 계약상대 원문 표기 (자유 텍스트)
+    counterparty_corp_name TEXT,             -- 역매칭된 법인명 (companies.name)
+    counterparty_corp_code TEXT,             -- 역매칭된 DART 고유번호
+    counterparty_ticker    VARCHAR(20),      -- 역매칭된 종목 단축코드 (상장사만)
+
+    -- 정정 체인
     is_correction          BOOLEAN NOT NULL DEFAULT false,
-    correction_target_report TEXT,           -- "정정관련 공시서류"
-    correction_target_date DATE,             -- "정정관련 공시서류제출일"
-    correction_reason      TEXT,             -- "정정사유"
     -- 체인 루트(최초 원공시) 접수번호. 원공시는 자기 자신, 정정공시는 link job 의
     -- 재귀 해소(resolve_original_rcept_nos)가 채운다 — 원문에는 부모의 제출일만 있고
     -- 접수번호가 없어 DB 안에서만 확정할 수 있다. 원장 적재는 체인당 최신 회차 1행만
     -- 담아 disclosure_count 가 문서 수가 아니라 계약 수가 된다.
     original_rcept_no      TEXT,
-    rcept_dt               DATE NOT NULL,
-    flr_nm                 TEXT,
-    link                   TEXT NOT NULL,
-    contract_type          TEXT,             -- 판매ㆍ공급계약 구분
-    contract_name          TEXT,             -- 체결계약명
-    counterparty           TEXT,             -- 계약상대 원문 표기 (자유 텍스트)
-    counterparty_corp_name TEXT,             -- 역매칭된 법인명 (companies.name)
-    counterparty_corp_code TEXT,             -- 역매칭된 DART 고유번호
-    counterparty_ticker    VARCHAR(20),      -- 역매칭된 종목 단축코드 (상장사만)
-    start_date             DATE,             -- 계약 시작일 (ISO 기재만)
-    end_date               DATE,             -- 계약 종료일 (ISO 기재만)
-    order_date             DATE,             -- 계약(수주)일자 (ISO 기재만)
+    correction_target_report TEXT,           -- "정정관련 공시서류"
+    correction_target_date DATE,             -- "정정관련 공시서류제출일"
+    correction_reason      TEXT,             -- "정정사유"
+
+    -- 원문/부가 데이터
     fields                 JSONB NOT NULL DEFAULT '{}'::jsonb,
     meta                   JSONB NOT NULL DEFAULT '{}'::jsonb,
+
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -398,7 +403,8 @@ CREATE TABLE IF NOT EXISTS relation_sources (
     evidence      TEXT,                 -- UI 노출용 자립 근거 문장
     mentioned_at  DATE NOT NULL,        -- 뉴스: 보도일 / 공시: rcept_dt
     item          TEXT,                 -- 뉴스: 추출 품목 구
-                                        -- 공시: COALESCE(contract_name, contract_type)
+                                        -- 공시: 계약명·구분 조합 — 둘 다 있으면
+                                        -- "contract_type: contract_name", 아니면 있는 쪽만
 
     -- 뉴스 전용 (공시면 NULL)
     source_sentence TEXT,               -- 원문 문장 (verbatim)
@@ -406,6 +412,15 @@ CREATE TABLE IF NOT EXISTS relation_sources (
     -- 뉴스: LLM 판정 / 공시: 확정 사실이므로 항상 affirmed + past_or_present_fact
     polarity        TEXT,               -- affirmed / denied / terminated
     tense           TEXT,               -- past_or_present_fact / future_or_planned / modal_possibility
+
+    -- 이벤트가 각 엔드포인트 기업에 미치는 영향 (positive / negative / neutral).
+    -- 같은 이벤트라도 관점별로 다르므로(공급 체결 → 공급사 호재·수요사 중립) 양쪽을
+    -- 따로 담는다. 뉴스: LLM 판정 — 기사에 그 기업의 주가 반응이 명시되면 그 방향이
+    -- 우선(주가그래프와 나란히 노출), 없으면 이벤트의 펀더멘털 영향 / 공시: 상수 규칙
+    -- (공급계약 체결 = subject positive · object neutral). 종목 페이지는 자기 쪽
+    -- 컬럼을 CASE 로 선택한다.
+    subject_impact  TEXT,               -- positive / negative / neutral
+    object_impact   TEXT,               -- positive / negative / neutral
 
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -444,6 +459,32 @@ SELECT subject_name, subject_type, relation, object_name, object_type,
        count(*) FILTER (WHERE source_type = 'news')       AS news_mention_count,
        count(*) FILTER (WHERE source_type = 'disclosure') AS disclosure_count,
        min(mentioned_at) AS first_mentioned_at,
-       max(mentioned_at) AS last_mentioned_at
+       max(mentioned_at) AS last_mentioned_at,
+       -- 공시 근거 배열 — Neo4j 간선에서 근거 공시(원장 rcept_no)와 계약 요약을
+       -- RDB 조회 없이 바로 읽기 위한 캐시. item 이 NULL 인 행은 items 에서만
+       -- 빠진다(Neo4j 리스트 속성은 null 원소 불가).
+       array_agg(rcept_no ORDER BY mentioned_at, rcept_no)
+           FILTER (WHERE source_type = 'disclosure')      AS disclosure_rcept_nos,
+       array_agg(item ORDER BY mentioned_at, rcept_no)
+           FILTER (WHERE source_type = 'disclosure' AND item IS NOT NULL)
+                                                          AS disclosure_items,
+       -- 뉴스 근거 배열 — 근거 뉴스(원장 news_id)와 품목 요약의 캐시. 규칙은 공시와 동일:
+       -- item 이 NULL 인 행은 news_items 에서만 빠진다.
+       array_agg(news_id ORDER BY mentioned_at, news_id)
+           FILTER (WHERE source_type = 'news')            AS news_ids,
+       array_agg(item ORDER BY mentioned_at, news_id)
+           FILTER (WHERE source_type = 'news' AND item IS NOT NULL)
+                                                          AS news_items,
+       -- 관점별 호재/악재 뉴스 건수 — 간선 요약에 "이 관계에서 A 기준 호재 n건"을
+       -- 바로 얹기 위한 집계. neutral 은 (news_mention_count - positive - negative)로
+       -- 유도 가능해 따로 담지 않는다.
+       count(*) FILTER (WHERE source_type = 'news' AND subject_impact = 'positive')
+                                                          AS subject_positive_count,
+       count(*) FILTER (WHERE source_type = 'news' AND subject_impact = 'negative')
+                                                          AS subject_negative_count,
+       count(*) FILTER (WHERE source_type = 'news' AND object_impact = 'positive')
+                                                          AS object_positive_count,
+       count(*) FILTER (WHERE source_type = 'news' AND object_impact = 'negative')
+                                                          AS object_negative_count
 FROM relation_sources
 GROUP BY 1, 2, 3, 4, 5;

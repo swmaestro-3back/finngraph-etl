@@ -98,7 +98,7 @@ def insert_or_update_news(
 
     title = get_printable_text(item.get("title", ""))
     news_text = _prepare_article_body_for_storage(item)
-    summary = build_news_summary(item) if save_summary else ""
+    summary = (build_news_summary(item) or None) if save_summary else None
     link = item.get("link", "")
     originallink = item.get("originallink", "")
     normalized_link = normalize_url_for_duplicate(link)
@@ -231,16 +231,6 @@ def insert_or_update_news(
     return {"id": inserted_row[0], "action": "inserted"}
 
 
-def save_single_news_item(
-    item: dict[str, Any], save_summary: bool = True, skip_existing: bool = False
-) -> int:
-
-    with session_scope() as session:
-        return insert_or_update_news(
-            session=session, item=item, save_summary=save_summary, skip_existing=skip_existing
-        )["id"]
-
-
 def save_news_items(
     items: list[dict[str, Any]], save_summary: bool = True, skip_existing: bool = False
 ) -> dict[str, int]:
@@ -318,8 +308,8 @@ def save_news_items(
 def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
     """
     Triple ETL에서 사용.
-    삼중항 추출이 아직 시도되지 않은(is_processed=FALSE) 뉴스를 조회한다.
-    추출 중 예외가 난 뉴스는 FALSE로 남아 다음 런에서 자동 재시도된다.
+    삼중항 추출이 아직 시도되지 않은(triple_extracted IS NULL) 뉴스를 조회한다.
+    추출 중 예외가 난 뉴스는 NULL로 남아 다음 런에서 자동 재시도된다.
     """
 
     query = """
@@ -328,7 +318,7 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
             text,
             (COALESCE(published_at, collected_at, now()))::date AS mentioned_at
         FROM news
-        WHERE is_processed = FALSE
+        WHERE triple_extracted IS NULL
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
         ORDER BY id ASC
@@ -349,8 +339,8 @@ def mark_triple_extraction_result(
 ) -> dict[str, int]:
     """
     Triple ETL에서 호출.
-    삼중항 추출을 시도한 뉴스의 is_processed를 TRUE로 올리고,
-    삼중항 존재 여부를 relation_extracted에 마킹한다.
+    삼중항 추출을 시도한 뉴스의 triple_extracted에 삼중항 존재 여부를 마킹한다.
+    (NULL=미시도이므로 TRUE/FALSE 어느 쪽이든 "시도 완료"를 겸한다)
     """
 
     unique_true = sorted({int(news_id) for news_id in has_triples_ids if news_id})
@@ -365,8 +355,7 @@ def mark_triple_extraction_result(
                 text(
                     """
                     UPDATE news
-                    SET is_processed = TRUE,
-                        relation_extracted = TRUE
+                    SET triple_extracted = TRUE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -378,8 +367,7 @@ def mark_triple_extraction_result(
                 text(
                     """
                     UPDATE news
-                    SET is_processed = TRUE,
-                        relation_extracted = FALSE
+                    SET triple_extracted = FALSE
                     WHERE id = ANY(:ids);
                     """
                 ),
@@ -387,67 +375,6 @@ def mark_triple_extraction_result(
             )
 
     return {"true_count": len(unique_true), "false_count": len(unique_false)}
-
-
-def find_existing_links(links: list[str]) -> set[str]:
-
-    filtered_links = [
-        normalize_url_for_duplicate(link) for link in links if normalize_url_for_duplicate(link)
-    ]
-
-    if not filtered_links:
-        return set()
-
-    query = """
-        SELECT link, originallink
-        FROM news
-        WHERE RTRIM(LOWER(SPLIT_PART(link, '?', 1)), '/') = ANY(:links)
-           OR RTRIM(LOWER(SPLIT_PART(originallink, '?', 1)), '/') = ANY(:links);
-    """
-
-    with session_scope() as session:
-        rows = session.execute(text(query), {"links": filtered_links}).fetchall()
-
-        existing_links = set()
-
-        for link, originallink in rows:
-            if link:
-                existing_links.add(normalize_url_for_duplicate(link))
-
-            if originallink:
-                existing_links.add(normalize_url_for_duplicate(originallink))
-
-        return existing_links
-
-
-def find_existing_normalized_titles(titles: list[str]) -> set[str]:
-
-    normalized_titles = [
-        normalize_title_for_duplicate(title)
-        for title in titles
-        if normalize_title_for_duplicate(title)
-    ]
-
-    if not normalized_titles:
-        return set()
-
-    query = """
-        SELECT title
-        FROM news
-        WHERE BTRIM(
-            REGEXP_REPLACE(
-                REGEXP_REPLACE(LOWER(title), '[^0-9a-z가-힣]+', ' ', 'g'),
-                '\\s+',
-                ' ',
-                'g'
-            )
-        ) = ANY(:titles);
-    """
-
-    with session_scope() as session:
-        rows = session.execute(text(query), {"titles": normalized_titles}).fetchall()
-
-        return {normalize_title_for_duplicate(row[0]) for row in rows if row[0]}
 
 
 def filter_new_news_by_db(
@@ -553,7 +480,7 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
             title,
             text
         FROM news
-        WHERE relation_extracted = TRUE
+        WHERE triple_extracted = TRUE
           AND (summary IS NULL OR BTRIM(summary) = '')
           AND text IS NOT NULL
           AND BTRIM(text) <> ''

@@ -131,7 +131,10 @@ SELECT_SUPPLY_EDGES_SQL = text(
     )
     SELECT l.rcept_no,
            o.rcept_dt,
-           COALESCE(l.contract_name, l.contract_type) AS item,
+           CASE WHEN l.contract_name IS NOT NULL AND l.contract_type IS NOT NULL
+                THEN l.contract_type || ': ' || l.contract_name
+                ELSE COALESCE(l.contract_name, l.contract_type)
+           END AS item,
            l.ticker,
            f.name AS filer_name,
            l.counterparty_ticker,
@@ -158,18 +161,19 @@ SELECT_DISCLOSURE_EDGE_KEYS_SQL = text(
 
 # 근거 원장(disclosure 행) upsert. 원천(disclosures)이 정정으로 갱신될 수 있어
 # DO NOTHING 이 아니라 내용을 덮어쓴다 — 매 실행 전량 재적재가 원장과 원천을 맞춘다.
-# polarity/tense 는 상수 — 공시는 체결된 계약의 확정 사실이다.
+# polarity/tense/impact 는 상수 — 공시는 체결된 공급계약의 확정 사실이므로
+# 공급사(subject)에 호재, 수요사(object)에 중립이다.
 UPSERT_RELATION_SOURCE_SQL = text(
     """
     INSERT INTO relation_sources (
         source_type, rcept_no,
         subject_name, subject_code, relation, object_name, object_code,
-        mentioned_at, item, polarity, tense
+        mentioned_at, item, polarity, tense, subject_impact, object_impact
     )
     VALUES (
         'disclosure', :rcept_no,
         :filer_name, :filer_ticker, 'SUPPLIES_TO', :counterparty_name, :counterparty_ticker,
-        :rcept_dt, :item, 'affirmed', 'past_or_present_fact'
+        :rcept_dt, :item, 'affirmed', 'past_or_present_fact', 'positive', 'neutral'
     )
     ON CONFLICT ON CONSTRAINT uq_relsrc_disclosure DO UPDATE SET
         subject_code = EXCLUDED.subject_code,
@@ -177,7 +181,9 @@ UPSERT_RELATION_SOURCE_SQL = text(
         mentioned_at = EXCLUDED.mentioned_at,
         item = EXCLUDED.item,
         polarity = EXCLUDED.polarity,
-        tense = EXCLUDED.tense
+        tense = EXCLUDED.tense,
+        subject_impact = EXCLUDED.subject_impact,
+        object_impact = EXCLUDED.object_impact
     """
 )
 

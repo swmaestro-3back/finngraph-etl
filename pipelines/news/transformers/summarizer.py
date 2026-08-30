@@ -18,7 +18,7 @@ from pipelines.news.utils.text_utils import (
 SUMMARY_PROMPT_DIRECTORY = Path(__file__).with_name("prompts")
 
 DEFAULT_BODY_LIMIT = 12000
-DEFAULT_MAX_TOKENS = 512
+DEFAULT_MAX_TOKENS = 1024
 DEFAULT_MAX_CONCURRENCY = 4
 DEFAULT_TIMEOUT = 300
 

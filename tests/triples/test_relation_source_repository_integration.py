@@ -71,6 +71,8 @@ def _source_row(subject: str, obj: str) -> dict:
         "source_sentence": "원문 문장",
         "polarity": "affirmed",
         "tense": "past_or_present_fact",
+        "subject_impact": "positive",
+        "object_impact": "neutral",
         "item": "HBM",
     }
 
@@ -110,6 +112,9 @@ def test_fetch_edge_summaries_aggregates_ledger(news_and_company):
     assert summary["disclosure_count"] == 0
     assert summary["first_mentioned_at"] == date(2026, 8, 26)
     assert summary["last_mentioned_at"] == date(2026, 8, 26)
+    # 뉴스 근거뿐인 간선은 공시 배열이 빈 리스트다
+    assert summary["disclosure_rcept_nos"] == []
+    assert summary["disclosure_items"] == []
 
     # 원장에 근거가 없는 키는 결과에 없다
     assert fetch_edge_summaries([(f"없음{marker}", "SUPPLIES_TO", obj)]) == []

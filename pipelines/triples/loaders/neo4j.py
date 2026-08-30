@@ -1,7 +1,8 @@
 """간선 요약의 Neo4j 적재.
 
 근거 상세(evidence, source_sentence, polarity, ...)는 relation_sources 원장(RDB)에
-있고, 간선에는 그래프 탐색·필터에 쓰는 요약 4개만 남는다. 요약값의 원천은
+있고, 간선에는 그래프 탐색·필터에 쓰는 요약값(카운트·기간·공시 근거 배열)만 남는다.
+요약값의 원천은
 entities_relations 뷰(references/rdb.py의 fetch_edge_summaries)라, 간선 속성은
 언제든 뷰 기준으로 재작성해 복구할 수 있다.
 
@@ -25,7 +26,8 @@ async def sync_edge_summaries(summaries: list[dict]) -> int:
 
     summaries 항목 형식은 fetch_edge_summaries 반환값:
     {subject_name, relation, object_name,
-     news_mention_count, disclosure_count, first_mentioned_at, last_mentioned_at}
+     news_mention_count, disclosure_count, first_mentioned_at, last_mentioned_at,
+     disclosure_rcept_nos, disclosure_items, news_ids, news_items}
 
     노드는 정규명으로 MERGE한다 — 시드된 노드(name, ticker)와 정규명이 일치하고,
     미시드 기업은 name만 가진 노드가 생겼다가 시드 시 병합된다. 값을 통째로 SET하는
@@ -55,7 +57,11 @@ async def sync_edge_summaries(summaries: list[dict]) -> int:
             SET r.news_mention_count = row.news_mention_count,
                 r.disclosure_count = row.disclosure_count,
                 r.first_mentioned_at = row.first_mentioned_at,
-                r.last_mentioned_at = row.last_mentioned_at
+                r.last_mentioned_at = row.last_mentioned_at,
+                r.disclosure_rcept_nos = row.disclosure_rcept_nos,
+                r.disclosure_items = row.disclosure_items,
+                r.news_ids = row.news_ids,
+                r.news_items = row.news_items
             RETURN count(r) AS synced
             """,
             {"rows": rows},

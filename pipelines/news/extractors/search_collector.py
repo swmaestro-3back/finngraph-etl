@@ -96,7 +96,6 @@ def iter_search_news_pages(
     max_pages: int | None = None,
     display: int | None = None,
     sort: str | None = None,
-    wait_seconds: int = 10,
 ) -> Iterator[list[dict[str, Any]]]:
 
     if not keyword or not keyword.strip():
@@ -158,23 +157,3 @@ def iter_search_news_pages(
 
     finally:
         session.close()
-
-
-def search_news(
-    keyword: str,
-    max_pages: int | None = None,
-    display: int | None = None,
-    sort: str | None = None,
-) -> list[dict[str, Any]]:
-
-    items: list[dict[str, Any]] = []
-
-    for page_items in iter_search_news_pages(
-        keyword=keyword,
-        max_pages=max_pages,
-        display=display,
-        sort=sort,
-    ):
-        items.extend(page_items)
-
-    return items

@@ -24,6 +24,17 @@ Polarity = Literal[
     "terminated",  # the relation held once and has since been cancelled
 ]
 
+# Per-entity impact of the event (UI labels: 호재 / 악재 / 중립).
+# Judged per side — the same event can be positive for one endpoint and neutral
+# for the other, so a frame carries one label for subject and one for object.
+# Priority: a stock-price reaction stated in the article for that company wins
+# (주가그래프와 나란히 노출되므로), otherwise the event's fundamental impact.
+Impact = Literal[
+    "positive",  # 호재 for that company
+    "negative",  # 악재 for that company
+    "neutral",  # immaterial, ambiguous, or merely descriptive
+]
+
 
 # ==============================================================================
 # EntityExtractor
@@ -73,7 +84,10 @@ class RawRelation(BaseModel):
     item: str | None = Field(
         default=None,
         description=(
-            "Must exactly match an entity from the provided NER results."
+            "The full noun phrase naming the specific supplied product/material/service, "
+            "copied verbatim from the article with its modifiers (e.g. '하이니켈 양극재', "
+            "'메탈 플레이트 내 레이저 에칭') — never a clause, never a bare category noun "
+            "like '장비'. Not constrained by the NER entity list. "
             "Leave null if the predicate has no item argument, or if the text does not name "
             "a specific item and the item argument is marked [optional]."
         ),
@@ -161,6 +175,20 @@ class RawAnnotation(BaseModel):
             "past_or_present_fact, future_or_planned, or modal_possibility."
         )
     )
+    subject_impact: Impact = Field(
+        description=(
+            "Impact of this event on the SUBJECT company: if the article states that "
+            "company's stock-price reaction to this event, follow the move's direction; "
+            "otherwise judge the fundamental impact from that company's own perspective."
+        )
+    )
+    object_impact: Impact = Field(
+        description=(
+            "Impact of this event on the OBJECT company: if the article states that "
+            "company's stock-price reaction to this event, follow the move's direction; "
+            "otherwise judge the fundamental impact from that company's own perspective."
+        )
+    )
 
 
 class RawAnnotationList(BaseModel):
@@ -182,6 +210,8 @@ class RelationFrame(CandidateFrame):
     )
     polarity: Polarity = Field(description="affirmed / denied / terminated")
     tense: Tense = Field(description="past_or_present_fact / future_or_planned / modal_possibility")
+    subject_impact: Impact = Field(description="positive / negative / neutral (subject 관점)")
+    object_impact: Impact = Field(description="positive / negative / neutral (object 관점)")
 
 
 # ==============================================================================
@@ -200,3 +230,5 @@ class Triplet(BaseModel):
     evidence: str = Field(description="맥락이 복원된 자립적 근거 문장 (UI 노출용)")
     polarity: Polarity = Field(description="affirmed / denied / terminated")
     tense: Tense = Field(description="past_or_present_fact / future_or_planned / modal_possibility")
+    subject_impact: Impact = Field(description="주체 기업 관점 호재/악재/중립")
+    object_impact: Impact = Field(description="객체 기업 관점 호재/악재/중립")

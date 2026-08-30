@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 try:
-    import pendulum
     from airflow.sdk import dag, task
 except ImportError:
-    pendulum = None
     dag = None
     task = None
 
@@ -16,7 +14,7 @@ if dag and task:
 
     @dag(
         dag_id="news_pipeline",
-        start_date=pendulum.datetime(2026, 1, 1, tz="Asia/Seoul"),
+        start_date=datetime(2026, 1, 1),
         # 뉴스가 뜸한 심야(22~05시)는 건너뛴다. 06~21시 매 정각, KST 기준.
         schedule="0 6-21 * * *",
         catchup=False,

@@ -33,6 +33,7 @@ from pipelines.disclosures.loaders.postgres import (
     upsert_relation_sources,
 )
 from pipelines.disclosures.models import DisclosureRecord
+from pipelines.triples.references.rdb import fetch_edge_summaries
 
 pytestmark = pytest.mark.integration
 
@@ -84,6 +85,8 @@ def make_record(
     rcept_dt: date = date(2026, 8, 21),
     is_correction: bool = False,
     correction_target_date: date | None = None,
+    contract_type: str | None = "기타 판매ㆍ공급계약",
+    contract_name: str | None = "테스트 계약",
 ) -> DisclosureRecord:
     return DisclosureRecord(
         rcept_no=rcept_no,
@@ -100,8 +103,8 @@ def make_record(
         rcept_dt=rcept_dt,
         flr_nm="파이테스트",
         link=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
-        contract_type="기타 판매ㆍ공급계약",
-        contract_name="테스트 계약",
+        contract_type=contract_type,
+        contract_name=contract_name,
         counterparty="테스트상대",
         counterparty_corp_name=None,
         counterparty_corp_code=None,
@@ -174,8 +177,39 @@ def test_fetch_supply_edges_requires_both_tickers() -> None:
     assert edge.filer_name == TEST_TICKERS["999901"]
     assert edge.counterparty_ticker == "999902"
     assert edge.counterparty_name == TEST_TICKERS["999902"]
-    assert edge.item == "테스트 계약"  # contract_name 우선
+    assert edge.item == "기타 판매ㆍ공급계약: 테스트 계약"  # 둘 다 있으면 "구분: 계약명"
     assert edge.rcept_dt == date(2026, 8, 21)
+
+
+def test_fetch_supply_edges_item_combination() -> None:
+    with session_scope() as session:
+        upsert_disclosures(
+            session,
+            [
+                make_record(TEST_RCEPT_NOS[0], 100, ticker="999901", counterparty_ticker="999902"),
+                make_record(
+                    TEST_RCEPT_NOS[1],
+                    100,
+                    ticker="999901",
+                    counterparty_ticker="999902",
+                    contract_type=None,
+                ),
+                make_record(
+                    TEST_RCEPT_NOS[2],
+                    100,
+                    ticker="999901",
+                    counterparty_ticker="999902",
+                    contract_name=None,
+                ),
+            ],
+        )
+
+    with session_scope() as session:
+        items = {e.rcept_no: e.item for e in fetch_supply_edges(session)}
+
+    assert items[TEST_RCEPT_NOS[0]] == "기타 판매ㆍ공급계약: 테스트 계약"
+    assert items[TEST_RCEPT_NOS[1]] == "테스트 계약"  # contract_type 없음 → 계약명만
+    assert items[TEST_RCEPT_NOS[2]] == "기타 판매ㆍ공급계약"  # contract_name 없음 → 구분만
 
 
 def test_upsert_relation_sources_is_idempotent_and_overwrites() -> None:
@@ -196,7 +230,7 @@ def test_upsert_relation_sources_is_idempotent_and_overwrites() -> None:
                 """
                 SELECT source_type, subject_name, relation, object_name,
                        subject_code, object_code, mentioned_at, item,
-                       polarity, tense
+                       polarity, tense, subject_impact, object_impact
                   FROM relation_sources
                  WHERE rcept_no = :rcept_no
                 """
@@ -213,10 +247,54 @@ def test_upsert_relation_sources_is_idempotent_and_overwrites() -> None:
     assert row.subject_code == "999901"
     assert row.object_code == "999902"
     assert row.mentioned_at == date(2026, 8, 21)
-    assert row.item == "테스트 계약"
-    # 공시는 확정 사실 — 상수로 들어간다
+    assert row.item == "기타 판매ㆍ공급계약: 테스트 계약"
+    # 공시는 확정 사실 — 상수로 들어간다 (공급계약 체결 = 공급사 호재·수요사 중립)
     assert row.polarity == "affirmed"
     assert row.tense == "past_or_present_fact"
+    assert row.subject_impact == "positive"
+    assert row.object_impact == "neutral"
+
+
+def test_fetch_edge_summaries_includes_disclosure_arrays() -> None:
+    """공시 근거의 rcept_no·item 이 간선 요약의 배열(mentioned_at 순)로 집계된다."""
+
+    with session_scope() as session:
+        upsert_disclosures(
+            session,
+            [
+                make_record(
+                    TEST_RCEPT_NOS[0],
+                    100,
+                    ticker="999901",
+                    counterparty_ticker="999902",
+                    rcept_dt=date(2026, 8, 1),
+                    contract_type=None,
+                    contract_name="계약A",
+                ),
+                make_record(
+                    TEST_RCEPT_NOS[1],
+                    200,
+                    ticker="999901",
+                    counterparty_ticker="999902",
+                    rcept_dt=date(2026, 8, 21),
+                    contract_type=None,
+                    contract_name="계약B",
+                ),
+            ],
+        )
+        edges = fetch_supply_edges(session)
+        edges = [e for e in edges if e.rcept_no in TEST_RCEPT_NOS]
+        upsert_relation_sources(session, edges)
+
+    summaries = fetch_edge_summaries(
+        [(TEST_TICKERS["999901"], "SUPPLIES_TO", TEST_TICKERS["999902"])]
+    )
+
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary["disclosure_count"] == 2
+    assert summary["disclosure_rcept_nos"] == [TEST_RCEPT_NOS[0], TEST_RCEPT_NOS[1]]
+    assert summary["disclosure_items"] == ["계약A", "계약B"]
 
 
 def _chain_records() -> list[DisclosureRecord]:

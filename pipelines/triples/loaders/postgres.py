@@ -22,7 +22,8 @@ INSERT_RELATION_SOURCE_SQL = text(
         relation,
         object_name, object_type, object_code,
         evidence, mentioned_at, item,
-        source_sentence, polarity, tense
+        source_sentence, polarity, tense,
+        subject_impact, object_impact
     )
     VALUES (
         'news', :news_id,
@@ -30,7 +31,8 @@ INSERT_RELATION_SOURCE_SQL = text(
         :relation,
         :object_name, :object_type, :object_code,
         :evidence, :mentioned_at, :item,
-        :source_sentence, :polarity, :tense
+        :source_sentence, :polarity, :tense,
+        :subject_impact, :object_impact
     )
     ON CONFLICT ON CONSTRAINT uq_relsrc_news DO NOTHING;
     """
