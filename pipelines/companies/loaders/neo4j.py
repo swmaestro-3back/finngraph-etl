@@ -1,10 +1,5 @@
 """
 companies를 원천으로 상장사만 Neo4j Company 노드로 시드한다.
-
-비상장 법인은 넣지 않는다 — 상장사와 동명인 비상장 법인이 586건 있어, 넣으면
-트리플의 name 기반 MERGE가 동명 노드 전부에 간선을 붙이는 모호성이 생긴다.
-상장사끼리는 이름 중복이 없으므로 name을 MERGE 키로 쓸 수 있고(name 유니크 제약과도
-일치), 뉴스 트리플이 이름만으로 만들어 둔 노드도 같은 MERGE로 흡수된다.
 """
 
 from __future__ import annotations
@@ -43,8 +38,10 @@ SET old.name = row.name
 #   후  (:Company {name: "삼성전자", ticker: "005930", ...})-[:SUPPLIES]->(:Company)
 #       이 단계가 없으면 트리플 code 조회(references/graph.py)가 계속 NULL로 남는다.
 #
-# 상장 여부 판별은 is_listed 속성으로 한다. 시장 라벨(:KOSPI/:KOSDAQ)은 원천이
-# companies로 바뀌며 market 정보가 없어져 더는 붙이지 않는다.
+# 상장 여부 판별은 is_listed 속성으로 한다. 시장 구분은 라벨(:KOSPI/:KOSDAQ)이 아니라
+# market 속성("KOSPI"/"KOSDAQ")으로 담는다 — 라벨은 Cypher에서 파라미터화가 안 되고,
+# 이전상장(KOSDAQ→KOSPI)에 REMOVE가 따로 필요하지만 속성은 SET 하나로 갈아탄다.
+# 원천은 stocks라 짝이 없는 행은 market이 null로 오고, SET이 속성을 지운다.
 UPSERT_COMPANIES_CYPHER = """
 UNWIND $rows AS row
 MERGE (c:Company {name: row.name})
@@ -52,7 +49,8 @@ SET c.company_id = row.company_id,
     c.ticker = row.ticker,
     c.corp_code = row.corp_code,
     c.is_listed = row.is_listed,
-    c.country = row.country
+    c.country = row.country,
+    c.market = row.market
 """
 
 # [3] 상장폐지 — 이번 배치에 없는 ticker 보유 노드를 제거하고 간선까지 제거
@@ -71,8 +69,8 @@ COUNT_SEEDED_CYPHER = "MATCH (c:Company) WHERE c.ticker IS NOT NULL RETURN count
 
 
 async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:
-    """상장 법인 (company_id, name, ticker, corp_code, is_listed, country)를 Neo4j
-    Company 노드에 upsert하고 시드 수를 반환한다.
+    """상장 법인 (company_id, name, ticker, corp_code, is_listed, country, market)를
+    Neo4j Company 노드에 upsert하고 시드 수를 반환한다.
 
     is_listed=false(비상장·상장폐지) 행은 여기서 걸러 넣지 않는다. 사명 변경은 같은
     ticker 노드의 name을 바꿔 이력을 승계하고, 상장폐지는 노드를 삭제한다.
