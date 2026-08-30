@@ -4,6 +4,7 @@ companies를 원천으로 상장사만 Neo4j Company 노드로 시드한다.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 
 from pipelines.common.clients.neo4j import neo4j_database
@@ -38,10 +39,6 @@ SET old.name = row.name
 #   후  (:Company {name: "삼성전자", ticker: "005930", ...})-[:SUPPLIES]->(:Company)
 #       이 단계가 없으면 트리플 code 조회(references/graph.py)가 계속 NULL로 남는다.
 #
-# 상장 여부 판별은 is_listed 속성으로 한다. 시장 구분은 라벨(:KOSPI/:KOSDAQ)이 아니라
-# market 속성("KOSPI"/"KOSDAQ")으로 담는다 — 라벨은 Cypher에서 파라미터화가 안 되고,
-# 이전상장(KOSDAQ→KOSPI)에 REMOVE가 따로 필요하지만 속성은 SET 하나로 갈아탄다.
-# 원천은 stocks라 짝이 없는 행은 market이 null로 오고, SET이 속성을 지운다.
 UPSERT_COMPANIES_CYPHER = """
 UNWIND $rows AS row
 MERGE (c:Company {name: row.name})
@@ -50,15 +47,33 @@ SET c.company_id = row.company_id,
     c.corp_code = row.corp_code,
     c.is_listed = row.is_listed,
     c.country = row.country,
-    c.market = row.market
+    c.market = row.market,
+    c.krx100 = row.krx100,
+    c.krx300 = row.krx300,
+    c.kosdaq150 = row.kosdaq150
 """
 
-# [3] 상장폐지 — 이번 배치에 없는 ticker 보유 노드를 제거하고 간선까지 제거
-# 예) 009540이 이번 배치에 없음(상장폐지)
-#   전  (:Company {name: "...", ticker: "009540"})-[:SUPPLIES]->(:Company {name: "..."})
-#   후  (없음)  — 노드와 간선 모두 삭제, 상대편 노드는 남는다.
-#
-# ticker가 없는 노드(트리플이 이름만으로 만든 것)는 건드리지 않는다.
+MARKET_LABELS = ("KOSPI", "KOSDAQ")
+
+
+def build_upsert_cypher(market: str | None) -> str:
+    """해당 시장 라벨을 리터럴로 박은 upsert Cypher를 만든다.
+
+    부여하지 않는 시장 라벨은 항상 REMOVE 한다. 이전상장(KOSDAQ→KOSPI)이나 원천에
+    짝이 없어진 경우 옛 라벨이 남으면 한 노드가 (:KOSPI)와 (:KOSDAQ)를 동시에
+    만족해 시장별 스캔이 중복 결과를 낸다.
+    """
+
+    stale = [label for label in MARKET_LABELS if label != market]
+
+    clauses = []
+    if market:
+        clauses.append(f"SET c:{market}")
+    clauses.append("REMOVE c" + "".join(f":{label}" for label in stale))
+
+    return UPSERT_COMPANIES_CYPHER + "\n".join(clauses) + "\n"
+
+
 DELETE_DELISTED_CYPHER = """
 MATCH (c:Company)
 WHERE c.ticker IS NOT NULL AND NOT c.ticker IN $tickers
@@ -69,8 +84,8 @@ COUNT_SEEDED_CYPHER = "MATCH (c:Company) WHERE c.ticker IS NOT NULL RETURN count
 
 
 async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:
-    """상장 법인 (company_id, name, ticker, corp_code, is_listed, country, market)를
-    Neo4j Company 노드에 upsert하고 시드 수를 반환한다.
+    """상장 법인 (company_id, name, ticker, corp_code, is_listed, country, market,
+    krx100, krx300, kosdaq150)를 Neo4j Company 노드에 upsert하고 시드 수를 반환한다.
 
     is_listed=false(비상장·상장폐지) 행은 여기서 걸러 넣지 않는다. 사명 변경은 같은
     ticker 노드의 name을 바꿔 이력을 승계하고, 상장폐지는 노드를 삭제한다.
@@ -84,8 +99,16 @@ async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:
 
     tickers = [row["ticker"] for row in listed]
 
+    # 라벨을 리터럴로 박아야 해서 시장별로 나눠 실행한다. 원천 market이 알 수 없는
+    # 값이면 None 묶음으로 보내 라벨 없이(속성만) 적재한다.
+    by_market: dict[str | None, list[dict[str, Any]]] = defaultdict(list)
+    for row in listed:
+        market = row["market"] if row["market"] in MARKET_LABELS else None
+        by_market[market].append(row)
+
     await neo4j_database.execute(RENAME_COMPANIES_CYPHER, {"rows": listed})
-    await neo4j_database.execute(UPSERT_COMPANIES_CYPHER, {"rows": listed})
+    for market, group in by_market.items():
+        await neo4j_database.execute(build_upsert_cypher(market), {"rows": group})
     await neo4j_database.execute(DELETE_DELISTED_CYPHER, {"tickers": tickers})
 
     records = await neo4j_database.execute(COUNT_SEEDED_CYPHER)

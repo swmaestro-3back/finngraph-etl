@@ -29,6 +29,10 @@ class StockTicker:
         preferred_stock (bool): 우선주 여부.
         etp (bool): ETP/ETF/ETN 등 상품성 종목 여부.
         spac (bool): SPAC 여부.
+        krx100 (bool): KRX100 지수 편입 여부.
+        krx300 (bool): KRX300 지수 편입 여부.
+        kosdaq150 (bool): KOSDAQ150 지수 편입 여부. KOSPI master에는 이 필드가 없어
+            KOSPI 종목은 항상 False다.
         listed_shares (int | None): 상장주식수. 주 단위로 정규화한 값.
             master 원본은 천주 단위이므로 파싱 단계에서 1000을 곱한다.
             시가총액·EPS·BPS 계산의 분모라 단위를 틀리면 결과가 1000배 어긋난다.
@@ -57,6 +61,9 @@ class StockTicker:
     preferred_stock: bool = False
     etp: bool = False
     spac: bool = False
+    krx100: bool = False
+    krx300: bool = False
+    kosdaq150: bool = False
     listed_shares: int | None = None
     par_value: int | None = None
     capital: int | None = None
