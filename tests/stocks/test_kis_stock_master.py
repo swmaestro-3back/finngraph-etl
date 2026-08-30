@@ -31,6 +31,8 @@ class KisStockMasterTest(unittest.TestCase):
                 KOSPI_SPEC.preferred_stock_index: "0",
                 KOSPI_SPEC.etp_index: "N",
                 KOSPI_SPEC.spac_index: "N",
+                KOSPI_SPEC.krx100_index: "Y",
+                KOSPI_SPEC.krx300_index: "Y",
                 KOSPI_SPEC.listed_shares_index: "000000005846278",
                 KOSPI_SPEC.par_value_index: "000000000100",
                 KOSPI_SPEC.capital_index: "000000000778046685000",
@@ -52,6 +54,10 @@ class KisStockMasterTest(unittest.TestCase):
         self.assertFalse(ticker.preferred_stock)
         self.assertFalse(ticker.etp)
         self.assertFalse(ticker.spac)
+        self.assertTrue(ticker.krx100)
+        self.assertTrue(ticker.krx300)
+        # KOSPI master에는 KOSDAQ150 필드가 없다
+        self.assertFalse(ticker.kosdaq150)
         # master 상장주수는 천주 단위 -> 주 단위로 정규화되어야 한다
         self.assertEqual(ticker.listed_shares, 5_846_278 * LISTED_SHARES_UNIT)
         self.assertEqual(ticker.par_value, 100)
@@ -88,6 +94,9 @@ class KisStockMasterTest(unittest.TestCase):
         self.assertIsNone(ticker.listed_shares)
         self.assertIsNone(ticker.par_value)
         self.assertIsNone(ticker.capital)
+        self.assertFalse(ticker.krx100)
+        self.assertFalse(ticker.krx300)
+        self.assertFalse(ticker.kosdaq150)
 
     def test_parse_kosdaq_master_row_flags(self) -> None:
         """KOSDAQ 데이터 파싱 테스트"""
@@ -104,6 +113,9 @@ class KisStockMasterTest(unittest.TestCase):
                 KOSDAQ_SPEC.preferred_stock_index: "1",
                 KOSDAQ_SPEC.etp_index: "0",
                 KOSDAQ_SPEC.spac_index: "Y",
+                KOSDAQ_SPEC.krx100_index: "N",
+                KOSDAQ_SPEC.krx300_index: "Y",
+                KOSDAQ_SPEC.kosdaq150_index: "Y",
             },
         )
 
@@ -117,6 +129,9 @@ class KisStockMasterTest(unittest.TestCase):
         self.assertTrue(ticker.preferred_stock)
         self.assertFalse(ticker.etp)
         self.assertTrue(ticker.spac)
+        self.assertFalse(ticker.krx100)
+        self.assertTrue(ticker.krx300)
+        self.assertTrue(ticker.kosdaq150)
 
     def test_parse_master_row_rejects_short_row(self) -> None:
         with self.assertRaisesRegex(ValueError, "row is too short"):

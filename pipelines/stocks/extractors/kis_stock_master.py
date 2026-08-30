@@ -326,6 +326,10 @@ class MarketMasterSpec:
         preferred_stock_index (int): fields 배열에서 우선주 여부 필드 위치.
         etp_index (int): fields 배열에서 ETP/ETF/ETN 여부 필드 위치.
         spac_index (int): fields 배열에서 SPAC 여부 필드 위치.
+        krx100_index (int): fields 배열에서 KRX100 편입 여부 필드 위치.
+        krx300_index (int): fields 배열에서 KRX300 편입 여부 필드 위치.
+        kosdaq150_index (int | None): fields 배열에서 KOSDAQ150 편입 여부 필드 위치.
+            KOSPI master에는 해당 필드가 없어 None이고, 그때 값은 False로 둔다.
         listed_shares_index (int): fields 배열에서 상장주수 필드 위치. 값은 천주 단위다.
         par_value_index (int): fields 배열에서 액면가 필드 위치. 원 단위.
         capital_index (int): fields 배열에서 자본금 필드 위치. 원 단위.
@@ -343,6 +347,9 @@ class MarketMasterSpec:
     preferred_stock_index: int
     etp_index: int
     spac_index: int
+    krx100_index: int
+    krx300_index: int
+    kosdaq150_index: int | None
     listed_shares_index: int
     par_value_index: int
     capital_index: int
@@ -365,6 +372,10 @@ KOSPI_SPEC = MarketMasterSpec(
     preferred_stock_index=54,
     etp_index=12,
     spac_index=19,
+    krx100_index=14,
+    krx300_index=57,
+    # KOSPI master에는 KOSDAQ150 필드가 없다(KOSDAQ 전용 지수).
+    kosdaq150_index=None,
     listed_shares_index=50,
     par_value_index=48,
     capital_index=51,
@@ -383,6 +394,9 @@ KOSDAQ_SPEC = MarketMasterSpec(
     preferred_stock_index=49,
     etp_index=8,
     spac_index=14,
+    krx100_index=9,
+    krx300_index=52,
+    kosdaq150_index=25,
     listed_shares_index=45,
     par_value_index=43,
     capital_index=46,
@@ -470,6 +484,9 @@ def parse_master_row(
         preferred_stock=_is_flagged(fields[spec.preferred_stock_index]),
         etp=_is_flagged(fields[spec.etp_index]),
         spac=_is_flagged(fields[spec.spac_index]),
+        krx100=_is_flagged(fields[spec.krx100_index]),
+        krx300=_is_flagged(fields[spec.krx300_index]),
+        kosdaq150=_is_flagged_at(fields, spec.kosdaq150_index),
         listed_shares=_parse_listed_shares(fields[spec.listed_shares_index]),
         par_value=_parse_int(fields[spec.par_value_index]),
         capital=_parse_int(fields[spec.capital_index]),
@@ -509,6 +526,11 @@ def _parse_date(value: str) -> date | None:
 
 def _is_flagged(value: str) -> bool:
     return value.strip().upper() not in ("", "0", "N")
+
+
+def _is_flagged_at(fields: list[str], index: int | None) -> bool:
+    """시장에 따라 없을 수 있는 플래그 필드를 읽는다. 필드가 없으면(None) False."""
+    return False if index is None else _is_flagged(fields[index])
 
 
 def _parse_int(value: str) -> int | None:

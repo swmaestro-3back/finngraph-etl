@@ -132,6 +132,9 @@ CREATE TABLE IF NOT EXISTS stocks (
     preferred_stock      BOOLEAN NOT NULL DEFAULT false,   -- 이하 3종: 법인 이관·서비스 대상 필터
     etp                  BOOLEAN NOT NULL DEFAULT false,
     spac                 BOOLEAN NOT NULL DEFAULT false,
+    krx100               BOOLEAN NOT NULL DEFAULT false,
+    krx300               BOOLEAN NOT NULL DEFAULT false,
+    kosdaq150            BOOLEAN NOT NULL DEFAULT false,   -- KOSPI 종목은 항상 false
     inactive_at          TIMESTAMPTZ,
     raw_attributes       JSONB,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
