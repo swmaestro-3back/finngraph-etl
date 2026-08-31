@@ -36,3 +36,5 @@ tests/triples/*
 docs/
 pipelines/triples/ontology
 prompts/
+
+scripts/dev-tunnel.sh
