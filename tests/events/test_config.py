@@ -23,7 +23,7 @@ def test_defaults_without_env_file(monkeypatch):
     assert settings.max_items_per_run == 50
     assert settings.llm_max_concurrency == 4
     assert settings.lead_chars == 600
-    assert settings.title_max_chars == 60
+    assert settings.title_max_chars == 30
 
 
 def test_env_alias_overrides(monkeypatch):
