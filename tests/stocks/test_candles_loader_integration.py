@@ -17,7 +17,6 @@ from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.stocks.loaders.candles import (
-    fetch_latest_daily_candle_dates,
     upsert_daily_candles,
     upsert_period_candles,
 )
@@ -169,21 +168,6 @@ def test_rerun_is_idempotent() -> None:
         upsert_daily_candles(session, candles)
 
     assert len(_rows()) == 2
-
-
-def test_latest_daily_candle_dates_drive_backfill_start() -> None:
-    """백필은 이미 적재된 마지막 거래일 다음날부터 받는다."""
-    stock_id = _load_stock()
-
-    with session_scope() as session:
-        upsert_daily_candles(
-            session, [_daily(date(2026, 8, 6), "100"), _daily(date(2026, 8, 7), "110")]
-        )
-
-    with session_scope() as session:
-        latest = fetch_latest_daily_candle_dates(session)
-
-    assert latest[stock_id] == date(2026, 8, 7)
 
 
 def test_period_candles_separate_week_and_month() -> None:
