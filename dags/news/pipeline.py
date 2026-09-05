@@ -14,7 +14,6 @@ except ImportError:
 
 
 if dag and task:
-    # 클러스터가 생성·갱신됐다는 신호. events_pipeline 이 구독한다.
     news_clusters_updated = Asset("etl://news/clusters")
 
     @dag(
