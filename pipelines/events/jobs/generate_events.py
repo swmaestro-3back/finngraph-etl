@@ -171,17 +171,11 @@ async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[s
 
 
 def run() -> dict[str, int]:
-    def make_extractor() -> Any:
-        from pipelines.triples.nodes.entity_extractor import EntityExtractor
+    from pipelines.events.transformers.generator import EventGenerator
+    from pipelines.triples.nodes.entity_extractor import EntityExtractor
 
-        return EntityExtractor()
-
-    def make_generator() -> Any:
-        from pipelines.events.transformers.generator import EventGenerator
-
-        return EventGenerator()
-
-    stats = summarize_stats(asyncio.run(_run(make_extractor, make_generator)))
+    # 둘 다 인자 없는 생성자라 클래스 자체가 팩토리다. 생성은 _run 안에서 필요할 때 일어난다.
+    stats = summarize_stats(asyncio.run(_run(EntityExtractor, EventGenerator)))
 
     print("\n" + "=" * 70)
     print("Event 생성 결과 (generate_events)")

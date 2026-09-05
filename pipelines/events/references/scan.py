@@ -2,7 +2,10 @@
 
 sync_events 와 generate_events 가 같은 조건·같은 순서로 후보를 골라야 하므로 한 곳에 둔다.
 두 job 이 각자 호출해 자기 몫(기존 Event = sync, 없는 클러스터 = generate)만 취한다 —
-task 사이에 XCom 을 두지 않기 위한 선택이다. 읽기만 하므로 references/ 에 둔다.
+task 사이에 XCom 을 두지 않기 위한 선택이다.
+
+읽기만 하므로 references/ 에 두지만, 다른 references 모듈과 달리 두 저장소 조회와 순수
+분기(plan_actions)를 합성하는 유일한 예외다 — 합성이 references 의 일반 규칙은 아니다.
 
 호출자는 `async with neo4j_database:` 를 열고 있어야 한다.
 """
