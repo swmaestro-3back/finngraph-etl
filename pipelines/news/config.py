@@ -29,6 +29,10 @@ class NewsSettings(BaseSettings):
         validation_alias="NEWS_CLUSTER_DESCRIPTION_WEIGHT",
     )
     cluster_max_articles: int = Field(default=3, validation_alias="NEWS_CLUSTER_MAX_ARTICLES")
+    # 배치 간 클러스터링: 마지막 기사 보도일이 이 일수 안인 클러스터만 새 기사의 합류 후보다.
+    cluster_window_days: int = Field(default=14, validation_alias="NEWS_CLUSTER_WINDOW_DAYS")
+    # news_clusters.keywords 에 남길 상위 토큰 수 (표시용).
+    cluster_keyword_count: int = Field(default=6, validation_alias="NEWS_CLUSTER_KEYWORD_COUNT")
 
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
 
