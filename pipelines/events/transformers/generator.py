@@ -1,8 +1,5 @@
-"""클러스터 제목·당사자 생성.
-
-render_prompt_input / validate_draft 는 순수 함수라 프롬프트 없이 import 된다.
-EventTitler 는 생성자 안에서 프롬프트와 langchain-aws 를 지연 import 한다 — prompts/ 가
-gitignore 라 CI 에는 없기 때문이다(triples 노드와 같은 사정).
+"""
+새 EVENT 생성 시 사용되는 제목/당사자 추출용 LLM 스테이지
 """
 
 from __future__ import annotations
@@ -21,8 +18,8 @@ DEFAULT_MAX_TOKENS = 256
 RETRY_ATTEMPTS = 2
 
 
-def render_prompt_input(dated_texts: list[tuple[date | None, str]], candidates: list[str]) -> str:
-    """`[기사 N] 날짜 | 제목\\n본문` 블록들과 후보 목록을 한 문자열로 만든다."""
+def build_prompt_input(dated_texts: list[tuple[date | None, str]], candidates: list[str]) -> str:
+    """LLM에게 입력할 Context 생성"""
 
     blocks: list[str] = []
     for index, (day, text) in enumerate(dated_texts, start=1):
@@ -35,17 +32,16 @@ def render_prompt_input(dated_texts: list[tuple[date | None, str]], candidates: 
 
 
 def validate_draft(draft: EventDraft, candidates: list[str], max_chars: int) -> EventDraft:
-    """LLM 출력을 후보 집합과 제목 규칙으로 검증한 새 EventDraft 를 돌려준다.
-
-    후보 밖 이름은 버리고 경고만 남긴다(실패 아님). 제목은 공백 정리와 선두 브라켓 태그
-    제거 뒤 비어 있거나 max_chars 를 넘으면 ValueError 다.
+    """
+    LLM이 출력한 EventDarft 검증
     """
 
     allowed = set(candidates)
     companies: list[str] = []
     for name in draft.companies:
+        # 후보에 존재하지 않았던 기업명은 드랍
         if name not in allowed:
-            logger.warning("후보 밖 기업명을 버림: %s", name)
+            logger.warning("후보 밖 기업명 드랍: %s", name)
             continue
         if name in companies:
             continue
@@ -60,14 +56,12 @@ def validate_draft(draft: EventDraft, candidates: list[str], max_chars: int) -> 
     return EventDraft(companies=companies, title=title)
 
 
-class EventTitler:
+class EventGenerator:
     def __init__(self, max_tokens: int = DEFAULT_MAX_TOKENS):
         from langchain_aws import ChatBedrockConverse
 
-        from pipelines.events.prompts.event_title import PROMPT
+        from pipelines.events.prompts.event import PROMPT
 
-        # langchain-aws 는 AWS_BEARER_TOKEN_BEDROCK 을 os.environ 에서 읽고 Settings 는
-        # .env 만 읽는다. 로컬 run_job 처럼 .env 가 export 되지 않은 환경에서 필요하다.
         ensure_bedrock_token()
         settings = get_settings()
         model = ChatBedrockConverse(
@@ -75,18 +69,18 @@ class EventTitler:
             region_name=settings.bedrock_region,
             temperature=0,
             max_tokens=max_tokens,
-            # 넘기지 않으면 Settings 의 타임아웃은 boto3 경로에만 적용되고 여기서는 botocore
-            # 기본값이 쓰인다.
             timeout=settings.bedrock_request_timeout,
         )
+
+        # 출력스키마 강제
         structured = model.with_structured_output(schema=EventDraft, method="json_schema")
-        # 러너블 수준 재시도. botocore 재시도와는 별개다.
+
         self._chain = (PROMPT | structured).with_retry(stop_after_attempt=RETRY_ATTEMPTS)
 
     async def draft(
         self, dated_texts: list[tuple[date | None, str]], candidates: list[str]
     ) -> EventDraft:
         result = await self._chain.ainvoke(
-            {"articles": render_prompt_input(dated_texts, candidates)}
+            {"articles": build_prompt_input(dated_texts, candidates)}
         )
         return result

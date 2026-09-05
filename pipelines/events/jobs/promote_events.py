@@ -3,7 +3,7 @@
 후보 조회(RDB) → 존재 조회(Neo4j) → 분기 → 갱신(전량, LLM 없음) → 생성(후보 추출 →
 상한 → LLM → 검증 → 쓰기) → 집계. 클러스터 하나가 실패 단위다. RDB 에는 아무것도 쓰지 않는다.
 
-EntityExtractor(비공개 gazetteer)와 EventTitler(비공개 프롬프트)는 run() 안에서 지연
+EntityExtractor(비공개 gazetteer)와 EventGenerator(비공개 프롬프트)는 run() 안에서 지연
 import 한다 — 헬퍼 함수들이 CI 에서 import 되게 하기 위해서다.
 """
 
@@ -26,9 +26,9 @@ from pipelines.events.references.rdb import (
     fetch_promotable_clusters,
 )
 from pipelines.events.transformers.candidates import extract_company_candidates
+from pipelines.events.transformers.generator import validate_draft
 from pipelines.events.transformers.planner import plan_actions
 from pipelines.events.transformers.source_text import member_date, member_source_text
-from pipelines.events.transformers.titler import validate_draft
 
 logger = get_logger(__name__)
 
@@ -75,7 +75,7 @@ async def create_one(
     members: list[MemberArticle],
     dated_texts: DatedTexts,
     candidates: list[str],
-    titler: Any,
+    generator: Any,
     semaphore: asyncio.Semaphore,
     title_max_chars: int,
 ) -> str:
@@ -86,7 +86,7 @@ async def create_one(
 
     try:
         async with semaphore:
-            draft = await titler.draft(dated_texts, candidates)
+            draft = await generator.draft(dated_texts, candidates)
         draft = validate_draft(draft, candidates, title_max_chars)
         record = EventRecord(
             **cluster.model_dump(),
@@ -123,7 +123,7 @@ def summarize_stats(stats: dict[str, int]) -> dict[str, int]:
     return stats
 
 
-async def _run(extractor: Any, titler: Any) -> dict[str, int]:
+async def _run(extractor: Any, generator: Any) -> dict[str, int]:
     settings = get_event_settings()
     stats = dict.fromkeys(STAT_KEYS, 0)
 
@@ -178,7 +178,7 @@ async def _run(extractor: Any, titler: Any) -> dict[str, int]:
                     members,
                     dated_texts,
                     candidates,
-                    titler,
+                    generator,
                     semaphore,
                     settings.title_max_chars,
                 )
@@ -197,10 +197,10 @@ async def _run(extractor: Any, titler: Any) -> dict[str, int]:
 
 
 def run() -> dict[str, int]:
-    from pipelines.events.transformers.titler import EventTitler
+    from pipelines.events.transformers.generator import EventGenerator
     from pipelines.triples.nodes.entity_extractor import EntityExtractor
 
-    stats = summarize_stats(asyncio.run(_run(EntityExtractor(), EventTitler())))
+    stats = summarize_stats(asyncio.run(_run(EntityExtractor(), EventGenerator())))
 
     print("\n" + "=" * 70)
     print("뉴스 클러스터 → Event 승격 결과")

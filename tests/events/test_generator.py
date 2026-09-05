@@ -8,16 +8,16 @@ from datetime import date
 import pytest
 
 from pipelines.events.models import EventDraft
-from pipelines.events.transformers.titler import render_prompt_input, validate_draft
+from pipelines.events.transformers.generator import build_prompt_input, validate_draft
 
 
-def test_render_prompt_input_blocks_and_candidates():
+def test_build_prompt_input_blocks_and_candidates():
     dated_texts = [
         (date(2026, 9, 1), "삼성전자, 4조원 유상증자 결정\n삼성전자가 결의했다."),
         (None, "삼성전자 주가 급락\n유상증자 소식에 급락."),
     ]
 
-    rendered = render_prompt_input(dated_texts, ["삼성전자", "기아"])
+    rendered = build_prompt_input(dated_texts, ["삼성전자", "기아"])
 
     assert rendered == (
         "[기사 1] 2026-09-01 | 삼성전자, 4조원 유상증자 결정\n삼성전자가 결의했다.\n\n"
@@ -26,8 +26,8 @@ def test_render_prompt_input_blocks_and_candidates():
     )
 
 
-def test_render_prompt_input_text_without_body():
-    rendered = render_prompt_input([(date(2026, 9, 1), "제목만")], ["삼성전자"])
+def test_build_prompt_input_text_without_body():
+    rendered = build_prompt_input([(date(2026, 9, 1), "제목만")], ["삼성전자"])
 
     assert rendered.startswith("[기사 1] 2026-09-01 | 제목만\n\n[후보 기업]")
 

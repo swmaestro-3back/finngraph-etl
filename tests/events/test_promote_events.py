@@ -1,4 +1,4 @@
-"""promote_events 헬퍼 — 스텁 titler/loader 로 실패 격리와 집계."""
+"""promote_events 헬퍼 — 스텁 generator/loader 로 실패 격리와 집계."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class FakeExtractor:
         return [SimpleNamespace(text=n) for n in self._processor.extract_keywords(text)]
 
 
-class StubTitler:
+class StubGenerator:
     def __init__(self, draft: EventDraft | Exception):
         self._draft = draft
         self.calls = 0
@@ -88,7 +88,7 @@ def test_create_one_success_records_edges(monkeypatch):
         return 1
 
     monkeypatch.setattr(job, "create_event", fake_create_event)
-    titler = StubTitler(
+    generator = StubGenerator(
         EventDraft(companies=["삼성전자", "엔비디아"], title="[속보] 삼성전자 유상증자")
     )
 
@@ -98,7 +98,7 @@ def test_create_one_success_records_edges(monkeypatch):
             _members(),
             [(None, "t\nb")],
             ["삼성전자", "기아"],
-            titler,
+            generator,
             asyncio.Semaphore(1),
             title_max_chars=60,
         )
@@ -125,7 +125,7 @@ def test_create_one_without_edges(monkeypatch):
             _members(),
             [(None, "t\nb")],
             ["삼성전자"],
-            StubTitler(EventDraft(companies=[], title="삼성전자 유상증자")),
+            StubGenerator(EventDraft(companies=[], title="삼성전자 유상증자")),
             asyncio.Semaphore(1),
             title_max_chars=60,
         )
@@ -135,14 +135,14 @@ def test_create_one_without_edges(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "titler",
+    "generator",
     [
-        StubTitler(RuntimeError("bedrock down")),
-        StubTitler(EventDraft(companies=[], title="")),  # 검증 실패
-        StubTitler(EventDraft(companies=[], title="가" * 61)),  # 길이 초과
+        StubGenerator(RuntimeError("bedrock down")),
+        StubGenerator(EventDraft(companies=[], title="")),  # 검증 실패
+        StubGenerator(EventDraft(companies=[], title="가" * 61)),  # 길이 초과
     ],
 )
-def test_create_one_failure_is_isolated(monkeypatch, titler):
+def test_create_one_failure_is_isolated(monkeypatch, generator):
     called = {"n": 0}
 
     async def fake_create_event(record):
@@ -157,7 +157,7 @@ def test_create_one_failure_is_isolated(monkeypatch, titler):
             _members(),
             [(None, "t\nb")],
             ["삼성전자"],
-            titler,
+            generator,
             asyncio.Semaphore(1),
             title_max_chars=60,
         )
@@ -179,7 +179,7 @@ def test_create_one_loader_failure(monkeypatch):
             _members(),
             [(None, "t\nb")],
             ["삼성전자"],
-            StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 유상증자")),
+            StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 유상증자")),
             asyncio.Semaphore(1),
             title_max_chars=60,
         )
@@ -297,8 +297,8 @@ def test_run_mixed_refresh_and_create(monkeypatch):
     monkeypatch.setattr(job, "refresh_events", fake_refresh)
     monkeypatch.setattr(job, "create_event", fake_create_event)
 
-    titler = StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
-    stats = asyncio.run(job._run(FakeExtractor(), titler))
+    generator = StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    stats = asyncio.run(job._run(FakeExtractor(), generator))
 
     assert stats == {
         "scanned": 5,
@@ -337,8 +337,8 @@ def test_run_refresh_batch_failure_still_creates(monkeypatch):
     monkeypatch.setattr(job, "refresh_events", fake_refresh_raises)
     monkeypatch.setattr(job, "create_event", fake_create_event)
 
-    titler = StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
-    stats = asyncio.run(job._run(FakeExtractor(), titler))
+    generator = StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    stats = asyncio.run(job._run(FakeExtractor(), generator))
 
     assert stats["refresh_failed"] == 1  # == len(refreshes)
     assert stats["refreshed"] == 0
@@ -346,7 +346,7 @@ def test_run_refresh_batch_failure_still_creates(monkeypatch):
     assert job.summarize_stats(stats) == stats
 
 
-def test_run_over_limit_caps_titler_calls(monkeypatch):
+def test_run_over_limit_caps_generator_calls(monkeypatch):
     """후보가 있는 신규 4개 중 상한 2개만 LLM 을 부른다."""
 
     promotable = [_cluster(cid) for cid in (1, 2, 3, 4)]
@@ -366,11 +366,11 @@ def test_run_over_limit_caps_titler_calls(monkeypatch):
     monkeypatch.setattr(job, "fetch_cluster_members", lambda ids: members_by_cluster)
     monkeypatch.setattr(job, "create_event", fake_create_event)
 
-    titler = StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
-    stats = asyncio.run(job._run(FakeExtractor(), titler))
+    generator = StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    stats = asyncio.run(job._run(FakeExtractor(), generator))
 
     assert stats["skipped_over_limit"] == 2
-    assert titler.calls == 2
+    assert generator.calls == 2
     assert job.summarize_stats(stats) == stats
 
 
@@ -388,8 +388,8 @@ def test_run_empty_scan_returns_zero_stats_without_touching_neo4j(monkeypatch):
     monkeypatch.setattr(job, "fetch_promotable_clusters", lambda min_size, since: [])
     monkeypatch.setattr(job, "fetch_existing_event_ids", fake_existing)
 
-    titler = StubTitler(EventDraft(companies=[], title="x"))
-    stats = asyncio.run(job._run(FakeExtractor(), titler))
+    generator = StubGenerator(EventDraft(companies=[], title="x"))
+    stats = asyncio.run(job._run(FakeExtractor(), generator))
 
     assert stats == dict.fromkeys(job.STAT_KEYS, 0)
     assert called["existing"] is False
