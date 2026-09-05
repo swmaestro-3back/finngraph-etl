@@ -14,7 +14,7 @@ class EventSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     # 승격 기준: news_clusters.original_size (버린 기사 포함 판정 수) 하한
-    min_size: int = Field(default=2, validation_alias="NEWS_EVENT_MIN_SIZE")
+    min_size: int = Field(default=5, validation_alias="NEWS_EVENT_MIN_SIZE")
     # 후보 조회 범위: updated_at 이 이 일수 안인 클러스터만 본다 (클러스터 윈도우 14 + 1)
     scan_days: int = Field(default=15, validation_alias="NEWS_EVENT_SCAN_DAYS")
     # 런당 LLM 생성 상한. 후보 추출 뒤에 적용한다

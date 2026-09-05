@@ -18,7 +18,7 @@ def test_defaults_without_env_file(monkeypatch):
 
     settings = EventSettings(_env_file=None)
 
-    assert settings.min_size == 2
+    assert settings.min_size == 5
     assert settings.scan_days == 15
     assert settings.max_items_per_run == 50
     assert settings.llm_max_concurrency == 4
