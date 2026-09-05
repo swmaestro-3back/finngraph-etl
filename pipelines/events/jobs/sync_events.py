@@ -1,12 +1,6 @@
-"""기존 Event 노드 갱신 job (events_pipeline 의 sync_events task).
-
-후보 클러스터 중 Neo4j 에 이미 Event 가 있는 것만 골라 카운터·시간 범위·대표·news_ids·
-keywords 를 RDB 값으로 덮어쓰고, companies 로 간선을 다시 MERGE 한다. LLM 을 부르지 않고
-title·companies 는 건드리지 않는다. RDB 에는 아무것도 쓰지 않는다.
-
-generate_events 와 같은 DAG 런에서 병렬로 돈다. 둘 다 scan_promotable 로 자기 몫을 고르므로
-task 사이에 XCom 이 없다. `scanned` 는 이 task 의 몫(기존 Event 가 있는 클러스터 수)이다.
-갱신은 배치 하나라 실패하면 통째로 refresh_failed 로 센다.
+"""
+기존 EVENT 노드 갱신
+후보 클러스터 중 Neo4j에 이미 존재하는 EVENT만 골라 필드 업데이트 진행
 """
 
 from __future__ import annotations

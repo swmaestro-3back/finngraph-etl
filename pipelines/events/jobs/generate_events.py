@@ -1,15 +1,7 @@
-"""신규 Event 노드 생성 job (events_pipeline 의 generate_events task).
-
-후보 클러스터 중 Neo4j 에 Event 가 없는 것만 골라 멤버 기사 → gazetteer 후보 → LLM(제목·
-당사자) → 검증 → 노드·간선 생성 순으로 처리한다. 클러스터 하나가 실패 단위다. RDB 에는
-아무것도 쓰지 않는다. `scanned` 는 이 task 의 몫(Event 가 없는 클러스터 수)이다.
-
-sync_events 와 같은 DAG 런에서 병렬로 돈다. 둘 다 scan_promotable 로 자기 몫을 고르므로
-task 사이에 XCom 이 없다.
-
-EntityExtractor(비공개 gazetteer)와 EventGenerator(비공개 프롬프트)는 run() 안에서 지연
-import 하고 팩토리로 넘긴다 — 헬퍼가 CI 에서 import 되게 하고, 처리할 클러스터가 없는
-런에서는 Bedrock 클라이언트를 만들지 않기 위해서다.
+"""
+신규 EVENT 노드 생성
+후보 클러스터 중 Neo4j에 없는 클러스터를 EVENT 노드로 승격
+RDB에서 기사 조회 > Flashtext 기반 엔티티 추출 > LLM Event 제목 생성 및 엔티티 검증 > Neo4j에 반영
 """
 
 from __future__ import annotations
