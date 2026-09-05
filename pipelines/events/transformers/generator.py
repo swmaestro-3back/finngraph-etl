@@ -19,7 +19,9 @@ RETRY_ATTEMPTS = 2
 
 
 def build_prompt_input(dated_texts: list[tuple[date | None, str]], candidates: list[str]) -> str:
-    """LLM에게 입력할 Context 생성"""
+    """
+    LLM에게 입력할 Context 생성
+    """
 
     blocks: list[str] = []
     for index, (day, text) in enumerate(dated_texts, start=1):
@@ -80,6 +82,7 @@ class EventGenerator:
     async def draft(
         self, dated_texts: list[tuple[date | None, str]], candidates: list[str]
     ) -> EventDraft:
+        # Bedrock 활용하여 Event 제목과 당사자 추출
         result = await self._chain.ainvoke(
             {"articles": build_prompt_input(dated_texts, candidates)}
         )
