@@ -74,13 +74,22 @@ def build_upsert_cypher(market: str | None) -> str:
     return UPSERT_COMPANIES_CYPHER + "\n".join(clauses) + "\n"
 
 
-DELETE_DELISTED_CYPHER = """
+# US 시드(migrations/neo4j/0002_us_companies.cypher)는 이 잡의 원천이 아니다. 라벨로
+# 빼 두지 않으면 AAPL 같은 ticker가 $tickers(국내 종목코드)에 없다는 이유로 전부 지워진다.
+FOREIGN_LABELS = ("NYSE", "NASDAQ")
+
+_NOT_FOREIGN = " ".join(f"AND NOT c:{label}" for label in FOREIGN_LABELS)
+
+DELETE_DELISTED_CYPHER = f"""
 MATCH (c:Company)
-WHERE c.ticker IS NOT NULL AND NOT c.ticker IN $tickers
+WHERE c.ticker IS NOT NULL {_NOT_FOREIGN}
+  AND NOT c.ticker IN $tickers
 DETACH DELETE c
 """
 
-COUNT_SEEDED_CYPHER = "MATCH (c:Company) WHERE c.ticker IS NOT NULL RETURN count(c) AS seeded"
+COUNT_SEEDED_CYPHER = (
+    f"MATCH (c:Company) WHERE c.ticker IS NOT NULL {_NOT_FOREIGN} RETURN count(c) AS seeded"
+)
 
 
 async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:
