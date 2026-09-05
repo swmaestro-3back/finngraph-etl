@@ -1,4 +1,4 @@
-"""Neo4j 참조 조회 — 이미 승격된 클러스터 id."""
+"""Neo4j Event 조회용"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pipelines.common.clients.neo4j import neo4j_database
 
 
 async def fetch_existing_event_ids(cluster_ids: list[int]) -> set[int]:
-    """cluster_ids 중 Event 노드가 있는 것. 유니크 제약 인덱스로 한 번에 찾는다."""
+    """cluster_ids 중 이미 Event 노드로 승격된 cluster_id 조회"""
 
     if not cluster_ids:
         return set()
