@@ -23,7 +23,7 @@ class EventSettings(BaseSettings):
     # 요약이 없는 기사는 본문 앞 이 글자 수를 LLM 입력으로 쓴다
     lead_chars: int = Field(default=600, validation_alias="NEWS_EVENT_LEAD_CHARS")
     # 검증: 이보다 긴 제목은 실패 처리
-    title_max_chars: int = Field(default=60, validation_alias="NEWS_EVENT_TITLE_MAX_CHARS")
+    title_max_chars: int = Field(default=30, validation_alias="NEWS_EVENT_TITLE_MAX_CHARS")
 
 
 @lru_cache
