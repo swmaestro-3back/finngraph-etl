@@ -91,7 +91,8 @@ def _insert_news(
 
 @pytest.fixture
 def fixture_rows():
-    """클러스터 3개: 승격 대상(원시 3, 최신), 대상(원시 2, 오래됨), 미달(원시 1)."""
+    """클러스터 4개: 승격 대상(hot, 원시 3, 최신), 스캔범위 밖(stale, 원시 2, 오래됨),
+    미달(small, 원시 1), 멤버 0(empty, 원시 5)."""
     marker = uuid.uuid4().hex
     with session_scope() as session:
         hot = _insert_cluster(session, original_size=3, member_count=2, last_offset_hours=5)

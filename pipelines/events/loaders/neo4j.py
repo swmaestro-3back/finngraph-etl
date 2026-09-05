@@ -28,6 +28,10 @@ def _bolt_datetime(value: datetime) -> datetime:
     TypeError 폴백을 기대하는데, CPython 3.14 의 zoneinfo 는 TypeError 대신 세그폴트를 낸다.
     psycopg 가 TIMESTAMPTZ 를 ZoneInfo 로 돌려주므로 RDB 에서 온 값도 전부 여기를 거친다.
     naive 나 이미 고정 오프셋인 값은 그대로 둔다.
+
+    이 크래시는 로컬 uv 인터프리터(CPython 3.14.6)에서 재현되며 운영·CI 는 Python
+    3.11(`docker/airflow/Dockerfile`, `.github/workflows/ci.yml`)이라 노출 범위는 로컬
+    개발이지만, 변환은 어느 버전에서도 무해하다.
     """
 
     if value.tzinfo is None or isinstance(value.tzinfo, timezone):

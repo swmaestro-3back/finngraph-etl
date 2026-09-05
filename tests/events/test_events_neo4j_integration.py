@@ -13,12 +13,18 @@ from datetime import datetime, timedelta
 import pytest
 
 from pipelines.common.clients.neo4j import neo4j_database
+from pipelines.common.config import get_settings
 from pipelines.events.loaders.neo4j import create_event, refresh_events
 from pipelines.events.models import EventRecord, EventRefresh
 from pipelines.events.references.graph import fetch_existing_event_ids
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not get_settings().neo4j_uri, reason="NEO4J_URI 미설정(CI 등) — 로컬 Neo4j 필요"
+    ),
+]
 
 T0 = datetime(2026, 9, 1, 9, 0, tzinfo=SEOUL_TIMEZONE)
 

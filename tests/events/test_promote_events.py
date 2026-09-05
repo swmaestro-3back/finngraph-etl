@@ -232,3 +232,164 @@ def test_select_for_llm_applies_limit_after_candidate_filter():
     assert [item[0].cluster_id for item in eligible] == [1, 3]
     assert skipped_no_candidates == 1
     assert skipped_over_limit == 1
+
+
+# ---- _run 통합 (모든 I/O 시임을 스텁으로 대체) --------------------------------
+
+
+class _StubNeo4jDatabase:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _event_settings(**overrides) -> SimpleNamespace:
+    base = dict(
+        min_size=2,
+        scan_days=15,
+        max_items_per_run=2,
+        llm_max_concurrency=2,
+        lead_chars=600,
+        title_max_chars=60,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _no_candidate_members() -> list[MemberArticle]:
+    """gazetteer 에 없는 이름만 담은 멤버 — 후보 0 케이스용."""
+
+    return [
+        MemberArticle(
+            news_id=901,
+            title="무관 발표",
+            summary="이 사건과는 관련 없는 내용이다.",
+            text="x",
+            published_at=T0,
+        )
+    ]
+
+
+def test_run_mixed_refresh_and_create(monkeypatch):
+    """5 클러스터: 기존 2(전량 갱신) + 신규 3(후보0 1, 유효 2 → 간선1/간선0)."""
+
+    promotable = [_cluster(cid) for cid in (1, 2, 3, 4, 5)]
+    members_by_cluster = {3: _no_candidate_members(), 4: _members(), 5: _members()}
+    edges_by_cluster = {4: 0, 5: 1}
+
+    async def fake_existing(cluster_ids):
+        return {1, 2}
+
+    async def fake_refresh(refreshes):
+        return len(refreshes)
+
+    async def fake_create_event(record):
+        return edges_by_cluster[record.cluster_id]
+
+    monkeypatch.setattr(job, "get_event_settings", lambda: _event_settings())
+    monkeypatch.setattr(job, "neo4j_database", _StubNeo4jDatabase())
+    monkeypatch.setattr(job, "fetch_promotable_clusters", lambda min_size, since: promotable)
+    monkeypatch.setattr(job, "fetch_existing_event_ids", fake_existing)
+    monkeypatch.setattr(job, "fetch_cluster_news_ids", lambda ids: {i: [i * 100] for i in ids})
+    monkeypatch.setattr(job, "fetch_cluster_members", lambda ids: members_by_cluster)
+    monkeypatch.setattr(job, "refresh_events", fake_refresh)
+    monkeypatch.setattr(job, "create_event", fake_create_event)
+
+    titler = StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    stats = asyncio.run(job._run(FakeExtractor(), titler))
+
+    assert stats == {
+        "scanned": 5,
+        "created": 2,
+        "created_without_edges": 1,
+        "refreshed": 2,
+        "refresh_failed": 0,
+        "skipped_no_candidates": 1,
+        "skipped_over_limit": 0,
+        "failed": 0,
+    }
+    assert job.summarize_stats(stats) == stats
+
+
+def test_run_refresh_batch_failure_still_creates(monkeypatch):
+    """갱신 배치가 통째로 실패해도 refresh_failed 로 흡수하고 생성은 계속된다."""
+
+    promotable = [_cluster(1), _cluster(2), _cluster(3)]
+    members_by_cluster = {2: _members(), 3: _members()}
+
+    async def fake_existing(cluster_ids):
+        return {1}
+
+    async def fake_refresh_raises(refreshes):
+        raise RuntimeError("neo4j 다운")
+
+    async def fake_create_event(record):
+        return 1
+
+    monkeypatch.setattr(job, "get_event_settings", lambda: _event_settings())
+    monkeypatch.setattr(job, "neo4j_database", _StubNeo4jDatabase())
+    monkeypatch.setattr(job, "fetch_promotable_clusters", lambda min_size, since: promotable)
+    monkeypatch.setattr(job, "fetch_existing_event_ids", fake_existing)
+    monkeypatch.setattr(job, "fetch_cluster_news_ids", lambda ids: {i: [i] for i in ids})
+    monkeypatch.setattr(job, "fetch_cluster_members", lambda ids: members_by_cluster)
+    monkeypatch.setattr(job, "refresh_events", fake_refresh_raises)
+    monkeypatch.setattr(job, "create_event", fake_create_event)
+
+    titler = StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    stats = asyncio.run(job._run(FakeExtractor(), titler))
+
+    assert stats["refresh_failed"] == 1  # == len(refreshes)
+    assert stats["refreshed"] == 0
+    assert stats["created"] == 2
+    assert job.summarize_stats(stats) == stats
+
+
+def test_run_over_limit_caps_titler_calls(monkeypatch):
+    """후보가 있는 신규 4개 중 상한 2개만 LLM 을 부른다."""
+
+    promotable = [_cluster(cid) for cid in (1, 2, 3, 4)]
+    members_by_cluster = {cid: _members() for cid in (1, 2, 3, 4)}
+
+    async def fake_existing(cluster_ids):
+        return set()
+
+    async def fake_create_event(record):
+        return 1
+
+    monkeypatch.setattr(job, "get_event_settings", lambda: _event_settings(max_items_per_run=2))
+    monkeypatch.setattr(job, "neo4j_database", _StubNeo4jDatabase())
+    monkeypatch.setattr(job, "fetch_promotable_clusters", lambda min_size, since: promotable)
+    monkeypatch.setattr(job, "fetch_existing_event_ids", fake_existing)
+    monkeypatch.setattr(job, "fetch_cluster_news_ids", lambda ids: {})
+    monkeypatch.setattr(job, "fetch_cluster_members", lambda ids: members_by_cluster)
+    monkeypatch.setattr(job, "create_event", fake_create_event)
+
+    titler = StubTitler(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    stats = asyncio.run(job._run(FakeExtractor(), titler))
+
+    assert stats["skipped_over_limit"] == 2
+    assert titler.calls == 2
+    assert job.summarize_stats(stats) == stats
+
+
+def test_run_empty_scan_returns_zero_stats_without_touching_neo4j(monkeypatch):
+    """후보가 없으면 Neo4j 존재 조회조차 하지 않고 all-zero 로 반환한다."""
+
+    called = {"existing": False}
+
+    async def fake_existing(cluster_ids):
+        called["existing"] = True
+        return set()
+
+    monkeypatch.setattr(job, "get_event_settings", lambda: _event_settings())
+    monkeypatch.setattr(job, "neo4j_database", _StubNeo4jDatabase())
+    monkeypatch.setattr(job, "fetch_promotable_clusters", lambda min_size, since: [])
+    monkeypatch.setattr(job, "fetch_existing_event_ids", fake_existing)
+
+    titler = StubTitler(EventDraft(companies=[], title="x"))
+    stats = asyncio.run(job._run(FakeExtractor(), titler))
+
+    assert stats == dict.fromkeys(job.STAT_KEYS, 0)
+    assert called["existing"] is False

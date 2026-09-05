@@ -23,7 +23,8 @@ finngraph-etl/
 │   ├── stocks/           # 주식 및 주가 ETL
 │   ├── news/             # 뉴스 ETL
 │   ├── themes/           # 테마 ETL
-│   └── triples/          # 트리플관계 ETL
+│   ├── triples/          # 트리플관계 ETL
+│   └── events/           # 뉴스 클러스터 → Neo4j Event 승격
 ├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트

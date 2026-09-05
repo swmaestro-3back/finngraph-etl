@@ -21,10 +21,19 @@ RETURN e ORDER BY e.last_published_at DESC LIMIT 20
 
 RDB 에는 아무것도 쓰지 않습니다. 그래프가 유일한 저장소입니다.
 
+Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 그래프에서 Event 가 사라지면
+(오작동, 수동 삭제 등) LLM 재실행 말고는 복구 경로가 없습니다 — RDB 에 별도 원장이 없기
+때문입니다. 또한 생성 시점에 해석되지 않은 당사자(미시드·비상장 기업)는 노드의
+`companies` 배열에 이름만 남고 간선은 생기지 않는데, 그 기업이 나중에 시드되면 다음 갱신이
+간선을 붙입니다 — 아래 "1회성 백필" 은 그 간극을 스캔 범위 밖 Event 에 대해 메웁니다.
+
 ## 배포 순서
 
 1. `migrations/neo4j/0002_us_companies.cypher`(한글 `name` 키)와 `0003_events.cypher` 가
    neo4j-init 으로 적용돼 있을 것. neo4j-init 은 매 기동마다 전체를 재실행하며 둘 다 멱등입니다.
+   구 0002(영문 `name`)가 적용된 로컬 Neo4j 볼륨에서는 `[1]` 리네임 단계가
+   `company_name_unique` 위반으로 실패할 수 있으므로 `docker compose down -v` 후
+   재기동합니다(dev 에는 구 0002 가 적용된 적이 없습니다).
 2. `companies_sync_master.seed_graph` 가 한 번은 성공해 KRX `is_listed` 가 채워져 있을 것.
 3. 그 뒤 `news_pipeline` 이 돌면 `promote_events` 가 붙습니다.
 

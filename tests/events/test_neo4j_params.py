@@ -1,8 +1,8 @@
 """_bolt_datetime / _bolt_params 단위 테스트.
 
-neo4j 드라이버가 가변 tzinfo(ZoneInfo) datetime 을 패킹할 때 CPython 3.14 zoneinfo 가
-세그폴트를 내는 문제(task-8 컨트롤러 판정)를 우회하는 정규화 헬퍼를 검증한다. Neo4j 를
-건드리지 않는다 — integration 마커 없음.
+neo4j 드라이버가 ZoneInfo tzinfo 를 가진 datetime 을 패킹할 때 CPython 3.14 에서
+세그폴트가 나므로 고정 오프셋으로 바꾸는 정규화 헬퍼를 검증한다. Neo4j 를 건드리지
+않는다 — integration 마커 없음.
 """
 
 from __future__ import annotations
