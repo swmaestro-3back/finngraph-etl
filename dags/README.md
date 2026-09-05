@@ -6,6 +6,7 @@ Airflow DAG 정의 폴더. 각 하위 폴더는 **도메인**을 나타내며, A
 dags/
 ├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
 ├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
+├── events/       # 뉴스 클러스터 → Neo4j Event 승격 (news_pipeline 의 Asset 으로 기동)
 ├── health/       # 운영 상 헬스체크용
 ├── news/         # 뉴스 수집·군집화 → 트리플 추출 → 요약 통합 파이프라인
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
@@ -26,8 +27,9 @@ dags/
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
+| events | `events/pipeline.py` | `events_pipeline` | `events` | Asset ← `etl://news/clusters` |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples`, `events` | `0 6-21 * * *` (06~21시 매 정각) |
+| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
@@ -54,13 +56,22 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 `stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
 기동한다. PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 시세와 재무가 모두 필요하다.
 
+```
+news_pipeline ──(collect_articles)──► etl://news/clusters ──► events_pipeline
+  (06~21시 매 정각)                                            (sync_events ∥ generate_events)
+```
+
+`collect_articles`는 이번 런에 클러스터를 하나도 생성·갱신하지 않았으면 스킵해 Asset을
+발행하지 않는다 — Event로 올리거나 갱신할 것이 없는 시간에 LLM·Neo4j 왕복을 만들지 않기
+위해서다. 뒤따르는 `extract_triples`는 `trigger_rule="all_done"`이라 그 스킵과 무관하게
+밀린 기사를 처리한다.
+
 ## 독립실행 Crons
 
 Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 DAG들.
 
 ```mermaid
 flowchart TB
-    NP["news_pipeline<br/><code>0 6-21 * * *</code>"]
     CDP["companies_dart_pipeline<br/><code>0 9 * * *</code>"]
     CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
@@ -72,7 +83,7 @@ flowchart TB
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class NP,CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
+    class CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
 ```
 
 ## `dag_id`

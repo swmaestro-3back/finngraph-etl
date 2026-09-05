@@ -1,15 +1,21 @@
-"""news_clusters → Neo4j Event 승격 job (news_pipeline DAG 의 promote_events task).
+"""신규 Event 노드 생성 job (events_pipeline 의 generate_events task).
 
-후보 조회(RDB) → 존재 조회(Neo4j) → 분기 → 갱신(전량, LLM 없음) → 생성(후보 추출 →
-상한 → LLM → 검증 → 쓰기) → 집계. 클러스터 하나가 실패 단위다. RDB 에는 아무것도 쓰지 않는다.
+후보 클러스터 중 Neo4j 에 Event 가 없는 것만 골라 멤버 기사 → gazetteer 후보 → LLM(제목·
+당사자) → 검증 → 노드·간선 생성 순으로 처리한다. 클러스터 하나가 실패 단위다. RDB 에는
+아무것도 쓰지 않는다. `scanned` 는 이 task 의 몫(Event 가 없는 클러스터 수)이다.
+
+sync_events 와 같은 DAG 런에서 병렬로 돈다. 둘 다 scan_promotable 로 자기 몫을 고르므로
+task 사이에 XCom 이 없다.
 
 EntityExtractor(비공개 gazetteer)와 EventGenerator(비공개 프롬프트)는 run() 안에서 지연
-import 한다 — 헬퍼 함수들이 CI 에서 import 되게 하기 위해서다.
+import 하고 팩토리로 넘긴다 — 헬퍼가 CI 에서 import 되게 하고, 처리할 클러스터가 없는
+런에서는 Bedrock 클라이언트를 만들지 않기 위해서다.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
 
@@ -17,17 +23,13 @@ from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.events.config import get_event_settings
-from pipelines.events.loaders.neo4j import create_event, refresh_events
-from pipelines.events.models import ClusterCandidate, EventRecord, EventRefresh, MemberArticle
-from pipelines.events.references.graph import fetch_existing_event_ids
-from pipelines.events.references.rdb import (
-    fetch_cluster_members,
-    fetch_cluster_news_ids,
-    fetch_promotable_clusters,
-)
+from pipelines.events.loaders.neo4j import create_event
+from pipelines.events.models import ClusterCandidate, EventRecord, MemberArticle
+from pipelines.events.references.rdb import fetch_cluster_members
+from pipelines.events.references.scan import scan_promotable
+from pipelines.events.stats import check_total
 from pipelines.events.transformers.candidates import extract_company_candidates
 from pipelines.events.transformers.generator import validate_draft
-from pipelines.events.transformers.planner import plan_actions
 from pipelines.events.transformers.source_text import member_date, member_source_text
 
 logger = get_logger(__name__)
@@ -36,13 +38,12 @@ STAT_KEYS = (
     "scanned",
     "created",
     "created_without_edges",
-    "refreshed",
-    "refresh_failed",
     "skipped_no_candidates",
     "skipped_over_limit",
     "failed",
 )
 
+Factory = Callable[[], Any]
 DatedTexts = list[tuple[date | None, str]]
 # (클러스터, 멤버, LLM 입력, 후보)
 Prepared = tuple[ClusterCandidate, list[MemberArticle], DatedTexts, list[str]]
@@ -108,57 +109,27 @@ async def create_one(
 
 
 def summarize_stats(stats: dict[str, int]) -> dict[str, int]:
-    """집계 불변식을 검사한다. created_without_edges 는 created 의 부분집합이라 합에 없다."""
+    """created_without_edges 는 created 의 부분집합이라 합에 없다."""
 
-    accounted = (
-        stats["created"]
-        + stats["refreshed"]
-        + stats["refresh_failed"]
-        + stats["skipped_no_candidates"]
-        + stats["skipped_over_limit"]
-        + stats["failed"]
+    return check_total(
+        stats, "scanned", ("created", "skipped_no_candidates", "skipped_over_limit", "failed")
     )
-    if stats["scanned"] != accounted:
-        raise ValueError(f"집계 불일치: scanned={stats['scanned']} != 합={accounted} ({stats})")
-    return stats
 
 
-async def _run(extractor: Any, generator: Any) -> dict[str, int]:
+async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[str, int]:
     settings = get_event_settings()
     stats = dict.fromkeys(STAT_KEYS, 0)
-
-    # 1. 후보 (RDB)
     since = now_kst() - timedelta(days=settings.scan_days)
-    clusters = fetch_promotable_clusters(settings.min_size, since)
-    stats["scanned"] = len(clusters)
-    if not clusters:
-        return stats
 
     async with neo4j_database:
-        # 2~3. 존재 조회, 분기
-        existing = await fetch_existing_event_ids([c.cluster_id for c in clusters])
-        to_create, to_refresh = plan_actions(clusters, existing)
+        # 1. 후보 스캔 — Event 가 없는 클러스터만 이 task 의 몫이다
+        to_create, _ = await scan_promotable(settings.min_size, since)
+        stats["scanned"] = len(to_create)
+        if not to_create:
+            return stats
 
-        # 4. 갱신 — 전량, LLM 없음
-        if to_refresh:
-            news_ids = fetch_cluster_news_ids([c.cluster_id for c in to_refresh])
-            refreshes = [
-                EventRefresh(**c.model_dump(), news_ids=news_ids.get(c.cluster_id, []))
-                for c in to_refresh
-            ]
-            try:
-                stats["refreshed"] = await refresh_events(refreshes)
-                stats["refresh_failed"] = len(refreshes) - stats["refreshed"]
-            except Exception as e:
-                logger.error(
-                    "Event 갱신 배치 실패: %d건, %s: %s",
-                    len(refreshes),
-                    type(e).__name__,
-                    e,
-                )
-                stats["refresh_failed"] = len(refreshes)
-
-        # 5~6. 생성 — 후보 추출 뒤 상한
+        # 2. 멤버 텍스트 → 후보 추출 → 상한 (LLM 전에 걸러 슬롯을 낭비하지 않는다)
+        extractor = extractor_factory()
         members_by_cluster = fetch_cluster_members([c.cluster_id for c in to_create])
         prepared: list[Prepared] = []
         for cluster in to_create:
@@ -168,8 +139,11 @@ async def _run(extractor: Any, generator: Any) -> dict[str, int]:
         eligible, stats["skipped_no_candidates"], stats["skipped_over_limit"] = select_for_llm(
             prepared, settings.max_items_per_run
         )
+        if not eligible:
+            return stats
 
-        # 7~9. LLM → 검증 → 쓰기
+        # 3. LLM → 검증 → 쓰기 (클러스터별 격리, 동시성 상한)
+        generator = generator_factory()
         semaphore = asyncio.Semaphore(max(settings.llm_max_concurrency, 1))
         outcomes = await asyncio.gather(
             *(
@@ -197,20 +171,26 @@ async def _run(extractor: Any, generator: Any) -> dict[str, int]:
 
 
 def run() -> dict[str, int]:
-    from pipelines.events.transformers.generator import EventGenerator
-    from pipelines.triples.nodes.entity_extractor import EntityExtractor
+    def make_extractor() -> Any:
+        from pipelines.triples.nodes.entity_extractor import EntityExtractor
 
-    stats = summarize_stats(asyncio.run(_run(EntityExtractor(), EventGenerator())))
+        return EntityExtractor()
+
+    def make_generator() -> Any:
+        from pipelines.events.transformers.generator import EventGenerator
+
+        return EventGenerator()
+
+    stats = summarize_stats(asyncio.run(_run(make_extractor, make_generator)))
 
     print("\n" + "=" * 70)
-    print("뉴스 클러스터 → Event 승격 결과")
+    print("Event 생성 결과 (generate_events)")
     print("=" * 70)
-    print(f"- 후보 클러스터 {stats['scanned']}개")
+    print(f"- Event 없는 후보 클러스터 {stats['scanned']}개")
     print(
         f"- 생성 {stats['created']}개 (간선 없음 {stats['created_without_edges']}개), "
         f"실패 {stats['failed']}개"
     )
-    print(f"- 갱신 {stats['refreshed']}개, 갱신 실패 {stats['refresh_failed']}개")
     print(
         f"- 건너뜀: 후보 없음 {stats['skipped_no_candidates']}개, "
         f"상한 초과 {stats['skipped_over_limit']}개"

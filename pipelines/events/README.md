@@ -8,16 +8,38 @@ MATCH (c:Company {ticker: $ticker})-[:HAS_EVENT]->(e:Event)
 RETURN e ORDER BY e.last_published_at DESC LIMIT 20
 ```
 
-## 흐름 (`jobs/promote_events.py`, news_pipeline 의 마지막 task)
+## 기동 (`dags/events/pipeline.py`, `events_pipeline`)
 
-1. RDB 에서 `original_size >= NEWS_EVENT_MIN_SIZE` 이고 최근 `NEWS_EVENT_SCAN_DAYS` 안에
-   바뀐 클러스터를 읽습니다.
-2. Neo4j 에 이미 있는 Event 는 **매 런 전량 갱신** — 카운터·시간 범위·대표·`news_ids`·
-   `keywords` 를 덮어쓰고 `companies` 로 간선을 다시 MERGE 합니다. 제목은 불변.
-3. 없는 클러스터는 **생성** — 멤버 기사(제목 + 요약 또는 리드)에서 gazetteer 로 후보 기업을
-   뽑고, LLM 이 후보 안에서 당사자와 우산 제목을 고르고, 코드가 검증한 뒤 노드와 간선을 씁니다.
-   후보 0 이면 LLM 을 부르지 않고 노드도 만들지 않습니다. 런당 LLM 상한
-   `NEWS_EVENT_MAX_ITEMS_PER_RUN`.
+시각이 아니라 Asset 을 구독합니다. `news_pipeline.collect_articles` 가 클러스터를 하나라도
+생성·갱신한 런에서만 `etl://news/clusters` 를 발행하고, 그 신호로 이 DAG 이 깨어납니다.
+클러스터 변경이 0건인 시간에는 `collect_articles` 가 skip 돼 발행이 없고, 이 DAG 도 돌지
+않습니다.
+
+```
+news_pipeline.collect_articles ──► etl://news/clusters ──► events_pipeline
+```
+
+## 흐름
+
+두 task 가 병렬로 돕니다. 둘 다 `references/scan.py` 의 `scan_promotable` 로 후보 클러스터
+(`original_size >= NEWS_EVENT_MIN_SIZE`, 최근 `NEWS_EVENT_SCAN_DAYS` 안에 변경)를 읽고
+Neo4j 존재 여부로 **자기 몫만** 고르므로, task 사이에 XCom 이 없습니다. 각 task 의
+`scanned` 는 후보 전체가 아니라 자기 몫의 수입니다.
+
+- **`sync_events`** (`jobs/sync_events.py`) — 이미 Event 가 있는 클러스터를 **매 런 전량
+  갱신**합니다. 카운터·시간 범위·대표·`news_ids`·`keywords` 를 RDB 값으로 덮어쓰고
+  `companies` 로 간선을 다시 MERGE 합니다. 제목·`companies` 는 불변이고 LLM 을 부르지
+  않습니다. 배치 하나라 실패하면 통째로 `refresh_failed` 로 셉니다.
+- **`generate_events`** (`jobs/generate_events.py`) — Event 가 없는 클러스터를 **생성**합니다.
+  멤버 기사(제목 + 요약 또는 리드)에서 gazetteer 로 후보 기업을 뽑고, LLM 이 후보 안에서
+  당사자와 우산 제목을 고르고, 코드가 검증한 뒤 노드와 간선을 씁니다. 후보 0 이면 LLM 을
+  부르지 않고 노드도 만들지 않습니다. 런당 LLM 상한 `NEWS_EVENT_MAX_ITEMS_PER_RUN`. 클러스터
+  하나가 실패 단위이고, 실패한 클러스터는 노드가 없으니 다음 런에 다시 시도됩니다. 처리할
+  클러스터가 없으면 gazetteer·Bedrock 클라이언트를 만들지 않습니다.
+
+두 task 가 겹쳐도 데이터는 깨지지 않습니다. 둘 다 `cluster_id` 로 MERGE 하고, `sync_events`
+는 `generate_events` 가 쓰는 `title`·`companies` 를 건드리지 않습니다. 같은 클러스터에 LLM
+을 두 번 부르지 않도록 DAG 런끼리는 `max_active_runs=1` 로 직렬화합니다.
 
 RDB 에는 아무것도 쓰지 않습니다. 그래프가 유일한 저장소입니다.
 
@@ -35,7 +57,9 @@ Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 
    `company_name_unique` 위반으로 실패할 수 있으므로 `docker compose down -v` 후
    재기동합니다(dev 에는 구 0002 가 적용된 적이 없습니다).
 2. `companies_sync_master.seed_graph` 가 한 번은 성공해 KRX `is_listed` 가 채워져 있을 것.
-3. 그 뒤 `news_pipeline` 이 돌면 `promote_events` 가 붙습니다.
+3. `dags/news/pipeline.py`(outlet)와 `dags/events/pipeline.py`(구독) 사이에 배포 순서 제약은
+   없습니다. 구독 DAG 만 있으면 Asset 이 발행될 때까지 기다리고, outlet 만 있으면 소비자
+   없는 Asset 이벤트가 기록될 뿐입니다.
 
 ## 1회성 백필
 
@@ -52,7 +76,8 @@ MERGE (c)-[:HAS_EVENT]->(e)
 ## 로컬 실행
 
 ```bash
-uv run python scripts/run_job.py pipelines.events.jobs.promote_events:run
+uv run python scripts/run_job.py pipelines.events.jobs.sync_events:run
+uv run python scripts/run_job.py pipelines.events.jobs.generate_events:run
 ```
 
 `.env` 에 `BEDROCK_*`, `AWS_BEARER_TOKEN_BEDROCK`, `NEO4J_*`, `DATABASE_URL` 이 있어야 합니다.
