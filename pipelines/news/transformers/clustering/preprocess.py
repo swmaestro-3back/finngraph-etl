@@ -14,8 +14,10 @@ from functools import lru_cache
 
 from kiwipiepy import Kiwi
 
-# 명사로 취급할 품사. SL 은 영문(LG, SK), SH 는 한자.
-NOUN_TAGS = frozenset({"NNG", "NNP", "SL", "SH"})
+# 명사로 취급할 품사. SL 은 영문(LG, SK)이다. 한자(SH)는 넣지 않는다 — 제목의 "中", "株",
+# "韓日" 처럼 매체마다 쓰기도 안 쓰기도 해서 같은 사건인데 토큰이 갈리는 원인이 된다.
+# 여기서 빠지면 명사 묶음도 한자에서 끊겨 "철강株" 같은 복합명사가 아예 만들어지지 않는다.
+NOUN_TAGS = frozenset({"NNG", "NNP", "SL"})
 
 # 검색어와 기사 형식에서 비롯돼 거의 모든 문서에 나타나는 말들.
 # IDF 로도 상당 부분 걸러지지만, 복합명사 결합을 오염시키므로 미리 제거한다.
@@ -99,14 +101,14 @@ def tokenize(text: str) -> list[tuple[str, float]]:
     for run in _noun_runs(tokens):
         for token in run:
             surface = token.form.lower()
-            if not _keep(surface, token.tag):
+            if not _keep(surface):
                 continue
             weight = PROPER_NOUN_WEIGHT if token.tag == "NNP" else COMMON_NOUN_WEIGHT
             weighted.append((surface, weight))
 
         if len(run) > 1:
             compound = "".join(t.form for t in run).lower()
-            if _keep(compound, "NNP"):
+            if _keep(compound):
                 weighted.append((compound, COMPOUND_WEIGHT))
 
     return weighted
@@ -134,11 +136,12 @@ def _noun_runs(tokens) -> list[list]:
     return runs
 
 
-def _keep(surface: str, tag: str) -> bool:
+def _keep(surface: str) -> bool:
     if surface in STOPWORDS:
         return False
-    # 한 글자 한글 명사는 대부분 의미가 없다. 영문/한자는 SK, LG 처럼 짧아도 살린다.
-    if len(surface) < 2 and tag not in {"SL", "SH"}:
+    # 한 글자 토큰은 의미가 거의 없다. "D램"이 쪼개진 "d" 같은 조각이 대표적인데, 복합명사
+    # "d램"이 이미 그 정보를 담는다. SK·LG 는 두 글자라 이 규칙과 무관하다.
+    if len(surface) < 2:
         return False
     return True
 
