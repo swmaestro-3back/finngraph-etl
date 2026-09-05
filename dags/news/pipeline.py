@@ -19,7 +19,7 @@ if dag and task:
         schedule="0 6-21 * * *",
         catchup=False,
         max_active_runs=1,
-        tags=["news", "triples"],
+        tags=["news", "triples", "events"],
     )
     def news_pipeline():
         @task(retries=2, retry_delay=timedelta(minutes=5))
@@ -41,6 +41,18 @@ if dag and task:
             result = run()
             return {"fetched": result["fetched"], "saved": result["saved"]}
 
-        collect_articles() >> extract_triples() >> summarize_articles()
+        @task(retries=1, retry_delay=timedelta(minutes=10))
+        def promote_events() -> dict[str, int]:
+            """news_clusters 를 Neo4j Event 로 승격·갱신한다.
+
+            전제: 재생성된 0002 와 0003 이 neo4j-init 으로 적용돼 있고,
+            companies_sync_master.seed_graph 가 한 번은 성공해 KRX is_listed 가 채워져 있을 것.
+            그렇지 않아도 갱신이 나중에 간선을 붙이지만 첫 며칠의 created_without_edges 가 높다.
+            """
+            from pipelines.events.jobs.promote_events import run
+
+            return run()
+
+        collect_articles() >> extract_triples() >> summarize_articles() >> promote_events()
 
     news_pipeline()
