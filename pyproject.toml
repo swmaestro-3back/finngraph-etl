@@ -67,6 +67,7 @@ known-first-party = ["pipelines", "tests", "dags"]
 # 프롬프트/온톨로지의 서술형 프롬프트·사전 데이터도 긴 문자열이라 줄길이 제한에서 제외한다.
 "pipelines/triples/prompts/**" = ["E501"]
 "pipelines/triples/ontology/**" = ["E501"]
+"pipelines/events/prompts/**" = ["E501"]
 # KPF-BERT NER 라벨 목록 등 순수 데이터 파일도 줄길이 제한에서 제외한다.
 "pipelines/triples/utils/kpf.py" = ["E501"]
 
