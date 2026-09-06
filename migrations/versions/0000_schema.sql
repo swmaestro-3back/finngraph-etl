@@ -197,17 +197,6 @@ CREATE TABLE IF NOT EXISTS stock_valuations_daily (
 );
 
 -- ── news ────────────────────────────────────────────────────────────────────
--- triple_extracted: 삼중항 추출 상태. NULL=미시도(extract_triples 대상),
---   TRUE=삼중항 1개 이상, FALSE=시도했으나 없음. 추출 실패 시 NULL로 남아 다음 런에
---   재시도된다. 미시도는 IS NULL, 없음은 = FALSE 로 조회한다 — NOT triple_extracted 는
---   3치 논리 탓에 NULL 행을 걸러버리므로 쓰지 않는다.
--- cluster_id: 소속 클러스터(news_clusters). 배치를 넘어 같은 사건으로 판정된 기사가 같은
---   클러스터를 가리키고, 단독 기사도 자기만의 클러스터 행을 가져 조회가 균일하다.
---   news_clusters.representative_news_id 가 다시 news 를 참조하는 순환이라 이 컬럼은
---   news_clusters 뒤에서 ALTER 로 붙인다.
--- cluster_terms: 클러스터링에 쓴 이 기사의 토큰 가중치({토큰: 가중치}). 판정 신호인 검색
---   description 은 저장하지 않으므로, 이 값이 없으면 기사 벡터를 다시 만들 수 없다.
---   클러스터에 멤버가 더해질 때 대표(메도이드)를 저장 멤버 전체로 다시 고르는 데 쓴다.
 CREATE TABLE IF NOT EXISTS news (
     id                  BIGSERIAL PRIMARY KEY,
     title               TEXT,
@@ -225,19 +214,6 @@ CREATE INDEX IF NOT EXISTS idx_news_unprocessed
   ON news (id) WHERE triple_extracted IS NULL;
 
 -- ── news_clusters ───────────────────────────────────────────────────────────
--- 같은 사건을 다룬 기사 묶음. 수집 런마다 새 기사를 14일 이동 윈도우 안의 클러스터와
--- 비교해 합류시키거나 새 클러스터를 만든다(pipelines/news/transformers/clustering/
--- incremental.py). 클러스터당 저장 기사는 누적 cap(기본 3) 까지이고, cap 이 찬 뒤에는
--- 마지막 저장 기사와 보도일이 다른 기사만 그 날짜에 1건 더 받는다. cap 에 걸린 기사는
--- 본문을 크롤링하지 않으며 news 에도 남지 않는다.
---
--- term_weights: 판정된 모든 기사(버린 기사 포함)의 토큰 가중치 원시 합 — 다음 런이 새
---   기사와 비교하는 대상(centroid).
--- original_size: 판정된 누적 기사 수(버린 기사 포함). member_count: news 에 저장된 수.
--- first/last_published_at: 판정된 모든 기사의 보도 시각 범위. 후보 조회는
---   last_published_at 기준이라, cap 이 찬 뜨거운 사건도 기사가 이어지는 한 윈도우에 남는다.
--- representative_news_id: 대표(저장 멤버 중 메도이드). 멤버가 늘면 다시 고른다.
--- cohesion: 멤버 간 평균 코사인 유사도. keywords: term_weights 상위 토큰(표시용).
 CREATE TABLE IF NOT EXISTS news_clusters (
     id                     BIGSERIAL PRIMARY KEY,
     representative_news_id BIGINT REFERENCES news (id) ON DELETE SET NULL,

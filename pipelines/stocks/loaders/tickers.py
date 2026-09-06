@@ -137,6 +137,23 @@ SELECT_SERVICEABLE_TICKERS_SQL = text(
     """
 )
 
+# 단축코드로 직접 지정한 종목
+#
+# service_companies 조건을 걸지 않는다. 수동 백필은 "이 종목이 이상하니 다시 받아봐라"
+# 라는 지시라, 서비스 대상 여부와 무관하게 지정한 것을 받아야 한다. 대신 찾지 못한
+# 코드는 호출부가 알 수 있게 돌려준다.
+SELECT_STOCKS_BY_TICKERS_SQL = (
+    text(
+        """
+        SELECT s.id, s.ticker
+          FROM stocks AS s
+         WHERE s.is_active
+           AND s.ticker IN :tickers
+         ORDER BY s.ticker
+        """
+    )
+).bindparams(bindparam("tickers", expanding=True))
+
 SELECT_ACTIVE_STOCK_IDS_SQL = text("SELECT ticker, id FROM stocks WHERE is_active")
 
 
@@ -154,6 +171,30 @@ def fetch_serviceable_stocks(session: Session, limit: int | None = None) -> list
     rows = session.execute(SELECT_SERVICEABLE_TICKERS_SQL).all()
     result = [(row.id, row.ticker) for row in rows]
     return result[:limit] if limit else result
+
+
+def fetch_stocks_by_tickers(
+    session: Session, tickers: list[str]
+) -> tuple[list[tuple[int, str]], list[str]]:
+    """단축코드로 지정한 활성 종목을 찾는다.
+
+    Args:
+        session (Session): DB 세션.
+        tickers (list[str]): 단축코드 목록.
+
+    Returns:
+        tuple[list[tuple[int, str]], list[str]]: (찾은 (stock_id, ticker) 목록,
+            찾지 못한 단축코드 목록). 찾지 못한 코드를 조용히 버리지 않는 이유는
+            upsert 쪽과 같다 — "수집은 됐는데 화면에 없는" 상태를 추적할 수 없게 된다.
+    """
+
+    if not tickers:
+        return [], []
+
+    rows = session.execute(SELECT_STOCKS_BY_TICKERS_SQL, {"tickers": tickers}).all()
+    found = [(row.id, row.ticker) for row in rows]
+    missing = sorted(set(tickers) - {ticker for _, ticker in found})
+    return found, missing
 
 
 def fetch_active_stock_ids(session: Session) -> dict[str, int]:

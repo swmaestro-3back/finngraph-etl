@@ -85,7 +85,13 @@ def candidates(name: str) -> list[tuple[str, str]]:
 
 
 class CorpResolver:
-    """이름 -> 법인 식별자. 모호하거나 못 찾으면 전부 None."""
+    """이름 -> 법인 식별자. 모호하거나 못 찾으면 전부 None.
+
+    db_aliases 는 company_aliases(source DART·CURATED)에서 온 (별칭, company_id) 쌍이다.
+    상장사의 companies.name 은 KIS 종목명("현대차")으로 매일 덮여 DART 법인명
+    ("현대자동차")이 마스터에서 사라지고, 사명변경·통용표기(CURATED)는 현행 등록부
+    어디에도 없으므로, 별칭으로 보존한 표기를 여기서 되살린다.
+    """
 
     def __init__(
         self,

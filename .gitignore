@@ -38,3 +38,4 @@ pipelines/triples/ontology
 prompts/
 
 scripts/dev-tunnel.sh
+dev-tunnel.sh

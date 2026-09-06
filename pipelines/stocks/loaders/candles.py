@@ -7,8 +7,6 @@ extractor는 단축코드로 말하고 테이블은 stock_id를 키로 쓴다. �
 
 from __future__ import annotations
 
-from datetime import date
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -52,14 +50,6 @@ UPSERT_PERIOD_CANDLE_SQL = text(
       volume = EXCLUDED.volume,
       trade_value = COALESCE(EXCLUDED.trade_value, stock_candles_period.trade_value),
       updated_at = now()
-    """
-)
-
-SELECT_LATEST_DAILY_CANDLE_DATES_SQL = text(
-    """
-    SELECT stock_id, MAX(trade_date) AS latest
-      FROM stock_candles_daily
-     GROUP BY stock_id
     """
 )
 
@@ -129,11 +119,3 @@ def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
 
     session.execute(UPSERT_PERIOD_CANDLE_SQL, payload)
     return len(payload)
-
-
-def fetch_latest_daily_candle_dates(session: Session) -> dict[int, date]:
-    """종목별로 이미 적재된 마지막 일봉 날짜. 백필 시작점을 정하는 데 쓴다."""
-
-    return {
-        row.stock_id: row.latest for row in session.execute(SELECT_LATEST_DAILY_CANDLE_DATES_SQL)
-    }

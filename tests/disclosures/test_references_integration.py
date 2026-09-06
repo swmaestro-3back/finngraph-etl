@@ -1,4 +1,16 @@
-"""disclosures 참조 조회 통합 테스트 — 계약상대 역매칭 별칭."""
+"""disclosures 참조 조회 통합 테스트 — DART 법인명 별칭.
+
+실제 Postgres에 붙는다. `integration` 마커가 붙어 CI unit-test job에서는 제외된다.
+로컬은 `docker compose up -d db` 후 `pytest -m integration`.
+
+fetch_counterparty_aliases 는 계약상대 역매칭에 들어가는 입력이라 두 성질이 중요하다.
+
+1. source가 DART(법인명)·CURATED(수동 시드)인 별칭만 돌려준다 — KIS 종목명·단축코드
+   별칭(KIS_MASTER)이나 향후 뉴스 유래 별칭이 섞이면 "틀린 식별자는 null보다 나쁘다"
+   원칙이 깨진다.
+2. corp_code 없는 법인의 별칭은 돌려주지 않는다 — 마스터(fetch_corp_master)에 없는
+   company_id 는 리졸버가 어차피 버리므로 애초에 나가지 않아야 한다.
+"""
 
 from __future__ import annotations
 
@@ -63,13 +75,11 @@ def _seed():
         )
 
 
-def test_fetch_counterparty_aliases_returns_every_source(_seed: int) -> None:
+def test_fetch_counterparty_aliases_returns_only_dart_source_with_corp_code(_seed: int) -> None:
     with session_scope() as session:
         aliases = dict(fetch_counterparty_aliases(session))
 
     assert aliases.get(TEST_ALIASES[0]) == _seed
     assert aliases.get("구테스트차공업") == _seed, "수동 관리(CURATED) 별칭도 역매칭 입력이다"
-    assert aliases.get("테스트차") == _seed, "KIS 종목명(KIS_MASTER)도 역매칭 입력이다"
-    # corp_code 없는 법인의 별칭도 나간다. 마스터에 없는 company_id 를 버리는 것은
-    # CorpResolver 의 몫이라 조회에서 미리 좁히지 않는다.
-    assert TEST_ALIASES[1] in aliases
+    assert "테스트차" not in aliases, "KIS_MASTER 별칭은 역매칭 입력이 아니다"
+    assert TEST_ALIASES[1] not in aliases, "corp_code 없는 법인의 별칭은 나가지 않는다"
