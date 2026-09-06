@@ -16,7 +16,7 @@ class DailyCandle:
         ticker (str): 단축코드.
         trade_date (date): 거래일.
         volume (int): 거래량(주).
-        trade_value (int | None): 거래대금(원). FDR은 제공하지 않아 None이 될 수 있다.
+        trade_value (int | None): 거래대금(원). 원천이 주지 않으면 None.
     """
 
     ticker: str
