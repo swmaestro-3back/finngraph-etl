@@ -34,8 +34,6 @@ tests/triples/*
 
 # 프롬프트 및 온톨로지 푸시 방지용
 docs/
-pipelines/triples/ontology
-prompts/
 
 scripts/dev-tunnel.sh
 dev-tunnel.sh
