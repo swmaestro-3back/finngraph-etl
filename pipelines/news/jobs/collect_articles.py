@@ -1,4 +1,4 @@
-"""뉴스 수집 + 클러스터링 job (news_pipeline DAG의 collect_articles task).
+"""뉴스 수집 + 클러스터링 job (news_scheduled_pipeline DAG의 collect_articles task).
 
 수집 → 중복 제거 → 기사 유형 필터 → 제목 선두 태그 제거 → DB 기존 기사 제외 →
 배치 간 클러스터 판정(윈도우 안 기존 클러스터 합류 또는 새 클러스터, cap 초과 버림) →

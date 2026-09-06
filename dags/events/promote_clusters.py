@@ -13,14 +13,14 @@ except ImportError:
 if dag and task:
 
     @dag(
-        dag_id="events_pipeline",
+        dag_id="events_promote_clusters",
         start_date=datetime(2026, 1, 1),
         schedule=Asset("etl://news/clusters"),
         catchup=False,
         max_active_runs=1,
         tags=["events"],
     )
-    def events_pipeline():
+    def events_promote_clusters():
         # 배치 하나가 통째로 성공/실패하고 멱등이라 재시도가 싸다.
         @task(retries=2)
         def sync_events() -> dict[str, int]:
@@ -39,4 +39,4 @@ if dag and task:
         sync_events()
         generate_events()
 
-    events_pipeline()
+    events_promote_clusters()

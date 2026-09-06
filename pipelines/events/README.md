@@ -8,15 +8,15 @@ MATCH (c:Company {ticker: $ticker})-[:HAS_EVENT]->(e:Event)
 RETURN e ORDER BY e.last_published_at DESC LIMIT 20
 ```
 
-## 기동 (`dags/events/pipeline.py`, `events_pipeline`)
+## 기동 (`dags/events/promote_clusters.py`, `events_promote_clusters`)
 
-시각이 아니라 Asset 을 구독합니다. `news_pipeline.collect_articles` 가 클러스터를 하나라도
+시각이 아니라 Asset 을 구독합니다. `news_scheduled_pipeline.collect_articles` 가 클러스터를 하나라도
 생성·갱신한 런에서만 `etl://news/clusters` 를 발행하고, 그 신호로 이 DAG 이 깨어납니다.
 클러스터 변경이 0건인 시간에는 `collect_articles` 가 skip 돼 발행이 없고, 이 DAG 도 돌지
 않습니다.
 
 ```
-news_pipeline.collect_articles ──► etl://news/clusters ──► events_pipeline
+news_scheduled_pipeline.collect_articles ──► etl://news/clusters ──► events_promote_clusters
 ```
 
 ## 흐름
@@ -57,7 +57,7 @@ Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 
    `company_name_unique` 위반으로 실패할 수 있으므로 `docker compose down -v` 후
    재기동합니다(dev 에는 구 0002 가 적용된 적이 없습니다).
 2. `companies_sync_master.seed_graph` 가 한 번은 성공해 KRX `is_listed` 가 채워져 있을 것.
-3. `dags/news/pipeline.py`(outlet)와 `dags/events/pipeline.py`(구독) 사이에 배포 순서 제약은
+3. `dags/news/scheduled_pipeline.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은
    없습니다. 구독 DAG 만 있으면 Asset 이 발행될 때까지 기다리고, outlet 만 있으면 소비자
    없는 Asset 이벤트가 기록될 뿐입니다.
 

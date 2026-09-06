@@ -293,7 +293,7 @@ CREATE INDEX IF NOT EXISTS theme_stocks_theme_idx ON theme_stocks (theme_id);
 CREATE INDEX IF NOT EXISTS theme_stocks_stock_idx ON theme_stocks (stock_id);
 
 -- ── search_keywords ─────────────────────────────────────────────────────────
--- news_pipeline 이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
+-- news_scheduled_pipeline 이 네이버 뉴스 검색에 쓰는 쿼리 원천. keyword 한 행이 API 요청 한 번이며,
 -- 콤마 등 네이버 검색식은 문자열 그대로 query 파라미터로 전달된다.
 CREATE TABLE IF NOT EXISTS search_keywords (
     id               BIGSERIAL PRIMARY KEY,

@@ -17,7 +17,7 @@ if dag and task:
     news_clusters_updated = Asset("etl://news/clusters")
 
     @dag(
-        dag_id="news_pipeline",
+        dag_id="news_scheduled_pipeline",
         start_date=datetime(2026, 1, 1),
         # 뉴스가 뜸한 심야(22~05시)는 건너뛴다. 06~21시 매 정각, KST 기준.
         schedule="0 6-21 * * *",
@@ -25,7 +25,7 @@ if dag and task:
         max_active_runs=1,
         tags=["news", "triples"],
     )
-    def news_pipeline():
+    def news_scheduled_pipeline():
         @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
         def collect_articles() -> dict[str, Any]:
             from pipelines.news.jobs.collect_articles import run
@@ -34,7 +34,7 @@ if dag and task:
             clusters = result["clusters"]
             if clusters["created"] + clusters["updated"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "할 일이 없었다"다.
-                # 갱신할 카운터도 없는 시간이라 events_pipeline 을 깨울 이유가 없다.
+                # 갱신할 카운터도 없는 시간이라 events_promote_clusters 를 깨울 이유가 없다.
                 raise AirflowSkipException("클러스터 생성·갱신 0건 — 하류를 깨우지 않는다")
             return result
 
@@ -56,4 +56,4 @@ if dag and task:
 
         collect_articles() >> extract_triples() >> summarize_articles()
 
-    news_pipeline()
+    news_scheduled_pipeline()
