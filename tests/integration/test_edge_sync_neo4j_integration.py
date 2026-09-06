@@ -12,15 +12,16 @@ from datetime import date
 
 import pytest
 
-pytest.importorskip(
-    "pipelines.triples.ontology.predicate_dict",
-    reason="비공개 ontology가 없는 체크아웃(CI)에서는 스킵",
-)
+from pipelines.common.clients.neo4j import neo4j_database
+from pipelines.common.config import get_settings
+from pipelines.triples.loaders.neo4j import sync_edge_summaries
 
-from pipelines.common.clients.neo4j import neo4j_database  # noqa: E402
-from pipelines.triples.loaders.neo4j import sync_edge_summaries  # noqa: E402
-
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not get_settings().neo4j_uri, reason="NEO4J_URI 미설정(CI 등) — 로컬 Neo4j 필요"
+    ),
+]
 
 
 def test_sync_edge_summaries_sets_disclosure_arrays() -> None:
