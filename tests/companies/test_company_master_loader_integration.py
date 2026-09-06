@@ -181,7 +181,8 @@ def test_listed_common_stock_becomes_company_with_aliases() -> None:
     assert companies[0]["name"] == "테스트전자"
 
     assert _stock_links()[COMMON_SYMBOL] is not None
-    assert _aliases() == {"테스트전자", COMMON_SYMBOL}
+    # 종목명만 별칭이 된다. 단축코드는 companies.ticker로 정확히 조회되므로 넣지 않는다.
+    assert _aliases() == {"테스트전자"}
 
 
 def test_stock_without_corp_code_creates_no_company() -> None:
@@ -342,4 +343,4 @@ def test_rerun_is_idempotent() -> None:
     assert result.alias_count == 0, "이미 있는 별칭은 추가되지 않는다"
 
     assert len(_companies()) == 1
-    assert _aliases() == {"테스트전자", COMMON_SYMBOL}
+    assert _aliases() == {"테스트전자"}

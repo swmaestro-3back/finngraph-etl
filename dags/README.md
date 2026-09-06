@@ -6,6 +6,7 @@ Airflow DAG 정의 폴더. 각 하위 폴더는 **도메인**을 나타내며, A
 dags/
 ├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
 ├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
+├── events/       # 뉴스 클러스터 → Neo4j Event 승격 (news_scheduled_pipeline 의 Asset 으로 기동)
 ├── health/       # 운영 상 헬스체크용
 ├── news/         # 뉴스 수집·군집화 → 트리플 추출 → 요약 통합 파이프라인
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
@@ -26,15 +27,16 @@ dags/
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
+| events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/pipeline.py` | `news_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
+| news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
 | stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
-| themes | `themes/pipeline.py` | `themes_pipeline` | `themes` | 수동 |
+| themes | `themes/init.py` | `themes_init` | `themes` | 수동 |
 
 ## Asset 의존
 
@@ -54,25 +56,34 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 `stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
 기동한다. PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 시세와 재무가 모두 필요하다.
 
+```
+news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters ──► events_promote_clusters
+  (06~21시 매 정각)                                            (sync_events ∥ generate_events)
+```
+
+`collect_articles`는 이번 런에 클러스터를 하나도 생성·갱신하지 않았으면 스킵해 Asset을
+발행하지 않는다 — Event로 올리거나 갱신할 것이 없는 시간에 LLM·Neo4j 왕복을 만들지 않기
+위해서다. 뒤따르는 `extract_triples`는 `trigger_rule="all_done"`이라 그 스킵과 무관하게
+밀린 기사를 처리한다.
+
 ## 독립실행 Crons
 
 Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 DAG들.
 
 ```mermaid
 flowchart TB
-    NP["news_pipeline<br/><code>0 6-21 * * *</code>"]
     CDP["companies_dart_pipeline<br/><code>0 9 * * *</code>"]
     CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
     SBD["stocks_backfill_daily_candles<br/>수동"]
     SBI["stocks_backfill_investor_flows<br/>수동"]
-    TR["themes_pipeline<br/>수동"]
+    TR["themes_init<br/>수동"]
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class NP,CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
+    class CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
 ```
 
 ## `dag_id`
@@ -81,7 +92,7 @@ flowchart TB
 
 ```python
 @dag(
-    dag_id="news_pipeline",   # ← UI에 뜨는 이름, 전역 유일해야 함
+    dag_id="news_scheduled_pipeline",   # ← UI에 뜨는 이름, 전역 유일해야 함
     ...
 )
 ```
@@ -90,7 +101,7 @@ flowchart TB
 - **전역 유일** — 두 DAG가 같은 `dag_id`를 쓰면 충돌한다.
   - 폴더가 이미 도메인을 나타내지만, UI는 평면(flat) 네임스페이스라 **`dag_id`에는 도메인 접두사를 유지**한다.
 - **파일명 = `dag_id`에서 도메인 접두사를 뺀 것** — UI에서 본 `dag_id`로 소스 파일을 바로 찾을 수 있어야 한다.
-  - 예: `dag_id="news_pipeline"` ↔ `dags/news/pipeline.py`, `dag_id="companies_collect_kis_financials"` ↔ `dags/companies/collect_kis_financials.py`
+  - 예: `dag_id="news_scheduled_pipeline"` ↔ `dags/news/scheduled_pipeline.py`, `dag_id="companies_collect_kis_financials"` ↔ `dags/companies/collect_kis_financials.py`
 - **단일 task DAG는 job 이름(동사구)을, 복수 task 오케스트레이션 DAG는 `*_pipeline` 명사형을 쓴다.**
   세부 규칙과 동사 사전은 루트 `README.md`의 "네이밍" 섹션을 따른다.
 

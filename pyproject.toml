@@ -52,6 +52,12 @@ news = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# 프롬프트/온톨로지는 서술형 프롬프트·사전 데이터 파일이라 lint와 format 모두에서 제외한다.
+# (format이 수천 줄짜리 dict 리터럴의 따옴표·줄바꿈을 전부 다시 써서 diff를 오염시킨다.)
+extend-exclude = [
+  "pipelines/**/prompts/",
+  "pipelines/**/ontology/",
+]
 
 [tool.ruff.lint]
 # AIR: Airflow 관련 정적 검증(API deprecation, DAG 인자/네이밍 관례 등). DagBag 런타임
@@ -59,16 +65,13 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "AIR"]
 
 [tool.ruff.lint.isort]
-# prompts/ontology는 gitignore로 비공개라 CI 체크아웃에 파일이 없다. 파일 존재 여부로
-# first-party를 추론하면 CI에서 서드파티로 오분류되므로 명시적으로 고정한다.
+# prompts/ontology는 ruff exclude 대상이라 파일 존재 여부로 first-party를 추론하면
+# 서드파티로 오분류될 수 있으므로 명시적으로 고정한다.
 known-first-party = ["pipelines", "tests", "dags"]
 
 [tool.ruff.lint.per-file-ignores]
 # 테스트에 하드코딩된 기사 원문 등 긴 문자열 데이터는 줄길이 제한에서 제외한다.
 "tests/**" = ["E501"]
-# 프롬프트/온톨로지의 서술형 프롬프트·사전 데이터도 긴 문자열이라 줄길이 제한에서 제외한다.
-"pipelines/triples/prompts/**" = ["E501"]
-"pipelines/triples/ontology/**" = ["E501"]
 # KPF-BERT NER 라벨 목록 등 순수 데이터 파일도 줄길이 제한에서 제외한다.
 "pipelines/triples/utils/kpf.py" = ["E501"]
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 from datetime import datetime
 
 try:
-    from airflow.exceptions import AirflowSkipException
     from airflow.sdk import Asset, AssetAny, dag, task
+    from airflow.sdk.exceptions import AirflowSkipException
 except ImportError:
     AirflowSkipException = None
     Asset = None

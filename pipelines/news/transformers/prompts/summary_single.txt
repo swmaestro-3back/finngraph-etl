@@ -1,0 +1,9 @@
+Summarize the article below in 4-5 sentences. Put the core event in the first sentence.
+
+[Title]
+$title
+
+[Body (the only source of truth)]
+$source_text
+
+[Summary]

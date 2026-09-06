@@ -273,6 +273,7 @@ def save_news_items(
                 news_id = save_result["id"]
                 action = save_result["action"]
                 item["_news_id"] = int(news_id)
+                item["_save_action"] = action
 
                 if action == "inserted":
                     inserted_count += 1
@@ -544,38 +545,6 @@ def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
     logging.info(f"요약 저장 완료: {saved_count}개")
 
     return {"saved_count": saved_count}
-
-
-def assign_cluster_representatives(groups: list[list[int]]) -> int:
-    """클러스터 그룹별로 멤버 전원의 cluster_rep_news_id를 대표 뉴스 id로 기록한다.
-
-    각 그룹의 첫 번째 id가 대표이며, 대표 자신도 자기 id를 가리킨다 (단독 기사 포함).
-    갱신된 행 수를 반환한다.
-    """
-
-    updated_count = 0
-
-    with session_scope() as session:
-        for group in groups:
-            member_ids = sorted({int(news_id) for news_id in group if news_id})
-
-            if not member_ids:
-                continue
-
-            rep_id = int(group[0])
-            result = session.execute(
-                text(
-                    """
-                    UPDATE news
-                    SET cluster_rep_news_id = :rep_id
-                    WHERE id = ANY(:ids);
-                    """
-                ),
-                {"rep_id": rep_id, "ids": member_ids},
-            )
-            updated_count += result.rowcount or 0
-
-    return updated_count
 
 
 def fetch_search_keywords() -> list[dict[str, Any]]:

@@ -66,14 +66,14 @@ def remove_duplicate_by_url(
                 }
             )
 
-            title = get_printable_text(item.get("title", ""))
-            logging.info(f"URL 중복 제거: {title}")
             continue
 
         unique_items.append(item)
 
         for url_key in url_keys:
             seen_url_map[url_key] = item
+
+    logging.info(f"총 {len(items)}개 중 {len(removed_items)}개 URL 중복으로 인한 드랍")
 
     return unique_items, removed_items
 
@@ -104,10 +104,11 @@ def remove_duplicate_by_title(
                 }
             )
 
-            logging.info(f"제목 중복 제거: {title}")
             continue
 
         unique_items.append(item)
         seen_title_map[normalized_title] = item
+
+    logging.info(f"총 {len(items)}개 중 {len(removed_items)}개 제목 중복으로 인한 드랍")
 
     return unique_items, removed_items
