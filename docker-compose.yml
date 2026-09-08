@@ -55,7 +55,7 @@ x-airflow-common: &airflow-common
 
 services:
   db:
-    image: timescale/timescaledb:latest-pg16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${ETL_DB_USER:-threeback}
       POSTGRES_PASSWORD: ${ETL_DB_PASSWORD:-12345678}
@@ -116,7 +116,7 @@ services:
         done
     restart: "no"
 
-  # Airflow 메타데이터 전용 DB. ETL 데이터(db, timescale)와 수명주기/백업 정책을 분리한다.
+  # Airflow 메타데이터 전용 DB. ETL 데이터(db)와 수명주기/백업 정책을 분리한다.
   airflow-db:
     image: postgres:16
     profiles: ["airflow"]
