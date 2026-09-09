@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pipelines.themes.loaders.embeddings import theme_text
+from pipelines.themes.jobs.embed_themes import theme_text
 
 
 def test_theme_text_joins_name_and_description():
