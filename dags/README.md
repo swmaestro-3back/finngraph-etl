@@ -29,7 +29,7 @@ dags/
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
+| news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-18 * * *` (06~18시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
@@ -70,7 +70,7 @@ RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 �
 
 ```
 news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters ──► events_promote_clusters
-  (06~21시 매 정각)                                            (sync_events ∥ generate_events)
+  (06~18시 매 정각)                                            (sync_events ∥ generate_events)
 ```
 
 `collect_articles`는 이번 런에 클러스터를 하나도 생성·갱신하지 않았으면 스킵해 Asset을
