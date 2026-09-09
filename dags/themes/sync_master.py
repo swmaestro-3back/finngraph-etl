@@ -12,19 +12,18 @@ except ImportError:
 SOURCES: tuple[str, ...] = ("judal", "naver")
 
 if dag and task:
-    # 테마 편입 확정 신호. 수집 대상 파생(companies_sync_service_companies)이 구독한다.
     theme_stocks_loaded = Asset("etl://themes/stocks")
 
     @dag(
-        dag_id="themes_init",
+        dag_id="themes_sync_master",
         start_date=datetime(2026, 1, 1),
-        schedule=None,
+        schedule="0 23 * * 0",  # 매주 일요일 저녁 11시 스케줄링
         catchup=False,
         max_active_runs=1,
         tags=["themes"],
         default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
     )
-    def themes_init():
+    def themes_sync_master():
         @task
         def extract_source(source_name: str) -> str:
             from pipelines.themes.jobs.extract_source import run
@@ -32,22 +31,22 @@ if dag and task:
             return run(source_name)
 
         @task
-        def validate_themes(source_paths: list[str]) -> str:
-            from pipelines.themes.jobs.validate_themes import run
+        def merge_themes(source_paths: list[str]) -> str:
+            from pipelines.themes.jobs.merge_themes import run
 
             return run(source_paths)
 
         @task
-        def load_graph(validated_path: str) -> None:
-            from pipelines.themes.jobs.load_graph import run
+        def load_neo4j(merged_path: str) -> None:
+            from pipelines.themes.jobs.load_neo4j import run
 
-            run(validated_path)
+            run(merged_path)
 
         @task(outlets=[theme_stocks_loaded])
-        def load_rdb(validated_path: str) -> None:
-            from pipelines.themes.jobs.load_rdb import run
+        def load_postgres(merged_path: str) -> None:
+            from pipelines.themes.jobs.load_postgres import run
 
-            run(validated_path)
+            run(merged_path)
 
         @task
         def embed_themes() -> None:
@@ -55,19 +54,16 @@ if dag and task:
 
             run()
 
-        # SOURCE별 task를 생성해 병렬 실행되도록 fan-out
-        # extracted 리스트는 SOURCES 순서를 유지
+        # SOURCE별 task를 생성해 병렬 실행 fan-out
         extracted = [
             extract_source.override(task_id=f"extract_{source}")(source) for source in SOURCES
         ]
 
-        validated = validate_themes(extracted)
+        merged = merge_themes(extracted)
 
-        graph_loaded = load_graph(validated)
-        load_rdb(validated)
+        neo4j_loaded = load_neo4j(merged)
+        load_postgres(merged)
 
-        graph_loaded >> embed_themes()
+        neo4j_loaded >> embed_themes()
 
-    # 최종 흐름: extract(소스 병렬) -> validate -> (load_graph ∥ load_rdb) -> embed
-    # 전량 삭제는 각 로더(load_graph/load_rdb) 안에서 적재 직전에 일어난다.
-    themes_init()
+    themes_sync_master()
