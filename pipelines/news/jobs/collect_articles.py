@@ -260,6 +260,7 @@ def run() -> dict[str, Any]:
         seeds,
         threshold=settings.cluster_threshold,
         cap=settings.cluster_max_articles,
+        decay_half_life_days=settings.cluster_decay_half_life_days,
     )
     selected = [new_items[index] for assignment in assignments for index in assignment.kept]
     stats = cluster_stats(assignments, len(seeds), len(new_items))

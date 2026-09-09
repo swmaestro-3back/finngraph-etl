@@ -10,6 +10,9 @@ DB 를 모르는 순수 함수만 두어 로더 없이 테스트한다.
 TF-IDF 에 넣을 때는 original_size 로 나눠 "평균 기사 한 건" 스케일로 되돌린다 — 합을
 그대로 log1p 에 넣으면 기사가 쌓일수록 기업명 토큰 하나가 벡터를 지배해, 같은 기업의
 다른 사건까지 빨려 들어간다.
+
+병합 전 새 기사와 시드의 유사도에 시간 감쇠를 건다 — 시드의 마지막 보도 이후 경과일에 따른
+반감 계수를 곱한다. 윈도우 경계에서 딱 끊기는 대신 "어제 사건" 이 "열흘 전 사건" 보다 먼저 붙는다.
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+
+import numpy as np
 
 from pipelines.news.transformers.clustering.cluster import (
     DEFAULT_THRESHOLD,
@@ -42,6 +47,8 @@ class ClusterSeed:
     member_count: int
     # 저장된 멤버 중 가장 늦은 보도일(KST). cap 의 "날짜가 바뀌면 1개 더" 판정에 쓴다.
     last_stored_date: date | None
+    # 판정된 모든 기사(버린 것 포함)의 마지막 보도 시각. 시간 감쇠의 기준점. None 이면 감쇠 없음.
+    last_published_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -126,6 +133,18 @@ def select_within_cap(
     return [c[0] for c in kept], [c[0] for c in dropped]
 
 
+def time_decay(gap_days: np.ndarray, half_life_days: float) -> np.ndarray:
+    """경과일에 따른 유사도 감쇠 계수. half_life_days 마다 절반이 된다.
+
+    음수 경과(시드의 마지막 기사보다 먼저 보도된 늦게 도착한 기사)는 감쇠하지 않는다.
+    half_life_days 가 0 이하면 감쇠를 끈다(전부 1).
+    """
+    gap = np.asarray(gap_days, dtype=np.float64)
+    if half_life_days <= 0:
+        return np.ones_like(gap)
+    return 0.5 ** (np.maximum(gap, 0.0) / half_life_days)
+
+
 def pick_representative(member_terms: list[Terms]) -> tuple[int, float]:
     """저장된 멤버들만으로 TF-IDF 를 만들어 메도이드 인덱스와 응집도를 돌려준다.
 
@@ -147,6 +166,7 @@ def assign_batch(
     seeds: list[ClusterSeed],
     threshold: float = DEFAULT_THRESHOLD,
     cap: int = 3,
+    decay_half_life_days: float = 0.0,
 ) -> list[ClusterAssignment]:
     """새 기사들을 기존 클러스터(seeds)에 합류시키거나 새 클러스터로 묶는다.
 
@@ -154,6 +174,8 @@ def assign_batch(
     클러스터 합류가 같은 threshold 로 한 번에 결정된다. 시드의 병합 가중치는 저장된
     멤버 수다 — 판정 누적 수(original_size)는 상한이 없어 큰 클러스터가 새 기사 신호를
     완전히 눌러 버린다. 새 기사가 하나도 안 붙은 시드는 결과에 없다.
+
+    decay_half_life_days: 시드-새 기사 유사도의 반감기(일). 0 이면 감쇠 없음.
     """
     if len(documents) != len(published_ats):
         raise ValueError("documents 와 published_ats 길이가 다릅니다.")
@@ -163,6 +185,12 @@ def assign_batch(
     n_seeds = len(seeds)
     corpus = [profile_terms(seed) for seed in seeds] + documents
     similarity = build_tfidf(corpus).cosine_similarity()
+
+    if n_seeds and decay_half_life_days > 0:
+        decay = _seed_decay(seeds, published_ats, decay_half_life_days)
+        similarity[:n_seeds, n_seeds:] *= decay
+        similarity[n_seeds:, :n_seeds] *= decay.T
+
     groups = agglomerative(
         similarity,
         threshold,
@@ -220,3 +248,19 @@ def assign_batch(
     # 큰 그룹부터. 로그와 테스트에서 읽기 쉽다.
     assignments.sort(key=lambda assignment: len(assignment.members), reverse=True)
     return assignments
+
+
+def _seed_decay(
+    seeds: list[ClusterSeed], published_ats: list[datetime], half_life_days: float
+) -> np.ndarray:
+    """(시드 수, 새 기사 수) 감쇠 계수. 마지막 보도 시각이 없는 시드는 감쇠하지 않는다."""
+    document_epochs = np.array([moment.timestamp() for moment in published_ats], dtype=np.float64)
+    seed_epochs = np.array(
+        [
+            seed.last_published_at.timestamp() if seed.last_published_at is not None else np.nan
+            for seed in seeds
+        ],
+        dtype=np.float64,
+    )
+    gap_days = (document_epochs[None, :] - seed_epochs[:, None]) / 86400.0
+    return time_decay(np.nan_to_num(gap_days, nan=0.0), half_life_days)

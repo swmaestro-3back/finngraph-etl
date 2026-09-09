@@ -299,3 +299,59 @@ def test_assign_batch_empty_profile_seed_never_matches():
 def test_assign_batch_rejects_length_mismatch():
     with pytest.raises(ValueError):
         assign_batch([document_terms("삼성전자")], [], seeds=[], threshold=0.35, cap=3)
+
+
+# ── 시간 감쇠 ────────────────────────────────────────────────────────────────
+
+
+def test_time_decay_halves_per_half_life_and_ignores_negative_gap():
+    import numpy as np
+
+    from pipelines.news.transformers.clustering.incremental import time_decay
+
+    factors = time_decay(np.array([0.0, 7.0, 14.0, -3.0]), half_life_days=7.0)
+
+    assert factors.tolist() == pytest.approx([1.0, 0.5, 0.25, 1.0])
+
+
+def test_time_decay_disabled_when_half_life_is_zero():
+    import numpy as np
+
+    from pipelines.news.transformers.clustering.incremental import time_decay
+
+    assert time_decay(np.array([0.0, 30.0]), half_life_days=0.0).tolist() == [1.0, 1.0]
+
+
+def test_assign_batch_decay_prefers_recent_seed_and_blocks_stale_one():
+    # 같은 제목의 시드 둘. 최근 시드(9/1)에는 붙고, 오래된 시드(8/1)만 있으면 감쇠 때문에 못 붙는다.
+    recent = _seed(["삼성전자 유상증자 결정"], cluster_id=1, last_published_at=_at(1))
+    stale = _seed(
+        ["삼성전자 유상증자 결정"],
+        cluster_id=2,
+        last_published_at=datetime(2026, 8, 1, 9, tzinfo=KST),
+    )
+    documents = [document_terms("삼성전자 유상증자 발표")]
+
+    [with_both] = assign_batch(
+        documents, [_at(2)], seeds=[stale, recent], threshold=0.35, cap=3, decay_half_life_days=7.0
+    )
+    assert with_both.seed is recent
+
+    [stale_only] = assign_batch(
+        documents, [_at(2)], seeds=[stale], threshold=0.35, cap=3, decay_half_life_days=7.0
+    )
+    assert stale_only.seed is None  # 한 달 경과 → 0.5**(32/7) ≈ 0.04 배
+
+    [no_decay] = assign_batch(documents, [_at(2)], seeds=[stale], threshold=0.35, cap=3)
+    assert no_decay.seed is stale  # 감쇠를 끄면 그대로 붙는다
+
+
+def test_assign_batch_seed_without_last_published_at_is_not_decayed():
+    seed = _seed(["삼성전자 유상증자 결정"], last_published_at=None)
+    documents = [document_terms("삼성전자 유상증자 발표")]
+
+    [assignment] = assign_batch(
+        documents, [_at(30)], seeds=[seed], threshold=0.35, cap=3, decay_half_life_days=1.0
+    )
+
+    assert assignment.seed is seed

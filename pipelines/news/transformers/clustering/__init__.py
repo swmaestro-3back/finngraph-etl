@@ -13,6 +13,7 @@ from pipelines.news.transformers.clustering.incremental import (
     merge_term_weights,
     pick_representative,
     sum_terms,
+    time_decay,
     top_keywords,
 )
 from pipelines.news.transformers.clustering.preprocess import document_terms
@@ -34,5 +35,6 @@ __all__ = [
     "pick_representative",
     "select_top_members",
     "sum_terms",
+    "time_decay",
     "top_keywords",
 ]
