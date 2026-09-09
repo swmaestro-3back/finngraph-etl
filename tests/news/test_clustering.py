@@ -212,3 +212,55 @@ def test_medoid_and_cohesion_matches_build_clusters():
     assert (cluster.representative, cluster.cohesion) == (representative, cohesion)
     assert representative == 1  # 0·2 모두와 가장 가까운 문서
     assert singleton.cohesion == 1.0
+
+
+# ── 병합 루프 리팩터링 등가성 ──────────────────────────────
+
+
+def _reference_agglomerative(similarity, threshold, initial_sizes, seed_flags):
+    """리팩터링 전 구현. 매 반복 n×n 마스크를 새로 만드는 느린 버전을 그대로 옮겼다."""
+    n = similarity.shape[0]
+    groups = {i: [i] for i in range(n)}
+    sizes = np.asarray(initial_sizes, dtype=np.float64).copy()
+    is_seed = np.asarray(seed_flags, dtype=bool).copy()
+    linkage = similarity.astype(np.float64).copy()
+    np.fill_diagonal(linkage, -1.0)
+    active = np.ones(n, dtype=bool)
+    while True:
+        allowed = np.outer(active, active) & ~np.outer(is_seed, is_seed)
+        masked = np.where(allowed, linkage, -1.0)
+        best = int(np.argmax(masked))
+        i, j = divmod(best, n)
+        if masked[i, j] < threshold:
+            break
+        size_i, size_j = sizes[i], sizes[j]
+        merged = (linkage[i] * size_i + linkage[j] * size_j) / (size_i + size_j)
+        groups[i] = groups[i] + groups[j]
+        del groups[j]
+        active[j] = False
+        sizes[i] = size_i + size_j
+        is_seed[i] = is_seed[i] or is_seed[j]
+        linkage[i, :] = merged
+        linkage[:, i] = merged
+        linkage[i, i] = -1.0
+    return [sorted(members) for members in groups.values()]
+
+
+def test_agglomerative_matches_reference_on_random_inputs():
+    from pipelines.news.transformers.clustering.cluster import agglomerative
+
+    rng = np.random.default_rng(20260909)
+    for _ in range(40):
+        n = int(rng.integers(2, 25))
+        raw = rng.random((n, n))
+        similarity = np.triu(raw, 1)
+        similarity = similarity + similarity.T
+        np.fill_diagonal(similarity, 1.0)
+        sizes = rng.integers(1, 4, size=n).astype(float)
+        seeds = rng.random(n) < 0.3
+        threshold = float(rng.choice([0.2, 0.35, 0.5, 0.7]))
+
+        fast = agglomerative(similarity, threshold, initial_sizes=sizes, seed_flags=seeds)
+        slow = _reference_agglomerative(similarity, threshold, sizes, seeds)
+
+        assert sorted(fast) == sorted(slow)
