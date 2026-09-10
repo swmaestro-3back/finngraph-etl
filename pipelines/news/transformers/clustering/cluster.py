@@ -38,6 +38,11 @@ def agglomerative(
       평균에서 그만큼의 무게를 갖는다. None 이면 전부 1 이다.
     seed_flags: True 인 행은 기존 클러스터의 시드다. 시드끼리는 합치지 않으며, 시드를
       흡수한 군집도 계속 시드로 취급해 다른 시드와 합쳐지지 않는다.
+
+    "합칠 수 없는 쌍" 은 bool 행렬(block) 하나로 관리한다. 시드×시드 쌍으로 시작해, 두 군집이
+    합쳐지면 제약도 합쳐진다 — 구성원 중 하나라도 k 와 막혀 있으면 새 군집도 k 와 막힌다.
+    병합할 때마다 군집 간 평균 유사도(linkage)와 제약을 합쳐진 행·열에만 다시 쓴다. 매 반복
+    n×n 마스크를 새로 만들지 않아 병합 한 번의 비용이 argmax 한 번으로 줄어든다.
     """
     n = similarity.shape[0]
     if n == 0:
@@ -52,20 +57,25 @@ def agglomerative(
     sizes = (
         np.ones(n, dtype=np.float64)
         if initial_sizes is None
-        else np.asarray(initial_sizes, dtype=np.float64)
+        else np.array(initial_sizes, dtype=np.float64)  # 복사 — 호출자의 배열을 바꾸지 않는다
     )
-    is_seed = np.zeros(n, dtype=bool) if seed_flags is None else np.asarray(seed_flags, dtype=bool)
+
+    # 합칠 수 없는 쌍. 자기 자신, 시드끼리, 그리고 이미 흡수돼 사라진 행.
+    block = np.zeros((n, n), dtype=bool)
+    if seed_flags is not None:
+        is_seed = np.asarray(seed_flags, dtype=bool)
+        block |= np.outer(is_seed, is_seed)
+    np.fill_diagonal(block, True)
+
     # 군집 간 평균 유사도. 병합할 때마다 크기 가중 평균으로 갱신한다.
     linkage = similarity.astype(np.float64).copy()
-    np.fill_diagonal(linkage, -1.0)
-    active = np.ones(n, dtype=bool)
+    # 막힌 쌍을 -1 로 가린 병합 후보 점수. 바뀐 행·열만 다시 쓴다.
+    scores = np.where(block, -1.0, linkage)
 
     while True:
-        allowed = np.outer(active, active) & ~np.outer(is_seed, is_seed)
-        masked = np.where(allowed, linkage, -1.0)
-        best = int(np.argmax(masked))
+        best = int(np.argmax(scores))
         i, j = divmod(best, n)
-        if masked[i, j] < threshold:
+        if scores[i, j] < threshold:
             break
 
         size_i, size_j = sizes[i], sizes[j]
@@ -73,13 +83,22 @@ def agglomerative(
 
         groups[i] = groups[i] + groups[j]
         del groups[j]
-        active[j] = False
         sizes[i] = size_i + size_j
-        is_seed[i] = is_seed[i] or is_seed[j]
 
         linkage[i, :] = merged
         linkage[:, i] = merged
-        linkage[i, i] = -1.0
+
+        # 제약 전파: j 가 막혀 있던 상대는 합쳐진 군집 i 도 막힌다.
+        block[i, :] |= block[j, :]
+        block[:, i] |= block[:, j]
+        # j 는 사라진다. 어떤 행이 나중에 갱신돼도 j 열이 되살아나지 않도록 막아 둔다.
+        block[j, :] = True
+        block[:, j] = True
+
+        scores[j, :] = -1.0
+        scores[:, j] = -1.0
+        scores[i, :] = np.where(block[i], -1.0, linkage[i])
+        scores[:, i] = scores[i, :]
 
     return [sorted(members) for members in groups.values()]
 

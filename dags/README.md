@@ -29,14 +29,14 @@ dags/
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-21 * * *` (06~21시 매 정각) |
+| news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-18 * * *` (06~18시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
 | stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
-| themes | `themes/init.py` | `themes_init` | `themes` | 수동 |
+| themes | `themes/sync_master.py` | `themes_sync_master` | `themes` | `0 23 * * 0` (매주 일요일 23시) |
 
 ## Asset 의존
 
@@ -57,8 +57,20 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 기동한다. PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 시세와 재무가 모두 필요하다.
 
 ```
+themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
+  (일요일 23시)                                                  ├──► companies_sync_service_companies
+  extract_judal ∥ extract_naver → merge_themes                   │      (AssetAny: 둘 중 하나만 갱신돼도 기동)
+    → (load_neo4j ∥ load_postgres) → embed_themes                │
+companies_sync_master ───────────► etl://companies/linked ──────┘
+```
+
+`themes_sync_master`에서 Asset을 발행하는 task는 `load_postgres` 하나다 — 수집 대상 파생은
+RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 기다릴 이유가 없다. `embed_themes`는
+`load_neo4j` 뒤에만 걸려 있어 `load_postgres`와는 독립적으로 실패·재시도된다.
+
+```
 news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters ──► events_promote_clusters
-  (06~21시 매 정각)                                            (sync_events ∥ generate_events)
+  (06~18시 매 정각)                                            (sync_events ∥ generate_events)
 ```
 
 `collect_articles`는 이번 런에 클러스터를 하나도 생성·갱신하지 않았으면 스킵해 Asset을
@@ -77,13 +89,12 @@ flowchart TB
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
     SBD["stocks_backfill_daily_candles<br/>수동"]
     SBI["stocks_backfill_investor_flows<br/>수동"]
-    TR["themes_init<br/>수동"]
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class CDP,CGD,SCD,SBD,SBI,TR,HC,DCD,DBF cron
+    class CDP,CGD,SCD,SBD,SBI,HC,DCD,DBF cron
 ```
 
 ## `dag_id`

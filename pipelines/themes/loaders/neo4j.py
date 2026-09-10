@@ -10,35 +10,14 @@ from pipelines.themes.models import Theme
 
 logger = get_logger(__name__)
 
-# 벡터 인덱스(theme_embedding, belongs_to_reason_embedding)는 migrations/neo4j 에서
-# 수동 적용한다. GraphRAG 조회 경로: db.index.vector.queryNodes('theme_embedding', k, $qvec)
-# → BELONGS_TO 1-hop 확장.
 
+async def upsert_themes(themes: list[Theme]) -> dict[str, Any]:
+    """Theme 노드와 BELONGS_TO 간선을 추가한다.
 
-async def delete_all_themes() -> None:
-    """Theme 노드와 여기 붙은 간선을 전부 삭제한다. 전량 재적재 전에 호출한다."""
-
-    await neo4j_database.execute(
-        """
-MATCH (t:Theme)
-DETACH DELETE t
-"""
-    )
-
-
-async def replace_all_themes(themes: list[Theme]) -> dict[str, Any]:
-    """검증된 스냅샷으로 Theme 전량 삭제-재적재. RDB(load_themes)와 같은 전략이다.
-
-    Postgres와 달리 호출 단위 자동 커밋이라 삭제-적재가 한 트랜잭션은 아니다.
+    기존 Theme(merge_themes 의 merge_existing 이 DB 쪽 이름으로 맞춰 보낸 것)은 sources 만
+    합집합으로 늘리고 description 은 그대로 둔다. 간선은 ON CREATE 만 있어 기존 편입
+    종목의 reason 과 reason_embedding 은 건드리지 않고, 신규 편입 종목만 추가된다.
     """
-
-    await delete_all_themes()
-    await upsert_themes(themes)
-    return {"themes": len(themes)}
-
-
-async def upsert_themes(themes: list[Theme]) -> None:
-    """Theme 노드와 BELONGS_TO 간선을 적재한다."""
 
     batch = [
         {
@@ -61,6 +40,8 @@ ON CREATE SET
     t.description = theme.description,
     t.source = theme.source,
     t.sources = theme.sources
+ON MATCH SET
+    t.sources = t.sources + [s IN theme.sources WHERE NOT s IN t.sources]
 WITH t, theme
 UNWIND theme.companies AS company
 MATCH (c:Company {ticker: company.ticker})
@@ -71,14 +52,18 @@ ON CREATE SET r.reason = company.reason
     )
 
     logger.info("%d개 Theme 및 BELONGS_TO 관계 적재 완료", len(themes))
+    return {"themes": len(themes)}
 
 
 async def fetch_theme_embedding_targets() -> list[dict[str, Any]]:
-    """전체 Theme 의 임베딩 대상 재료. 매 회차 전량 재임베딩한다."""
+    """
+    description 임베딩이 아직 안된 테마 조회
+    """
 
     records = await neo4j_database.execute(
         """
 MATCH (t:Theme)
+WHERE t.embedding IS NULL
 RETURN t.name AS name,
        t.description AS description
 """
@@ -87,12 +72,15 @@ RETURN t.name AS name,
 
 
 async def fetch_reason_embedding_targets() -> list[dict[str, Any]]:
-    """reason 이 있는 BELONGS_TO 간선의 임베딩 대상 재료. 간선 키는 (ticker, 테마명)이다."""
+    """
+    reason 임베딩이 아직 안된 BELONGS_TO 간선 조회
+    """
 
     records = await neo4j_database.execute(
         """
 MATCH (c:Company)-[r:BELONGS_TO]->(t:Theme)
 WHERE r.reason IS NOT NULL
+  AND r.reason_embedding IS NULL
 RETURN c.ticker AS ticker,
        t.name AS theme_name,
        r.reason AS reason

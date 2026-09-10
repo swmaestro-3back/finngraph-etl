@@ -1,11 +1,3 @@
-"""news_clusters 로더 — 배치 간 클러스터 원장의 조회·기록.
-
-판정 로직은 pipelines/news/transformers/clustering/incremental.py 에 있고, 여기는 그 입력
-(시드)과 출력(클러스터 행, news.cluster_id / cluster_terms)의 DB 접근만 담당한다.
-ClusterSeed 는 incremental 모듈에서 직접 가져온다 — 패키지 barrel 은 Kiwi 를 import 하는
-preprocess 까지 끌어와 로더만 쓰는 job 이 무거워진다.
-"""
-
 import json
 from datetime import datetime
 from typing import Any
@@ -17,11 +9,6 @@ from pipelines.news.transformers.clustering.incremental import ClusterSeed
 
 
 def fetch_active_cluster_seeds(window_start: datetime) -> list[ClusterSeed]:
-    """윈도우 안(last_published_at >= window_start) 클러스터를 판정 시드로 읽는다.
-
-    last_stored_date 는 저장된 멤버(news.cluster_id)만으로 센다 — cap 의 날짜 예외는
-    "마지막으로 저장한 기사" 기준이고, last_published_at 은 버린 기사까지 반영한 값이다.
-    """
 
     query = """
         SELECT
@@ -33,7 +20,8 @@ def fetch_active_cluster_seeds(window_start: datetime) -> list[ClusterSeed]:
                 SELECT MAX((n.published_at AT TIME ZONE 'Asia/Seoul')::date)
                 FROM news n
                 WHERE n.cluster_id = nc.id
-            ) AS last_stored_date
+            ) AS last_stored_date,
+            nc.last_published_at
         FROM news_clusters nc
         WHERE nc.last_published_at >= :window_start
         ORDER BY nc.id ASC;
@@ -44,13 +32,14 @@ def fetch_active_cluster_seeds(window_start: datetime) -> list[ClusterSeed]:
 
         return [
             ClusterSeed(
-                cluster_id=int(cluster_id),
-                term_weights={token: float(weight) for token, weight in term_weights.items()},
-                original_size=int(original_size),
-                member_count=int(member_count),
-                last_stored_date=last_stored_date,
+                cluster_id=int(row.id),
+                term_weights={token: float(weight) for token, weight in row.term_weights.items()},
+                original_size=int(row.original_size),
+                member_count=int(row.member_count),
+                last_stored_date=row.last_stored_date,
+                last_published_at=row.last_published_at,
             )
-            for cluster_id, term_weights, original_size, member_count, last_stored_date in rows
+            for row in rows
         ]
 
 

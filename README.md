@@ -64,7 +64,7 @@ finngraph-etl/
 | `compute` | 기존 데이터에서 파생값 계산 |
 | `generate` | LLM 생성 |
 | `embed` | 벡터 임베딩 생성·적재 |
-| `extract` / `validate` / `load` | 단계 분리형 파이프라인의 ETL 각 단계 |
+| `extract` / `merge` / `load` | 단계 분리형 파이프라인의 ETL 각 단계 |
 | `summarize` | LLM 요약 |
 | `link` / `seed` | 그래프 간선 연결 / 초기 노드 적재 |
 - task를 나누는 기준은 **재시도 경계**입니다 — "여기가 깨졌을 때 앞 단계를 다시 돌리고

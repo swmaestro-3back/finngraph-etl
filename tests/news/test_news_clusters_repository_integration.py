@@ -124,6 +124,7 @@ def test_create_news_cluster_links_members_and_is_fetched_as_seed(news_rows):
     assert seed.term_weights == {"삼성전자": 6.0, "유상증자": 3.0}
     assert (seed.original_size, seed.member_count) == (3, 2)
     assert seed.last_stored_date == (PUBLISHED + timedelta(days=1)).date()
+    assert seed.last_published_at == PUBLISHED + timedelta(days=1)
 
     # 윈도우 밖이면 빠진다.
     assert all(

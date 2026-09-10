@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     bedrock_region: str = Field(default="", validation_alias="BEDROCK_REGION")
     # 테마 임베딩(themes.embedding/theme_stocks.reason_embedding) 생성용. 모델은
     # 질의 측(finngraph-kg-api)과 동일해야 하며, 임베딩 차원(1024)은 vector(1024)
-    # 스키마와 결합돼 코드 상수로 둔다 — pipelines/themes/loaders/embeddings.py 참고.
+    # 스키마와 결합돼 코드 상수로 둔다 — pipelines/themes/jobs/embed_themes.py 참고.
     bedrock_embedding_model: str = Field(
         default="amazon.titan-embed-text-v2:0",
         validation_alias="BEDROCK_EMBEDDING_MODEL",

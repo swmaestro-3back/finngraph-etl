@@ -1,4 +1,6 @@
-"""task: embed_themes — 테마 설명·편입 사유를 임베딩해 Neo4j에 기록한다."""
+"""
+테마 설명 및 편입 사유를 임베딩하여 저장 (Neo4j 전용)
+"""
 
 from __future__ import annotations
 
@@ -9,7 +11,6 @@ from pipelines.common.clients.bedrock import embed_texts
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
-from pipelines.themes.loaders.embeddings import EMBEDDING_DIM, theme_text
 from pipelines.themes.loaders.neo4j import (
     fetch_reason_embedding_targets,
     fetch_theme_embedding_targets,
@@ -21,9 +22,15 @@ logger = get_logger(__name__)
 
 EMBED_BATCH = 100
 
+EMBEDDING_DIM = 1024
+
+
+def theme_text(name: str, description: str | None) -> str:
+
+    return f"{name}\n{description or ''}"
+
 
 async def _embed_and_store(targets: list[dict[str, Any]], update_fn) -> int:
-    """대상을 청크로 임베딩해 기록한다. 청크 단위로 커밋된다."""
 
     count = 0
     for chunk in chunked(targets, EMBED_BATCH):
