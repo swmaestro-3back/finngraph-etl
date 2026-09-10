@@ -90,7 +90,7 @@ jobs:
     # test_db_extensions는 common(psycopg v3/SQLAlchemy) 경로를 스모크한다.
     services:
       postgres:
-        image: timescale/timescaledb:latest-pg16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: threeback
           POSTGRES_PASSWORD: 12345678
@@ -132,7 +132,6 @@ jobs:
         env:
           PGPASSWORD: "12345678"
         run: |
-          psql -h localhost -U threeback -d finngraph -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
           for migration in migrations/versions/*.sql; do
             echo "running migration $migration"
             psql -h localhost -U threeback -d finngraph -v ON_ERROR_STOP=1 -f "$migration"

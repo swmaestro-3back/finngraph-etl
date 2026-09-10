@@ -1,7 +1,7 @@
 """DB 스모크 통합 테스트.
 
 DB 컨테이너가 요구하는 확장이 실제로 설치되어 올라오는지 검증한다.
-- timescaledb: OHLCV 시계열 hypertable 용
+- vector: 테마 임베딩(themes.embedding) 등 pgvector 컬럼 용
 
 로컬 DB 컨테이너가 떠 있어야 하며(`docker compose up -d db`), 프로젝트의 실제 DB 레이어
 (`pipelines.common.clients.postgres`)를 그대로 사용하므로 연결 설정/DATABASE_URL 경로까지 함께 스모크된다.
@@ -18,7 +18,7 @@ from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 
-REQUIRED_EXTENSIONS = ("timescaledb",)
+REQUIRED_EXTENSIONS = ("vector",)
 
 
 @pytest.mark.integration
