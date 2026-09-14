@@ -30,13 +30,14 @@ class ClusterCandidate(BaseModel):
     member_count: int
     first_published_at: datetime
     last_published_at: datetime
+    # collect_articles 가 지은 사건 이름(news_clusters.title). 없으면 아직 승격하지 않는다.
+    title: str | None = None
 
 
 class EventDraft(BaseModel):
-    """LLM 구조화 출력. companies 를 앞에 두어 당사자를 먼저 특정하고 제목을 쓰게 한다."""
+    """LLM 구조화 출력 — 사건 당사자만. 제목은 news_clusters.title 을 그대로 쓴다."""
 
     companies: list[str] = Field(description="후보 목록에서 글자 그대로 고른 사건 당사자.")
-    title: str = Field(description="사건 이름을 붙인 짧은 한국어 명사구.")
 
 
 class EventRefresh(BaseModel):
@@ -53,7 +54,7 @@ class EventRefresh(BaseModel):
 
 
 class EventRecord(EventRefresh):
-    """create_event 입력 = EventRefresh + 검증된 draft."""
+    """create_event 입력 = EventRefresh + 클러스터 제목 + 검증된 당사자."""
 
     title: str
     companies: list[str]
