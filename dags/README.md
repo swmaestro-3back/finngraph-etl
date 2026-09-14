@@ -59,7 +59,7 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 ```
 themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
   (일요일 23시)                                                  ├──► companies_sync_service_companies
-  extract_judal ∥ extract_naver → merge_themes                   │      (AssetAny: 둘 중 하나만 갱신돼도 기동)
+  extract_judal → merge_themes (naver 는 사이트 개편으로 제외)                   │      (AssetAny: 둘 중 하나만 갱신돼도 기동)
     → (load_neo4j ∥ load_postgres) → embed_themes                │
 companies_sync_master ───────────► etl://companies/linked ──────┘
 ```
@@ -77,6 +77,11 @@ news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters �
 발행하지 않는다 — Event로 올리거나 갱신할 것이 없는 시간에 LLM·Neo4j 왕복을 만들지 않기
 위해서다. 뒤따르는 `extract_triples`는 `trigger_rule="all_done"`이라 그 스킵과 무관하게
 밀린 기사를 처리한다.
+
+`select_themes`가 최신 일봉 기준 급등락 테마(상승 상위 20 + 하락 상위 20, `NEWS_THEME_COUNT`)를
+고르고, `collect_articles`가 그 테마의 편입 기업을 검색한다(`특징주,{종목명}` 최신순, 기업별
+`search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
+`theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
 
 ## 독립실행 Crons
 
