@@ -41,7 +41,7 @@
 
 수집 → 배치 URL 중복 제거(출처 종목 병합) → 기사 유형 필터 → DB 저장된 URL 제거 → 후보 상장사
 부착(`transformers/company_candidates.py`, 검색 종목 ∪ KRX gazetteer) → LLM 관련성
-필터(제목·스니펫, `transformers/relevance_filter.py`) → 클러스터링·cap → 본문 크롤링 →
+필터(제목·스니펫, `transformers/filters/relevance_filter.py`) → 클러스터링·cap → 본문 크롤링 →
 저장 → 클러스터 기록 → `news_companies` 연결 → `search_history` 갱신.
 
 - LLM 필터가 클러스터링 앞에 있어 무관·시황 기사가 시드와 프로필을 오염시키지 않습니다.

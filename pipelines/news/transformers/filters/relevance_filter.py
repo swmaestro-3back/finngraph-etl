@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-PROMPT_DIRECTORY = Path(__file__).with_name("prompts")
+PROMPT_DIRECTORY = Path(__file__).resolve().parents[1] / "prompts"
 
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_BATCH_SIZE = 10

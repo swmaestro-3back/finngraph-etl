@@ -65,7 +65,7 @@ def validate_cluster_title(title: str, max_chars: int) -> str:
 
 
 class ClusterTitler:
-    """Bedrock 구조화 출력 체인. relevance_filter.RelevanceJudge 와 같은 구성."""
+    """Bedrock 구조화 출력 체인. filters.relevance_filter.RelevanceJudge 와 같은 구성."""
 
     def __init__(self, max_tokens: int = DEFAULT_MAX_TOKENS):
         from langchain_aws import ChatBedrockConverse
