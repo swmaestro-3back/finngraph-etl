@@ -31,6 +31,8 @@ def agglomerative(
     threshold: float = DEFAULT_THRESHOLD,
     initial_sizes: Sequence[float] | None = None,
     seed_flags: Sequence[bool] | None = None,
+    spans: Sequence[tuple[float, float]] | None = None,
+    max_span: float | None = None,
 ) -> list[list[int]]:
     """평균 연결 유사도가 threshold 이상인 두 군집을 반복해서 합친다.
 
@@ -38,6 +40,10 @@ def agglomerative(
       평균에서 그만큼의 무게를 갖는다. None 이면 전부 1 이다.
     seed_flags: True 인 행은 기존 클러스터의 시드다. 시드끼리는 합치지 않으며, 시드를
       흡수한 군집도 계속 시드로 취급해 다른 시드와 합쳐지지 않는다.
+    spans / max_span: 행별 (lo, hi) 범위(발행 시각)와 군집이 가질 수 있는 최대 폭. 합친 뒤
+      군집의 (min lo, max hi) 폭이 max_span 을 넘는 병합은 하지 않는다. 시드가 든 군집은
+      시드의 lo 가 군집의 시작이어야 한다 — 시드 시작보다 먼저 보도된 기사는 붙지 않는다.
+      한 번 넘친 쌍은 범위가 줄어들 일이 없으니 영구히 막는다.
 
     "합칠 수 없는 쌍" 은 bool 행렬(block) 하나로 관리한다. 시드×시드 쌍으로 시작해, 두 군집이
     합쳐지면 제약도 합쳐진다 — 구성원 중 하나라도 k 와 막혀 있으면 새 군집도 k 와 막힌다.
@@ -52,6 +58,8 @@ def agglomerative(
         raise ValueError("initial_sizes 길이가 similarity 크기와 다릅니다.")
     if seed_flags is not None and len(seed_flags) != n:
         raise ValueError("seed_flags 길이가 similarity 크기와 다릅니다.")
+    if spans is not None and len(spans) != n:
+        raise ValueError("spans 길이가 similarity 크기와 다릅니다.")
 
     groups: dict[int, list[int]] = {i: [i] for i in range(n)}
     sizes = (
@@ -62,10 +70,26 @@ def agglomerative(
 
     # 합칠 수 없는 쌍. 자기 자신, 시드끼리, 그리고 이미 흡수돼 사라진 행.
     block = np.zeros((n, n), dtype=bool)
+    is_seed = np.zeros(n, dtype=bool)
     if seed_flags is not None:
         is_seed = np.asarray(seed_flags, dtype=bool)
         block |= np.outer(is_seed, is_seed)
     np.fill_diagonal(block, True)
+
+    # 군집의 발행 범위와 시드 시작점(앵커). 병합할 때 합쳐 나간다.
+    lo = np.array([span[0] for span in spans], dtype=np.float64) if spans is not None else None
+    hi = np.array([span[1] for span in spans], dtype=np.float64) if spans is not None else None
+    anchor = [float(lo[k]) if is_seed[k] else None for k in range(n)] if spans is not None else []
+
+    def span_allows(i: int, j: int) -> bool:
+        if lo is None or max_span is None:
+            return True
+        merged_lo = min(lo[i], lo[j])
+        merged_hi = max(hi[i], hi[j])
+        if merged_hi - merged_lo > max_span:
+            return False
+        seed_start = anchor[i] if anchor[i] is not None else anchor[j]
+        return seed_start is None or merged_lo >= seed_start
 
     # 군집 간 평균 유사도. 병합할 때마다 크기 가중 평균으로 갱신한다.
     linkage = similarity.astype(np.float64).copy()
@@ -78,12 +102,22 @@ def agglomerative(
         if scores[i, j] < threshold:
             break
 
+        if not span_allows(i, j):
+            block[i, j] = block[j, i] = True
+            scores[i, j] = scores[j, i] = -1.0
+            continue
+
         size_i, size_j = sizes[i], sizes[j]
         merged = (linkage[i] * size_i + linkage[j] * size_j) / (size_i + size_j)
 
         groups[i] = groups[i] + groups[j]
         del groups[j]
         sizes[i] = size_i + size_j
+        if lo is not None:
+            lo[i] = min(lo[i], lo[j])
+            hi[i] = max(hi[i], hi[j])
+            if anchor[i] is None:
+                anchor[i] = anchor[j]
 
         linkage[i, :] = merged
         linkage[:, i] = merged

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import numpy as np
 
 from pipelines.news.transformers.clustering.cluster import (
@@ -10,6 +12,7 @@ from pipelines.news.transformers.clustering.cluster import (
     select_top_members,
 )
 from pipelines.news.transformers.clustering.vectorize import build_tfidf
+from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 
 def test_select_top_members_caps_and_prefers_similar_to_representative():
@@ -214,53 +217,95 @@ def test_medoid_and_cohesion_matches_build_clusters():
     assert singleton.cohesion == 1.0
 
 
-# ── 병합 루프 리팩터링 등가성 ──────────────────────────────
+# ── batch.py: 기사 → 문서 변환, 시드 창 ──────────────────────────
 
 
-def _reference_agglomerative(similarity, threshold, initial_sizes, seed_flags):
-    """리팩터링 전 구현. 매 반복 n×n 마스크를 새로 만드는 느린 버전을 그대로 옮겼다."""
-    n = similarity.shape[0]
-    groups = {i: [i] for i in range(n)}
-    sizes = np.asarray(initial_sizes, dtype=np.float64).copy()
-    is_seed = np.asarray(seed_flags, dtype=bool).copy()
-    linkage = similarity.astype(np.float64).copy()
-    np.fill_diagonal(linkage, -1.0)
-    active = np.ones(n, dtype=bool)
-    while True:
-        allowed = np.outer(active, active) & ~np.outer(is_seed, is_seed)
-        masked = np.where(allowed, linkage, -1.0)
-        best = int(np.argmax(masked))
-        i, j = divmod(best, n)
-        if masked[i, j] < threshold:
-            break
-        size_i, size_j = sizes[i], sizes[j]
-        merged = (linkage[i] * size_i + linkage[j] * size_j) / (size_i + size_j)
-        groups[i] = groups[i] + groups[j]
-        del groups[j]
-        active[j] = False
-        sizes[i] = size_i + size_j
-        is_seed[i] = is_seed[i] or is_seed[j]
-        linkage[i, :] = merged
-        linkage[:, i] = merged
-        linkage[i, i] = -1.0
-    return [sorted(members) for members in groups.values()]
+def test_batch_documents_parses_pub_date_and_falls_back():
+    from pipelines.news.transformers.clustering import batch_documents
+
+    fallback = datetime(2026, 9, 4, 10, tzinfo=SEOUL_TIMEZONE)
+    items = [
+        {
+            "title": "삼성전자 유상증자 결정",
+            "description": "삼성전자가 유상증자를 결정했다",
+            "pubDate": "Tue, 02 Sep 2026 09:00:00 +0900",
+        },
+        {"title": "현대차 미국 리콜 확대", "description": "", "pubDate": "not-a-date"},
+    ]
+
+    documents, published_ats = batch_documents(
+        items, description_weight=0.4, fallback_time=fallback
+    )
+
+    assert len(documents) == 2
+    assert dict(documents[0])["삼성전자"] > dict(documents[1]).get("삼성전자", 0.0)
+    assert published_ats[0] == datetime(2026, 9, 2, 9, tzinfo=SEOUL_TIMEZONE)
+    assert published_ats[1] == fallback  # 파싱 실패는 실행 시각으로 본다
 
 
-def test_agglomerative_matches_reference_on_random_inputs():
+def test_seed_window_spans_batch_publish_range_minus_window():
+    from pipelines.news.transformers.clustering import seed_window
+
+    early = datetime(2026, 9, 1, 9, tzinfo=SEOUL_TIMEZONE)
+    late = datetime(2026, 9, 10, 12, tzinfo=SEOUL_TIMEZONE)
+
+    # 가장 이른 기사가 붙을 수 있는 가장 오래된 시드부터, 가장 늦은 기사 시각까지
+    assert seed_window([late, early], 7) == (early - timedelta(days=7), late)
+
+
+# ── 발행일 창 제약 ──────────────────────────────────────────────
+
+
+def test_agglomerative_never_merges_pairs_wider_than_max_span():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    rng = np.random.default_rng(20260909)
-    for _ in range(40):
-        n = int(rng.integers(2, 25))
-        raw = rng.random((n, n))
-        similarity = np.triu(raw, 1)
-        similarity = similarity + similarity.T
-        np.fill_diagonal(similarity, 1.0)
-        sizes = rng.integers(1, 4, size=n).astype(float)
-        seeds = rng.random(n) < 0.3
-        threshold = float(rng.choice([0.2, 0.35, 0.5, 0.7]))
+    similarity = np.array([[1.0, 0.9], [0.9, 1.0]])
 
-        fast = agglomerative(similarity, threshold, initial_sizes=sizes, seed_flags=seeds)
-        slow = _reference_agglomerative(similarity, threshold, sizes, seeds)
+    within = agglomerative(similarity, 0.35, spans=[(0.0, 0.0), (5.0, 5.0)], max_span=7.0)
+    beyond = agglomerative(similarity, 0.35, spans=[(0.0, 0.0), (8.0, 8.0)], max_span=7.0)
 
-        assert sorted(fast) == sorted(slow)
+    assert within == [[0, 1]]
+    assert beyond == [[0], [1]]
+
+
+def test_agglomerative_span_is_checked_on_the_merged_group():
+    from pipelines.news.transformers.clustering.cluster import agglomerative
+
+    # 0-1 (0일·5일) 은 합쳐지지만, 그 군집에 2 (10일) 를 더하면 0~10일이라 막힌다.
+    # 1-2 만 보면 5일 차라 허용이지만 군집 전체 범위로 판단해야 한다.
+    similarity = np.array(
+        [
+            [1.0, 0.9, 0.5],
+            [0.9, 1.0, 0.9],
+            [0.5, 0.9, 1.0],
+        ]
+    )
+
+    groups = agglomerative(
+        similarity, 0.35, spans=[(0.0, 0.0), (5.0, 5.0), (10.0, 10.0)], max_span=7.0
+    )
+
+    assert groups == [[0, 1], [2]]
+
+
+def test_agglomerative_seed_anchor_rejects_articles_before_seed_start():
+    from pipelines.news.transformers.clustering.cluster import agglomerative
+
+    # 시드(0) 는 5일에 시작. 기사 1 은 3일(이전), 기사 2 는 9일(창 안).
+    similarity = np.array(
+        [
+            [1.0, 0.9, 0.9],
+            [0.9, 1.0, 0.1],
+            [0.9, 0.1, 1.0],
+        ]
+    )
+
+    groups = agglomerative(
+        similarity,
+        0.35,
+        seed_flags=[True, False, False],
+        spans=[(5.0, 5.0), (3.0, 3.0), (9.0, 9.0)],
+        max_span=7.0,
+    )
+
+    assert groups == [[0, 2], [1]]

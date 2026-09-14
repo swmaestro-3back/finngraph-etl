@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -40,6 +40,7 @@ def _seed(titles: list[str], member_count: int | None = None, **overrides) -> Cl
         "original_size": len(titles),
         "member_count": len(titles) if member_count is None else member_count,
         "last_stored_date": date(2026, 9, 1),
+        "first_published_at": _at(1),
     }
     fields.update(overrides)
     return ClusterSeed(**fields)
@@ -55,6 +56,7 @@ def test_profile_terms_scales_to_average_article():
         original_size=3,
         member_count=3,
         last_stored_date=None,
+        first_published_at=_at(1),
     )
 
     assert dict(profile_terms(seed)) == {"삼성전자": 3.0, "유상증자": 1.0}
@@ -62,7 +64,12 @@ def test_profile_terms_scales_to_average_article():
 
 def test_profile_terms_empty_profile_is_empty_vector():
     seed = ClusterSeed(
-        cluster_id=1, term_weights={}, original_size=2, member_count=2, last_stored_date=None
+        cluster_id=1,
+        term_weights={},
+        original_size=2,
+        member_count=2,
+        last_stored_date=None,
+        first_published_at=_at(1),
     )
 
     assert profile_terms(seed) == []
@@ -301,57 +308,41 @@ def test_assign_batch_rejects_length_mismatch():
         assign_batch([document_terms("삼성전자")], [], seeds=[], threshold=0.35, cap=3)
 
 
-# ── 시간 감쇠 ────────────────────────────────────────────────────────────────
+# ── 발행일 창 ───────────────────────────────────────────────────────────────
 
 
-def test_time_decay_halves_per_half_life_and_ignores_negative_gap():
-    import numpy as np
-
-    from pipelines.news.transformers.clustering.incremental import time_decay
-
-    factors = time_decay(np.array([0.0, 7.0, 14.0, -3.0]), half_life_days=7.0)
-
-    assert factors.tolist() == pytest.approx([1.0, 0.5, 0.25, 1.0])
-
-
-def test_time_decay_disabled_when_half_life_is_zero():
-    import numpy as np
-
-    from pipelines.news.transformers.clustering.incremental import time_decay
-
-    assert time_decay(np.array([0.0, 30.0]), half_life_days=0.0).tolist() == [1.0, 1.0]
-
-
-def test_assign_batch_decay_prefers_recent_seed_and_blocks_stale_one():
-    # 같은 제목의 시드 둘. 최근 시드(9/1)에는 붙고, 오래된 시드(8/1)만 있으면 감쇠 때문에 못 붙는다.
-    recent = _seed(["삼성전자 유상증자 결정"], cluster_id=1, last_published_at=_at(1))
-    stale = _seed(
-        ["삼성전자 유상증자 결정"],
-        cluster_id=2,
-        last_published_at=datetime(2026, 8, 1, 9, tzinfo=KST),
-    )
+def test_assign_batch_joins_seed_only_within_window_after_seed_start():
+    seed = _seed(["삼성전자 유상증자 결정"], first_published_at=_at(1))
     documents = [document_terms("삼성전자 유상증자 발표")]
 
-    [with_both] = assign_batch(
-        documents, [_at(2)], seeds=[stale, recent], threshold=0.35, cap=3, decay_half_life_days=7.0
+    [inside] = assign_batch(documents, [_at(7)], seeds=[seed], threshold=0.35, cap=3, window_days=7)
+    [outside] = assign_batch(
+        documents, [_at(9)], seeds=[seed], threshold=0.35, cap=3, window_days=7
     )
-    assert with_both.seed is recent
 
-    [stale_only] = assign_batch(
-        documents, [_at(2)], seeds=[stale], threshold=0.35, cap=3, decay_half_life_days=7.0
-    )
-    assert stale_only.seed is None  # 한 달 경과 → 0.5**(32/7) ≈ 0.04 배
-
-    [no_decay] = assign_batch(documents, [_at(2)], seeds=[stale], threshold=0.35, cap=3)
-    assert no_decay.seed is stale  # 감쇠를 끄면 그대로 붙는다
+    assert inside.seed is seed  # 시드 시작 6일 뒤 → 합류
+    assert outside.seed is None  # 시드 시작 8일 뒤 → 새 클러스터
 
 
-def test_assign_batch_seed_without_last_published_at_is_not_decayed():
-    seed = _seed(["삼성전자 유상증자 결정"], last_published_at=None)
+def test_assign_batch_article_before_seed_start_never_joins():
+    # 첫 검색으로 늦게 들어온 옛 기사가 나중에 생긴 클러스터에 붙으면 first_published_at 이 뒤로 밀린다
+    seed = _seed(["삼성전자 유상증자 결정"], first_published_at=_at(5))
     documents = [document_terms("삼성전자 유상증자 발표")]
 
     [assignment] = assign_batch(
-        documents, [_at(30)], seeds=[seed], threshold=0.35, cap=3, decay_half_life_days=1.0
+        documents, [_at(3)], seeds=[seed], threshold=0.35, cap=3, window_days=7
     )
 
-    assert assignment.seed is seed
+    assert assignment.seed is None
+
+
+def test_assign_batch_new_articles_far_apart_form_separate_clusters():
+    # 같은 제목이라도 발행일이 창보다 멀면 배치 안에서 묶이지 않는다 — 첫 검색의 6개월치 기사 대비
+    documents = [document_terms("삼성전자 유상증자 결정")] * 3
+    published = [_at(1), _at(5), _at(20)]
+
+    assignments = assign_batch(documents, published, seeds=[], threshold=0.35, cap=3, window_days=7)
+
+    assert sorted(sorted(a.members) for a in assignments) == [[0, 1], [2]]
+    for assignment in assignments:
+        assert assignment.last_published_at - assignment.first_published_at <= timedelta(days=7)
