@@ -1,18 +1,6 @@
 import logging
-import re
 from typing import Any
 from urllib.parse import urlparse
-
-from pipelines.news.utils.text_utils import get_printable_text
-
-
-def normalize_title_for_duplicate(title: str) -> str:
-
-    title = get_printable_text(title)
-    title = title.lower()
-    title = re.sub(r"[^0-9a-z가-힣]+", " ", title)
-
-    return " ".join(title.split()).lower()
 
 
 def normalize_url_for_duplicate(url: str) -> str:
@@ -32,6 +20,18 @@ def normalize_url_for_duplicate(url: str) -> str:
 
     except Exception:
         return url.strip()
+
+
+def merge_query_companies(target: dict[str, Any], source: dict[str, Any]) -> None:
+
+    merged: dict[int, dict[str, Any]] = {
+        int(company["company_id"]): company for company in target.get("_query_companies", [])
+    }
+
+    for company in source.get("_query_companies", []):
+        merged.setdefault(int(company["company_id"]), company)
+
+    target["_query_companies"] = list(merged.values())
 
 
 def remove_duplicate_by_url(
@@ -57,6 +57,7 @@ def remove_duplicate_by_url(
         matched_key = next((url_key for url_key in url_keys if url_key in seen_url_map), None)
 
         if matched_key:
+            merge_query_companies(seen_url_map[matched_key], item)
             removed_items.append(
                 {
                     "removed_item": item,
@@ -74,41 +75,5 @@ def remove_duplicate_by_url(
             seen_url_map[url_key] = item
 
     logging.info(f"총 {len(items)}개 중 {len(removed_items)}개 URL 중복으로 인한 드랍")
-
-    return unique_items, removed_items
-
-
-def remove_duplicate_by_title(
-    items: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-
-    unique_items = []
-    removed_items = []
-    seen_title_map = {}
-
-    for item in items:
-        title = get_printable_text(item.get("title", ""))
-        normalized_title = normalize_title_for_duplicate(title)
-
-        if not normalized_title:
-            unique_items.append(item)
-            continue
-
-        if normalized_title in seen_title_map:
-            removed_items.append(
-                {
-                    "removed_item": item,
-                    "matched_item": seen_title_map[normalized_title],
-                    "reason": f"제목 중복: {title}",
-                    "similarity": 1.0,
-                }
-            )
-
-            continue
-
-        unique_items.append(item)
-        seen_title_map[normalized_title] = item
-
-    logging.info(f"총 {len(items)}개 중 {len(removed_items)}개 제목 중복으로 인한 드랍")
 
     return unique_items, removed_items

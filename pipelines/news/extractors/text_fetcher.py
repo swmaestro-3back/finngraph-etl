@@ -184,7 +184,7 @@ def fetch_article_body_from_url(url: str) -> str:
         return ""
 
 
-def enrich_items_with_article_body(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def fetch_article_body(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     enriched_items = []
 
