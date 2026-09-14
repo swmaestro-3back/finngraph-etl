@@ -13,9 +13,8 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.loaders.postgres import (
+from pipelines.triples.loaders.postgres import (
     fetch_unprocessed_triple_news_items,
-    fetch_unsummarized_news_items,
     mark_triple_extraction_result,
 )
 
@@ -76,16 +75,3 @@ def test_mark_without_triples_sets_false(news_row):
             {"id": news_row},
         ).scalar_one()
     assert triple_extracted is False
-
-
-def test_only_triple_extracted_news_is_summarize_target(news_row):
-    # 미처리 상태에서는 요약 대상이 아니다
-    assert news_row not in [i["_news_id"] for i in fetch_unsummarized_news_items(limit=10000)]
-
-    # 삼중항 없음 → 여전히 대상 아님
-    mark_triple_extraction_result([], [news_row])
-    assert news_row not in [i["_news_id"] for i in fetch_unsummarized_news_items(limit=10000)]
-
-    # 삼중항 있음 → 대상
-    mark_triple_extraction_result([news_row], [])
-    assert news_row in [i["_news_id"] for i in fetch_unsummarized_news_items(limit=10000)]

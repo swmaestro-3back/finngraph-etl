@@ -5,15 +5,13 @@ from typing import Any
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
-from pipelines.news.loaders.postgres import (
-    fetch_unprocessed_triple_news_items,
-    mark_triple_extraction_result,
-)
 from pipelines.triples.edges import source_row_of
 from pipelines.triples.loaders.neo4j import sync_edge_summaries
 from pipelines.triples.loaders.postgres import (
+    fetch_unprocessed_triple_news_items,
     insert_news_companies,
     insert_relation_sources,
+    mark_triple_extraction_result,
 )
 from pipelines.triples.references.graph import fetch_company_tickers
 from pipelines.triples.references.rdb import fetch_edge_summaries
