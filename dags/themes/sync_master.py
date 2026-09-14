@@ -9,7 +9,10 @@ except ImportError:
     dag = None
     task = None
 
-SOURCES: tuple[str, ...] = ("judal", "naver")
+# naver 는 2026-09-11 부로 제외. finance.naver.com/sise/theme.naver 가 stock.naver.com
+# (Next.js, UTF-8) 으로 리다이렉트되면서 EUC-KR HTML 테이블 크롤링이 깨졌다. 새 JSON API
+# (m.stock.naver.com/api/stocks/theme) 로 NaverExtractor 를 다시 짜기 전까지 judal 만 쓴다.
+SOURCES: tuple[str, ...] = ("judal",)
 
 if dag and task:
     theme_stocks_loaded = Asset("etl://themes/stocks")

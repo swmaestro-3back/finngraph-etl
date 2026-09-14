@@ -1,7 +1,8 @@
 """
 신규 EVENT 노드 생성
 후보 클러스터 중 Neo4j에 없는 클러스터를 EVENT 노드로 승격
-RDB에서 기사 조회 > Flashtext 기반 엔티티 추출 > LLM Event 제목 생성 및 엔티티 검증 > Neo4j에 반영
+RDB에서 기사 조회 > Flashtext 기반 엔티티 추출 > LLM 당사자 검증 > Neo4j에 반영
+제목은 collect_articles 가 채운 news_clusters.title 을 그대로 쓴다. 아직 없으면 이번 런은 건너뛴다.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ STAT_KEYS = (
     "scanned",
     "created",
     "created_without_edges",
+    "skipped_no_title",
     "skipped_no_candidates",
     "skipped_over_limit",
     "failed",
@@ -70,21 +72,22 @@ async def create_one(
     candidates: list[str],
     generator: Any,
     semaphore: asyncio.Semaphore,
-    title_max_chars: int,
 ) -> str:
-    """LLM → 검증 → 쓰기.
+    """LLM → 검증 → 쓰기. 제목은 클러스터의 것을 그대로 쓴다.
 
     어느 단계든 실패하면 이 클러스터만 건너뛴다. 노드가 없으니 다음 런에 재시도된다.
     """
 
     try:
+        if not cluster.title:
+            raise ValueError("클러스터 제목 없음")
         async with semaphore:
             draft = await generator.draft(dated_texts, candidates)
-        draft = validate_draft(draft, candidates, title_max_chars)
+        draft = validate_draft(draft, candidates)
         record = EventRecord(
-            **cluster.model_dump(),
+            **cluster.model_dump(exclude={"title"}),
             news_ids=sorted(member.news_id for member in members),
-            title=draft.title,
+            title=cluster.title,
             companies=draft.companies,
         )
         edges = await create_event(record)
@@ -104,7 +107,9 @@ def summarize_stats(stats: dict[str, int]) -> dict[str, int]:
     """created_without_edges 는 created 의 부분집합이라 합에 없다."""
 
     return check_total(
-        stats, "scanned", ("created", "skipped_no_candidates", "skipped_over_limit", "failed")
+        stats,
+        "scanned",
+        ("created", "skipped_no_title", "skipped_no_candidates", "skipped_over_limit", "failed"),
     )
 
 
@@ -117,6 +122,10 @@ async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[s
         # 1. 후보 스캔 — Event 가 없는 클러스터만 이 task 의 몫이다
         to_create, _ = await scan_promotable(settings.min_size, since)
         stats["scanned"] = len(to_create)
+        # 제목은 collect_articles 가 짓는다. 아직 없는 클러스터는 다음 런에 다시 본다.
+        titled = [cluster for cluster in to_create if cluster.title]
+        stats["skipped_no_title"] = len(to_create) - len(titled)
+        to_create = titled
         if not to_create:
             return stats
 
@@ -146,7 +155,6 @@ async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[s
                     candidates,
                     generator,
                     semaphore,
-                    settings.title_max_chars,
                 )
                 for cluster, members, dated_texts, candidates in eligible
             )
@@ -178,7 +186,8 @@ def run() -> dict[str, int]:
         f"실패 {stats['failed']}개"
     )
     print(
-        f"- 건너뜀: 후보 없음 {stats['skipped_no_candidates']}개, "
+        f"- 건너뜀: 제목 없음 {stats['skipped_no_title']}개, "
+        f"후보 없음 {stats['skipped_no_candidates']}개, "
         f"상한 초과 {stats['skipped_over_limit']}개"
     )
     print("=" * 70)

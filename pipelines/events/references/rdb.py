@@ -20,7 +20,8 @@ SELECT_PROMOTABLE_SQL = text(
         original_size,
         member_count,
         first_published_at,
-        last_published_at
+        last_published_at,
+        title
     FROM news_clusters
     WHERE original_size >= :min_size
       AND member_count >= 1
@@ -77,6 +78,7 @@ def fetch_promotable_clusters(min_size: int, since: datetime) -> list[ClusterCan
             member_count=int(row.member_count),
             first_published_at=row.first_published_at,
             last_published_at=row.last_published_at,
+            title=row.title,
         )
         for row in rows
     ]

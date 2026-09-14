@@ -51,7 +51,7 @@ class CountingFactory:
         return self.instance
 
 
-def _cluster(cluster_id: int = 1) -> ClusterCandidate:
+def _cluster(cluster_id: int = 1, title: str | None = "유상증자 결정") -> ClusterCandidate:
     return ClusterCandidate(
         cluster_id=cluster_id,
         representative_news_id=11,
@@ -60,6 +60,7 @@ def _cluster(cluster_id: int = 1) -> ClusterCandidate:
         member_count=2,
         first_published_at=T0,
         last_published_at=T0 + timedelta(hours=1),
+        title=title,
     )
 
 
@@ -126,9 +127,10 @@ def test_select_for_llm_applies_limit_after_candidate_filter():
 
 def test_summarize_stats_invariant():
     stats = {
-        "scanned": 5,
+        "scanned": 6,
         "created": 2,
         "created_without_edges": 1,
+        "skipped_no_title": 1,
         "skipped_no_candidates": 1,
         "skipped_over_limit": 1,
         "failed": 1,
@@ -142,17 +144,16 @@ def test_summarize_stats_invariant():
 # ---- create_one --------------------------------------------------------------------
 
 
-def _create_one(monkeypatch, generator, fake_create_event, candidates=("삼성전자",)):
+def _create_one(monkeypatch, generator, fake_create_event, candidates=("삼성전자",), cluster=None):
     monkeypatch.setattr(job, "create_event", fake_create_event)
     return asyncio.run(
         job.create_one(
-            _cluster(),
+            cluster or _cluster(),
             _members(),
             [(None, "t\nb")],
             list(candidates),
             generator,
             asyncio.Semaphore(1),
-            title_max_chars=60,
         )
     )
 
@@ -164,16 +165,14 @@ def test_create_one_success_records_edges(monkeypatch):
         captured["record"] = record
         return 1
 
-    generator = StubGenerator(
-        EventDraft(companies=["삼성전자", "엔비디아"], title="[속보] 삼성전자 유상증자")
-    )
+    generator = StubGenerator(EventDraft(companies=["삼성전자", "엔비디아"]))
 
     outcome = _create_one(monkeypatch, generator, fake_create_event, ("삼성전자", "기아"))
 
     assert outcome == "created"
     record = captured["record"]
     assert record.cluster_id == 1
-    assert record.title == "삼성전자 유상증자"  # 검증이 태그를 벗겼다
+    assert record.title == "유상증자 결정"  # news_clusters.title 그대로
     assert record.companies == ["삼성전자"]  # 후보 밖 엔비디아 제거
     assert record.news_ids == [11, 12]
     assert record.keywords == ["삼성전자"]
@@ -183,35 +182,41 @@ def test_create_one_without_edges(monkeypatch):
     async def fake_create_event(record):
         return 0
 
-    generator = StubGenerator(EventDraft(companies=[], title="삼성전자 유상증자"))
+    generator = StubGenerator(EventDraft(companies=[]))
 
     assert _create_one(monkeypatch, generator, fake_create_event) == "created_without_edges"
 
 
-@pytest.mark.parametrize(
-    "generator",
-    [
-        StubGenerator(RuntimeError("bedrock down")),
-        StubGenerator(EventDraft(companies=[], title="")),  # 검증 실패
-        StubGenerator(EventDraft(companies=[], title="가" * 61)),  # 길이 초과
-    ],
-)
-def test_create_one_failure_is_isolated(monkeypatch, generator):
+def test_create_one_failure_is_isolated(monkeypatch):
     called = {"n": 0}
 
     async def fake_create_event(record):
         called["n"] += 1
         return 1
 
+    generator = StubGenerator(RuntimeError("bedrock down"))
+
     assert _create_one(monkeypatch, generator, fake_create_event) == "failed"
     assert called["n"] == 0
+
+
+def test_create_one_without_cluster_title_fails_before_llm(monkeypatch):
+    async def fake_create_event(record):  # pragma: no cover
+        raise AssertionError("쓰기가 일어나면 안 된다")
+
+    generator = StubGenerator(EventDraft(companies=["삼성전자"]))
+
+    outcome = _create_one(monkeypatch, generator, fake_create_event, cluster=_cluster(title=None))
+
+    assert outcome == "failed"
+    assert generator.calls == 0
 
 
 def test_create_one_loader_failure(monkeypatch):
     async def fake_create_event(record):
         raise RuntimeError("neo4j down")
 
-    generator = StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 유상증자"))
+    generator = StubGenerator(EventDraft(companies=["삼성전자"]))
 
     assert _create_one(monkeypatch, generator, fake_create_event) == "failed"
 
@@ -234,7 +239,6 @@ def _event_settings(**overrides) -> SimpleNamespace:
         max_items_per_run=2,
         llm_max_concurrency=2,
         lead_chars=600,
-        title_max_chars=60,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -251,7 +255,7 @@ def _patch_common(monkeypatch, to_create, to_refresh, members_by_cluster, settin
 
 
 def test_run_creates_only_own_half(monkeypatch):
-    """기존 몫(to_refresh)은 무시. 신규 3(후보0 1, 유효 2 → 간선1/간선0)."""
+    """기존 몫(to_refresh)은 무시. 신규 4(제목 없음 1, 후보0 1, 유효 2 → 간선1/간선0)."""
 
     edges_by_cluster = {4: 0, 5: 1}
 
@@ -260,22 +264,26 @@ def test_run_creates_only_own_half(monkeypatch):
 
     _patch_common(
         monkeypatch,
-        to_create=[_cluster(3), _cluster(4), _cluster(5)],
+        to_create=[_cluster(3), _cluster(4), _cluster(5), _cluster(6, title=None)],
         to_refresh=[_cluster(1), _cluster(2)],
-        members_by_cluster={3: _no_candidate_members(), 4: _members(), 5: _members()},
+        members_by_cluster={
+            3: _no_candidate_members(),
+            4: _members(),
+            5: _members(),
+            6: _members(),
+        },
     )
     monkeypatch.setattr(job, "create_event", fake_create_event)
     extractor_factory = CountingFactory(FakeExtractor())
-    generator_factory = CountingFactory(
-        StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
-    )
+    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=["삼성전자"])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
 
     assert stats == {
-        "scanned": 3,
+        "scanned": 4,
         "created": 2,
         "created_without_edges": 1,
+        "skipped_no_title": 1,
         "skipped_no_candidates": 1,
         "skipped_over_limit": 0,
         "failed": 0,
@@ -298,7 +306,7 @@ def test_run_over_limit_caps_generator_calls(monkeypatch):
         settings=_event_settings(max_items_per_run=2),
     )
     monkeypatch.setattr(job, "create_event", fake_create_event)
-    generator = StubGenerator(EventDraft(companies=["삼성전자"], title="삼성전자 이슈"))
+    generator = StubGenerator(EventDraft(companies=["삼성전자"]))
 
     stats = asyncio.run(job._run(lambda: FakeExtractor(), lambda: generator))
 
@@ -313,7 +321,7 @@ def test_run_empty_scan_returns_zero_stats_without_building_anything(monkeypatch
 
     _patch_common(monkeypatch, to_create=[], to_refresh=[_cluster(1)], members_by_cluster={})
     extractor_factory = CountingFactory(FakeExtractor())
-    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[], title="x")))
+    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
 
@@ -331,7 +339,7 @@ def test_run_no_eligible_builds_extractor_but_not_generator(monkeypatch):
         members_by_cluster={3: _no_candidate_members()},
     )
     extractor_factory = CountingFactory(FakeExtractor())
-    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[], title="x")))
+    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
 

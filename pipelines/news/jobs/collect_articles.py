@@ -1,316 +1,201 @@
-"""뉴스 수집 + 클러스터링 job (news_scheduled_pipeline DAG의 collect_articles task).
-
-수집 → 중복 제거 → 기사 유형 필터 → 제목 선두 태그 제거 → DB 기존 기사 제외 →
-배치 간 클러스터 판정(윈도우 안 기존 클러스터 합류 또는 새 클러스터, cap 초과 버림) →
-본문 크롤링 → news INSERT → news_clusters 기록 순서로 진행한다.
-클러스터링을 본문 수집보다 앞에 두어, 버려질 기사의 본문은 크롤링하지 않는다.
-"""
-
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime
 
+from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
 from pipelines.news.extractors.search_collector import (
-    iter_search_news_pages,
+    collect_company_news,
     validate_search_settings,
 )
-from pipelines.news.extractors.text_fetcher import enrich_items_with_article_body
-from pipelines.news.loaders.clusters import (
-    create_news_cluster,
-    fetch_active_cluster_seeds,
-    fetch_cluster_member_terms,
-    update_news_cluster,
-)
-from pipelines.news.loaders.postgres import (
-    fetch_search_keywords,
-    filter_new_news_by_db,
+from pipelines.news.extractors.text_fetcher import fetch_article_body
+from pipelines.news.repositories.news import (
     has_article_body,
-    mark_keywords_searched,
-    parse_anchor_pub_date,
+    remove_stored_by_url,
     save_news_items,
 )
+from pipelines.news.repositories.news_clusters import (
+    fetch_active_cluster_seeds,
+    fetch_cluster_articles,
+    fetch_untitled_cluster_ids,
+    record_cluster_assignments,
+    update_cluster_title,
+)
+from pipelines.news.repositories.news_companies import link_saved_items
+from pipelines.news.repositories.search_history import (
+    fetch_due_company_queries,
+    mark_companies_searched,
+)
+from pipelines.news.transformers.cluster_titler import title_clusters
 from pipelines.news.transformers.clustering import (
-    ClusterAssignment,
-    Terms,
     assign_batch,
-    document_terms,
-    merge_term_weights,
-    pick_representative,
-    sum_terms,
-    top_keywords,
+    batch_documents,
+    seed_window,
 )
-from pipelines.news.transformers.duplicate_filter import (
-    remove_duplicate_by_title,
-    remove_duplicate_by_url,
-)
+from pipelines.news.transformers.company_candidates import attach_candidate_companies
+from pipelines.news.transformers.duplicate_filter import remove_duplicate_by_url
 from pipelines.news.transformers.news_type_filter import filter_official_source_news
+from pipelines.news.transformers.relevance_filter import filter_relevant_news
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
-
-def collect_search_news(queries: list[str]) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """쿼리 목록으로 네이버 검색 API를 순회 수집하고 배치 내 중복을 제거한다."""
-
-    collected: list[dict[str, Any]] = []
-    raw_count = 0
-
-    for query in queries:
-        for page_items in iter_search_news_pages(keyword=query):
-            raw_count += len(page_items)
-            collected.extend(page_items)
-
-    unique_items, url_removed = remove_duplicate_by_url(collected)
-    unique_items, title_removed = remove_duplicate_by_title(unique_items)
-
-    stats = {
-        "queries": len(queries),
-        "raw": raw_count,
-        "duplicate_removed": len(url_removed) + len(title_removed),
-        "collected": len(unique_items),
-    }
-
-    return unique_items, stats
+logger = get_logger(__name__)
 
 
-def batch_documents(
-    items: list[dict[str, Any]],
-    description_weight: float,
-    fallback_time: datetime,
-) -> tuple[list[Terms], list[datetime]]:
-    """기사 목록을 클러스터링 문서와 보도 시각으로 바꾼다.
+def run(theme_ids: list[int]) -> dict[str, int]:
+    """theme_ids 의 편입 기업 중 재검색 시점이 된 기업의 뉴스 수집"""
 
-    보도 시각을 모르는 기사는 fallback_time(실행 시각)으로 본다 — 윈도우와 cap 날짜 판정에
-    쓰는 값이라 비워 둘 수 없다. news.published_at 저장값은 저장 시 따로 파싱해 NULL 을
-    허용한다.
-    """
-
-    documents = [
-        document_terms(item.get("title", ""), item.get("description", ""), description_weight)
-        for item in items
-    ]
-    published_ats = [
-        parse_anchor_pub_date(item.get("pubDate", "")) or fallback_time for item in items
-    ]
-    return documents, published_ats
-
-
-def cluster_stats(
-    assignments: list[ClusterAssignment], seed_count: int, collected: int
-) -> dict[str, int]:
-    joined = sum(1 for assignment in assignments if assignment.seed is not None)
-
-    return {
-        "collected": collected,
-        "seeds": seed_count,
-        "joined": joined,
-        "new_clusters": len(assignments) - joined,
-        "selected": sum(len(assignment.kept) for assignment in assignments),
-        "dropped_by_cluster_cap": sum(len(assignment.dropped) for assignment in assignments),
-    }
-
-
-def _record_seed_update(
-    assignment: ClusterAssignment,
-    members: list[tuple[int, dict[str, float]]],
-    survivor_terms: list[Terms],
-    keyword_count: int,
-) -> None:
-    """시드 클러스터에 이번 배치의 판정을 더한다. 저장된 멤버가 있으면 대표를 다시 고른다."""
-
-    seed = assignment.seed
-    assert seed is not None
-    representative_news_id: int | None = None
-    cohesion: float | None = None
-
-    if members:
-        # 저장된 멤버 전체(기존 + 이번)로 메도이드를 다시 고른다.
-        existing = fetch_cluster_member_terms(seed.cluster_id)
-        pool_ids = [news_id for news_id, _ in existing] + [news_id for news_id, _ in members]
-        pool_terms = [list(terms.items()) for _, terms in existing] + survivor_terms
-        representative_index, cohesion = pick_representative(pool_terms)
-        representative_news_id = pool_ids[representative_index]
-
-    merged = merge_term_weights(seed.term_weights, assignment.term_weights)
-    update_news_cluster(
-        seed.cluster_id,
-        term_weights=merged,
-        keywords=top_keywords(merged, keyword_count),
-        original_size_delta=len(assignment.members),
-        first_published_at=assignment.first_published_at,
-        last_published_at=assignment.last_published_at,
-        representative_news_id=representative_news_id,
-        cohesion=cohesion,
-        members=members,
-    )
-
-
-def record_cluster_assignments(
-    assignments: list[ClusterAssignment],
-    items: list[dict[str, Any]],
-    documents: list[Terms],
-    keyword_count: int,
-) -> dict[str, int]:
-    """저장이 끝난 뒤 판정 결과를 news_clusters 와 news.cluster_id 에 기록한다.
-
-    저장에 성공한 기사(_news_id 가 있고 기존 행 스킵이 아닌 것)만 멤버가 된다. 새 클러스터는
-    저장된 기사가 하나도 없으면 만들지 않는다. 시드 클러스터는 저장된 기사가 없어도 프로필과
-    판정 수, 시간 범위는 갱신한다 — 버린 기사도 같은 사건이라는 판정 자체는 유효하다.
-
-    클러스터 하나가 트랜잭션 하나다. 실패한 클러스터는 건너뛰고 세어 돌려주며, 그 기사들은
-    news 에 cluster_id 없이 남는다(news 저장은 이미 커밋됐다).
-    """
-
-    created = 0
-    updated = 0
-    failed = 0
-
-    for assignment in assignments:
-        survivors = [
-            index
-            for index in assignment.kept
-            if items[index].get("_news_id")
-            and items[index].get("_save_action") != "skipped_existing"
-        ]
-        members = [
-            (int(items[index]["_news_id"]), sum_terms(documents[index])) for index in survivors
-        ]
-
-        if assignment.seed is None and not members:
-            continue
-
-        try:
-            if assignment.seed is None:
-                # kept 는 메도이드가 첫 번째이므로, 저장에 성공한 첫 기사가 대표다.
-                create_news_cluster(
-                    representative_news_id=members[0][0],
-                    cohesion=assignment.cohesion,
-                    term_weights=assignment.term_weights,
-                    keywords=top_keywords(assignment.term_weights, keyword_count),
-                    original_size=len(assignment.members),
-                    first_published_at=assignment.first_published_at,
-                    last_published_at=assignment.last_published_at,
-                    members=members,
-                )
-                created += 1
-            else:
-                _record_seed_update(
-                    assignment, members, [documents[index] for index in survivors], keyword_count
-                )
-                updated += 1
-        except Exception as e:
-            failed += 1
-            logging.error(
-                "클러스터 기록 실패(건너뜀): "
-                f"cluster_id={assignment.seed.cluster_id if assignment.seed else None}, "
-                f"news_ids={[news_id for news_id, _ in members]}, error={type(e).__name__}: {e}"
-            )
-
-    return {"created": created, "updated": updated, "failed": failed}
-
-
-def run() -> dict[str, Any]:
     validate_search_settings()
     settings = get_news_settings()
     run_started_at = datetime.now(SEOUL_TIMEZONE)
 
-    # 1. 검색 쿼리는 search_keywords 테이블에서 불러온다
-    keywords = fetch_search_keywords()
-
-    if not keywords:
-        print("search_keywords 테이블에 검색 쿼리가 없습니다.")
-        return {
-            "collect": {"queries": 0, "raw": 0, "duplicate_removed": 0, "collected": 0},
-            "type_filtered": 0,
-            "existing": 0,
-            "cluster": cluster_stats([], 0, 0),
-            "saved": {},
-            "clusters": {"created": 0, "updated": 0, "failed": 0},
-        }
-
-    # 2. 수집 + 배치 내 중복 제거
-    collected, collect_stats = collect_search_news([keyword["keyword"] for keyword in keywords])
-
-    # 3. 기사 유형 필터 (포토/표/오피니언·기획성 기사 제외)
-    typed_items, type_removed = filter_official_source_news(
-        collected, pipeline_input={}, official_source_threshold=settings.official_source_threshold
+    # 1. 테마 편입 기업 중 search_history 기준 재검색 시점이 된 기업 조회
+    batch = fetch_due_company_queries(theme_ids, settings.search_interval_hours, run_started_at)
+    logger.info(
+        "[대상] 테마 %d개 → 검색 기업 %d개 (간격 미도래 %d, company_id 없음 %d, 첫 검색 %d)",
+        len(batch.theme_ids),
+        len(batch.queries),
+        batch.skipped_not_due,
+        batch.skipped_no_company,
+        sum(1 for q in batch.queries if q.watermark is None),
     )
 
-    # 4. 제목 선두 "[속보]" 같은 브라켓 태그 제거 — 유형 필터가 태그를 봐야 하므로 그 뒤,
-    #    제목 기반 DB 중복 비교·클러스터링·저장이 같은 제목을 쓰도록 그 앞에 둔다
+    if not batch.queries:
+        return {"created": 0, "updated": 0, "failed": 0}
+
+    # 2. 네이버 기사 수집
+    collected, failed_company_ids = collect_company_news(batch.queries, run_started_at)
+    logger.info(
+        "[수집] 기사 %d건 (기업 %d개 중 실패 %d개%s)",
+        len(collected),
+        len(batch.queries),
+        len(failed_company_ids),
+        f": {failed_company_ids}" if failed_company_ids else "",
+    )
+
+    # 3. 배치 내 URL 중복 제거
+    unique_items, _ = remove_duplicate_by_url(collected)
+
+    # 4. 기사 유형 필터로 제거
+    typed_items, _ = filter_official_source_news(
+        unique_items,
+        pipeline_input={},
+        official_source_threshold=settings.official_source_threshold,
+    )
+
+    # 5. 제목 폴리싱 (선두 브라켓 제거)
     for item in typed_items:
         item["title"] = remove_leading_title_brackets(item.get("title", ""))
 
-    # 5. DB에 이미 있는 기사 제외
-    new_items, existing_items = filter_new_news_by_db(typed_items)
-
-    # 6. 배치 간 클러스터 판정: 윈도우 안 기존 클러스터를 시드로 읽어 합류/신규/버림을 정한다
-    documents, published_ats = batch_documents(
-        new_items, settings.cluster_description_weight, run_started_at
+    # 6. 이미 저장된 URL 제거
+    new_items = remove_stored_by_url(typed_items)
+    logger.info(
+        "[필터] 수집 %d → URL 중복 제거 %d → 유형 필터 %d → DB 기존 제거 %d (신규)",
+        len(collected),
+        len(unique_items),
+        len(typed_items),
+        len(new_items),
     )
+
+    # 7. 후보 상장사 부착 (gazetteer 활용)
+    attach_candidate_companies(new_items)
+
+    # 8. LLM 관련성 필터
+    relevance = filter_relevant_news(new_items, max_concurrency=settings.news_llm_max_concurrency)
+    if new_items and len(relevance.failed) == len(new_items):
+        raise RuntimeError(
+            f"관련성 판정 전건 실패 ({len(new_items)}건) — LLM 장애로 보고 재시도한다"
+        )
+    passed = relevance.passed
+    logger.info(
+        "[LLM] 통과 %d / 무효 %d / 무관 %d / 실패 %d",
+        len(passed),
+        len(relevance.invalid),
+        len(relevance.irrelevant),
+        len(relevance.failed),
+    )
+
+    # 9. 배치 간 클러스터 판정. 시드 창은 배치 기사의 발행일 범위 기준이다
+    documents, published_ats = batch_documents(
+        passed, settings.cluster_description_weight, run_started_at
+    )
+
     seeds = []
-    if new_items:
-        window_start = min(published_ats) - timedelta(days=settings.cluster_window_days)
-        seeds = fetch_active_cluster_seeds(window_start)
+    if passed:
+        window_start, window_end = seed_window(published_ats, settings.cluster_window_days)
+        seeds = fetch_active_cluster_seeds(window_start, window_end)
+
     assignments = assign_batch(
         documents,
         published_ats,
         seeds,
         threshold=settings.cluster_threshold,
         cap=settings.cluster_max_articles,
-        decay_half_life_days=settings.cluster_decay_half_life_days,
+        window_days=settings.cluster_window_days,
     )
-    selected = [new_items[index] for assignment in assignments for index in assignment.kept]
-    stats = cluster_stats(assignments, len(seeds), len(new_items))
 
-    # 7. 선별된 기사만 본문 크롤링
-    enriched = enrich_items_with_article_body(selected)
-    storable = [item for item in enriched if has_article_body(item)]
+    selected = [passed[index] for assignment in assignments for index in assignment.kept]
+    joined = sum(1 for a in assignments if a.seed is not None)
+    logger.info(
+        "[클러스터] 시드 %d개 중 합류 %d, 신규 %d → 선별 %d건 (cap 제외 %d)",
+        len(seeds),
+        joined,
+        len(assignments) - joined,
+        len(selected),
+        sum(len(a.dropped) for a in assignments),
+    )
 
-    # 8. 저장 (triple_extracted는 NULL=미시도로 남는다). save_news_items가 _news_id를 채운다
+    # 10. 선별된 기사만 본문 크롤링
+    fetched = fetch_article_body(selected)
+    storable = [item for item in fetched if has_article_body(item)]
+
+    # 11. DB에 뉴스 저장
     save_result = save_news_items(items=storable, save_summary=False, skip_existing=True)
+    logger.info(
+        "[저장] 본문 성공 %d / 실패 %d → 신규 %d, 기존 스킵 %d, 실패 %d",
+        len(storable),
+        len(fetched) - len(storable),
+        save_result["inserted_count"],
+        save_result["skipped_existing_count"],
+        save_result["failed_count"],
+    )
 
-    # 9. 클러스터 기록: 본문 실패로 저장 안 된 기사는 멤버에서 빠진다
+    # 12. 클러스터 기록: 본문 실패로 저장 안 된 기사는 멤버에서 빠진다
     cluster_result = record_cluster_assignments(
-        assignments, new_items, documents, settings.cluster_keyword_count
+        assignments, passed, documents, settings.cluster_keyword_count
     )
 
-    # 10. 검색 완료 마킹
-    searched_count = mark_keywords_searched([keyword["id"] for keyword in keywords])
-
-    print("\n" + "=" * 70)
-    print("뉴스 수집·클러스터링 결과")
-    print("=" * 70)
-    print(
-        f"- 쿼리 {collect_stats['queries']}개 검색 "
-        f"(raw {collect_stats['raw']}, 중복제거 {collect_stats['duplicate_removed']}, "
-        f"수집 {collect_stats['collected']})"
+    # 13. 클러스터 이름 — 이번 런에 판정 기사 수가 기준을 넘었는데 이름이 없는 클러스터만
+    untitled = fetch_untitled_cluster_ids(settings.cluster_title_min_size, run_started_at)
+    titles = title_clusters(
+        fetch_cluster_articles(untitled),
+        max_concurrency=settings.news_llm_max_concurrency,
+        max_chars=settings.cluster_title_max_chars,
     )
-    print(f"- 유형필터 제거 {len(type_removed)}개, DB기존 {len(existing_items)}개")
-    print(
-        f"- 윈도우 클러스터 {stats['seeds']}개 중 합류 {stats['joined']}개, "
-        f"신규 군집 {stats['new_clusters']}개 → 선별 {stats['selected']}개 "
-        f"(cap 제외 {stats['dropped_by_cluster_cap']}개)"
+    for cluster_id, title in titles.items():
+        update_cluster_title(cluster_id, title)
+    logger.info(
+        "[제목] 대상 %d → 생성 %d / 실패 %d",
+        len(untitled),
+        len(titles),
+        len(untitled) - len(titles),
     )
-    print(f"- 본문 성공 {len(storable)} / 실패 {len(enriched) - len(storable)}")
-    print(
-        f"- 저장 결과 {save_result}, 클러스터 생성 {cluster_result['created']}건 / "
-        f"갱신 {cluster_result['updated']}건 / 실패 {cluster_result['failed']}건"
+
+    # 14. 기업 연결 — 주체 종목명을 company_id 로 해석해 news_companies 에
+    linked = link_saved_items(storable)
+
+    # 15. 기업 최신 검색 기록 갱신
+    searched = [q.company_id for q in batch.queries if q.company_id not in failed_company_ids]
+    marked = mark_companies_searched(searched, run_started_at)
+    logger.info(
+        "[기록] 클러스터 생성 %d / 갱신 %d / 실패 %d, 기업 연결 %d행 (해석 실패 %d), "
+        "검색 기록 %d개 기업",
+        cluster_result["created"],
+        cluster_result["updated"],
+        cluster_result["failed"],
+        linked["rows"],
+        linked["unresolved_names"],
+        marked,
     )
-    print(f"- 키워드 마킹 {searched_count}개")
-    print("=" * 70)
 
-    return {
-        "collect": collect_stats,
-        "type_filtered": len(type_removed),
-        "existing": len(existing_items),
-        "cluster": stats,
-        "saved": save_result,
-        "clusters": cluster_result,
-    }
-
-
-if __name__ == "__main__":
-    run()
+    return cluster_result

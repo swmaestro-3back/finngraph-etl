@@ -1,6 +1,6 @@
-"""news_clusters 로더 통합 테스트.
+"""news_clusters repository 통합 테스트.
 
-실제 Postgres 에 news / news_clusters 행을 만들고 로더 함수를 직접 호출한다. 0000 스키마가
+실제 Postgres 에 news / news_clusters 행을 만들고 repository 함수를 직접 호출한다. 0000 스키마가
 적용된 DB 가 필요하다.
 """
 
@@ -13,10 +13,14 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.loaders.clusters import (
+from pipelines.news.repositories.news_clusters import (
+    ClusterArticle,
     create_news_cluster,
     fetch_active_cluster_seeds,
+    fetch_cluster_articles,
     fetch_cluster_member_terms,
+    fetch_untitled_cluster_ids,
+    update_cluster_title,
     update_news_cluster,
 )
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
@@ -72,7 +76,7 @@ def _cluster_row(cluster_id: int) -> dict:
             text(
                 """
                 SELECT representative_news_id, keywords, term_weights, cohesion,
-                       original_size, member_count, first_published_at, last_published_at
+                       original_size, member_count, first_published_at, last_published_at, title
                 FROM news_clusters
                 WHERE id = :id;
                 """
@@ -115,21 +119,30 @@ def test_create_news_cluster_links_members_and_is_fetched_as_seed(news_rows):
     assert _news_cluster_columns(first) == (cluster_id, {"삼성전자": 2.0, "유상증자": 1.0})
     assert _news_cluster_columns(second) == (cluster_id, {"삼성전자": 2.0})
 
-    # 윈도우 안이면 시드로 읽힌다. last_stored_date 는 저장 멤버의 최신 보도일(KST)이다.
+    # first_published_at 이 [start, end] 안이면 시드로 읽힌다. last_stored_date 는 저장 멤버의
+    # 최신 보도일(KST)이다.
     [seed] = [
         s
-        for s in fetch_active_cluster_seeds(PUBLISHED - timedelta(days=14))
+        for s in fetch_active_cluster_seeds(PUBLISHED - timedelta(days=7), PUBLISHED)
         if s.cluster_id == cluster_id
     ]
     assert seed.term_weights == {"삼성전자": 6.0, "유상증자": 3.0}
     assert (seed.original_size, seed.member_count) == (3, 2)
     assert seed.last_stored_date == (PUBLISHED + timedelta(days=1)).date()
-    assert seed.last_published_at == PUBLISHED + timedelta(days=1)
+    assert seed.first_published_at == PUBLISHED
 
-    # 윈도우 밖이면 빠진다.
+    # 시작이 창보다 이르거나(start 뒤) 늦으면(end 앞) 빠진다.
     assert all(
         s.cluster_id != cluster_id
-        for s in fetch_active_cluster_seeds(PUBLISHED + timedelta(days=2))
+        for s in fetch_active_cluster_seeds(
+            PUBLISHED + timedelta(hours=1), PUBLISHED + timedelta(days=9)
+        )
+    )
+    assert all(
+        s.cluster_id != cluster_id
+        for s in fetch_active_cluster_seeds(
+            PUBLISHED - timedelta(days=9), PUBLISHED - timedelta(hours=1)
+        )
     )
 
 
@@ -192,3 +205,34 @@ def test_update_news_cluster_accumulates_and_replaces_representative(news_rows):
         (first, {"삼성전자": 2.0}),
         (second, {"삼성전자": 2.0, "유상증자": 1.0}),
     ]
+
+
+def test_untitled_clusters_are_fetched_by_size_and_titled_once(news_rows):
+    first, second = news_rows
+    since = datetime.now(SEOUL_TIMEZONE) - timedelta(minutes=1)
+    cluster_id = create_news_cluster(
+        representative_news_id=first,
+        cohesion=0.8,
+        term_weights={"삼성전자": 6.0},
+        keywords=["삼성전자"],
+        original_size=5,
+        first_published_at=PUBLISHED,
+        last_published_at=PUBLISHED + timedelta(days=1),
+        members=[(first, {"삼성전자": 2.0}), (second, {"삼성전자": 2.0})],
+    )
+
+    # 기준 5 → 대상, 기준 6 → 아님
+    assert cluster_id in fetch_untitled_cluster_ids(min_size=5, since=since)
+    assert cluster_id not in fetch_untitled_cluster_ids(min_size=6, since=since)
+
+    articles = fetch_cluster_articles([cluster_id])[cluster_id]
+    assert len(articles) == 2
+    assert all(isinstance(a, ClusterArticle) and a.text == "본문" for a in articles)
+    assert all(a.title.startswith("클러스터 ") for a in articles)
+    assert articles[0].published_at == PUBLISHED  # 보도 시각 순
+
+    update_cluster_title(cluster_id, "유상증자 결정")
+
+    assert _cluster_row(cluster_id)["title"] == "유상증자 결정"
+    # 이름이 생기면 다시 대상이 되지 않는다
+    assert cluster_id not in fetch_untitled_cluster_ids(min_size=5, since=since)

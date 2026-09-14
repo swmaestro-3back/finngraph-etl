@@ -24,15 +24,26 @@ if dag and task:
         catchup=False,
         max_active_runs=1,
         tags=["news", "triples"],
+        # 검색할 테마 ID 를 수동으로 지정하려면 conf 로 넘긴다 (예: {"theme_ids": [12, 34]}).
+        # 비어 있으면 select_themes 가 최신 일봉 기준 급등락 테마를 고른다.
+        params={"theme_ids": []},
     )
     def news_scheduled_pipeline():
+        @task(retries=1, retry_delay=timedelta(minutes=5))
+        def select_themes(params: dict[str, Any] | None = None) -> list[int]:
+            from pipelines.news.jobs.select_themes import run
+
+            theme_ids = run([int(theme_id) for theme_id in (params or {}).get("theme_ids") or []])
+            if not theme_ids:
+                raise AirflowSkipException("선정된 테마가 없다 — 일봉이 아직 없거나 전부 보합")
+            return theme_ids
+
         @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
-        def collect_articles() -> dict[str, Any]:
+        def collect_articles(theme_ids: list[int]) -> dict[str, Any]:
             from pipelines.news.jobs.collect_articles import run
 
-            result = run()
-            clusters = result["clusters"]
-            if clusters["created"] + clusters["updated"] == 0:
+            result = run(theme_ids=theme_ids)
+            if result["created"] + result["updated"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "할 일이 없었다"다.
                 # 갱신할 카운터도 없는 시간이라 events_promote_clusters 를 깨울 이유가 없다.
                 raise AirflowSkipException("클러스터 생성·갱신 0건 — 하류를 깨우지 않는다")
@@ -54,6 +65,6 @@ if dag and task:
             result = run()
             return {"fetched": result["fetched"], "saved": result["saved"]}
 
-        collect_articles() >> extract_triples() >> summarize_articles()
+        collect_articles(select_themes()) >> extract_triples() >> summarize_articles()
 
     news_scheduled_pipeline()

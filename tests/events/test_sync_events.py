@@ -29,7 +29,6 @@ def _event_settings(**overrides) -> SimpleNamespace:
         max_items_per_run=2,
         llm_max_concurrency=2,
         lead_chars=600,
-        title_max_chars=60,
     )
     base.update(overrides)
     return SimpleNamespace(**base)

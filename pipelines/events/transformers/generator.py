@@ -1,5 +1,5 @@
 """
-새 EVENT 생성 시 사용되는 제목/당사자 추출용 LLM 스테이지
+새 EVENT 생성 시 사용되는 당사자 추출용 LLM 스테이지. 제목은 news_clusters.title 을 쓴다.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from pipelines.common.clients.bedrock import ensure_bedrock_token
 from pipelines.common.config import get_settings
 from pipelines.common.logging import get_logger
 from pipelines.events.models import EventDraft
-from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
 logger = get_logger(__name__)
 
@@ -33,9 +32,9 @@ def build_prompt_input(dated_texts: list[tuple[date | None, str]], candidates: l
     return "\n\n".join(blocks) + "\n\n[후보 기업]\n" + candidate_lines
 
 
-def validate_draft(draft: EventDraft, candidates: list[str], max_chars: int) -> EventDraft:
+def validate_draft(draft: EventDraft, candidates: list[str]) -> EventDraft:
     """
-    LLM이 출력한 EventDarft 검증
+    LLM이 출력한 EventDraft 검증 — 후보 밖 기업명 드랍, 중복 제거, 순서 유지
     """
 
     allowed = set(candidates)
@@ -49,13 +48,7 @@ def validate_draft(draft: EventDraft, candidates: list[str], max_chars: int) -> 
             continue
         companies.append(name)
 
-    title = remove_leading_title_brackets(" ".join(draft.title.split()))
-    if not title:
-        raise ValueError("빈 제목")
-    if len(title) > max_chars:
-        raise ValueError(f"제목 길이 초과: {len(title)} > {max_chars}")
-
-    return EventDraft(companies=companies, title=title)
+    return EventDraft(companies=companies)
 
 
 class EventGenerator:
@@ -82,7 +75,7 @@ class EventGenerator:
     async def draft(
         self, dated_texts: list[tuple[date | None, str]], candidates: list[str]
     ) -> EventDraft:
-        # Bedrock 활용하여 Event 제목과 당사자 추출
+        # Bedrock 활용하여 Event 당사자 추출
         result = await self._chain.ainvoke(
             {"articles": build_prompt_input(dated_texts, candidates)}
         )

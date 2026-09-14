@@ -18,12 +18,12 @@ EXCLUDE_REPORT_KEYWORDS = [
     "탐사",
     "팩트체크",
 ]
+
 EXCLUDE_TITLE_TAG_PATTERN = re.compile(r"\[\s*(포토|표)\s*\]", re.IGNORECASE)
 
-# "[미국 특징주]"·"[홍콩 특징주]" 같은 해외 특징주 묶음 기사 태그.
-# 수식어 없는 "[특징주]"는 국내 개별 종목 뉴스라 매칭하지 않는다 — 태그 안에
-# 특징주 앞의 비공백 문자를 최소 하나 요구한다.
 EXCLUDE_FEATURED_STOCK_TAG_PATTERN = re.compile(r"\[\s*[^\]\s][^\]]*특징주[^\]]*\]")
+
+EXCLUDE_PRICE_NOTE_PATTERN = re.compile(r"주가\s*,\s*\d{1,2}월\s*\d{1,2}일")
 
 
 def calculate_official_source_score(
@@ -48,6 +48,12 @@ def calculate_official_source_score(
         score -= 5
         debug_info["excluded_keywords"].append(
             {"keyword": match.group(0), "position": "title_tag", "score": -5}
+        )
+
+    if EXCLUDE_PRICE_NOTE_PATTERN.search(title):
+        score -= 5
+        debug_info["excluded_keywords"].append(
+            {"keyword": "주가, N월 N일", "position": "price_note", "score": -5}
         )
 
     for keyword in EXCLUDE_REPORT_KEYWORDS:

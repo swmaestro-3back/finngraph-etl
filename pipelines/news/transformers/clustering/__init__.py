@@ -1,3 +1,7 @@
+from pipelines.news.transformers.clustering.batch import (
+    batch_documents,
+    seed_window,
+)
 from pipelines.news.transformers.clustering.cluster import (
     DEFAULT_THRESHOLD,
     Cluster,
@@ -13,7 +17,6 @@ from pipelines.news.transformers.clustering.incremental import (
     merge_term_weights,
     pick_representative,
     sum_terms,
-    time_decay,
     top_keywords,
 )
 from pipelines.news.transformers.clustering.preprocess import document_terms
@@ -27,14 +30,15 @@ __all__ = [
     "Terms",
     "TfidfMatrix",
     "assign_batch",
+    "batch_documents",
     "build_clusters",
     "build_tfidf",
     "document_terms",
     "medoid_and_cohesion",
     "merge_term_weights",
     "pick_representative",
+    "seed_window",
     "select_top_members",
     "sum_terms",
-    "time_decay",
     "top_keywords",
 ]
