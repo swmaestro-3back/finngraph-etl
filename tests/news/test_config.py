@@ -12,7 +12,7 @@ def test_search_defaults():
     assert settings.search_query_template == "특징주,{name}"
     assert settings.search_max_pages == 3
     assert settings.search_lookback_days == 180
-    assert settings.search_interval_hours == 2
+    assert settings.search_interval_hours == 4
     assert settings.news_llm_batch_size == 10
 
 

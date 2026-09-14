@@ -31,7 +31,7 @@ class NewsSettings(BaseSettings):
     # 워터마크가 없는 종목(첫 검색)은 이 일수까지만 거슬러 수집한다.
     search_lookback_days: int = Field(default=180, validation_alias="NEWS_SEARCH_LOOKBACK_DAYS")
     # search_history.last_searched_at 이 이 간격을 넘긴 기업만 이번 런의 검색 대상이다.
-    search_interval_hours: int = Field(default=2, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
+    search_interval_hours: int = Field(default=4, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
     # 런마다 검색할 급등락 테마 수. 상승 상위 절반 + 하락 상위 절반.
     theme_count: int = Field(default=40, validation_alias="NEWS_THEME_COUNT")
 

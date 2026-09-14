@@ -80,7 +80,7 @@ news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters �
 
 `select_themes`가 최신 일봉 기준 급등락 테마(상승 상위 20 + 하락 상위 20, `NEWS_THEME_COUNT`)를
 고르고, `collect_articles`가 그 테마의 편입 기업을 검색한다(`특징주,{종목명}` 최신순, 기업별
-`search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
+`search_history.last_searched_at`이 워터마크이자 4시간 간격 판정 기준). 수동 트리거 conf 의
 `theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
 
 ## 독립실행 Crons
