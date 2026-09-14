@@ -71,3 +71,31 @@ def test_remove_leading_title_brackets():
     assert remove_leading_title_brackets("") == ""
     # 태그만 있고 본문이 없으면 빈 문자열이 된다
     assert remove_leading_title_brackets("[포토]") == ""
+
+
+def test_bot_price_notes_are_filtered():
+    # sim 검색에서 30% 를 차지하던 봇 생성 시세 단신 (PRD 2026-09-10 실측)
+    items = [
+        _item("엘앤에프 주가, 9월 9일 장중 114,900원 1.06% 상승"),
+        _item("비에이치 주가, 9월 9일 19,940원 1.37% 상승 마감"),
+        _item("삼성전자 주가,10월 1일 장중 26만9500원 보합"),
+    ]
+
+    kept, removed = _filter(items)
+
+    assert kept == []
+    assert len(removed) == 3
+    assert removed[0]["debug_info"]["excluded_keywords"][0]["position"] == "price_note"
+
+
+def test_price_mention_without_date_note_is_kept():
+    # 날짜 단신 형식이 아닌 시세 언급은 다른 단계(LLM)가 판단한다
+    kept, removed = _filter(
+        [
+            _item("엘앤에프 12만7600원, 12%대 급등…LFP·ESS 성장 기대에 매수세"),
+            _item("삼성전자, 자사주 매입 결정…주가 방어 나서"),
+        ]
+    )
+
+    assert len(kept) == 2
+    assert removed == []

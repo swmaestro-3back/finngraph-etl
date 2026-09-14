@@ -22,7 +22,6 @@ _ENV_DEFAULTS = {
     "DB_PASSWORD": "12345678",
     # config import 시점에 캐스팅되는 상수. 로더 테스트와 무관하지만 import 통과에 필요.
     "SEARCH_DISPLAY": "1",
-    "MAX_PAGES": "1",
     "OFFICIAL_SOURCE_THRESHOLD": "1",
     "REQUEST_DELAY": "1",
 }
