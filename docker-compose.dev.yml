@@ -4,8 +4,8 @@
 #   scripts/dev-env.sh
 #   docker compose --env-file .env.dev -f docker-compose.dev.yml up -d
 
-x-airflow-common: &airflow-common
-  # 서버에서 빌드하지 않는다. CI 가 ECR 에 올린 것을 받는다.
+x-airflow-common:
+  &airflow-common # 서버에서 빌드하지 않는다. CI 가 ECR 에 올린 것을 받는다.
   image: ${ECR_REGISTRY}/finngraph/etl-airflow:${IMAGE_TAG:?IMAGE_TAG 를 지정하세요 (커밋 SHA 권장)}
   user: "50000:0"
   restart: unless-stopped
@@ -33,35 +33,14 @@ x-airflow-common: &airflow-common
     - etl_airflow_logs:/opt/airflow/logs
 
 services:
-  # 마이그레이션 파일은 이미지에 없어 저장소 경로를 읽는다.
+  # flyway etl db 마이그레이션 작업
   db-init:
-    image: postgres:16
-    restart: "no"
-    env_file:
-      - path: .env.dev
-        required: true
-    environment:
-      PGSSLMODE: require   # rds.force_ssl=1
-    volumes:
-      - ./migrations/versions:/migrations:ro
-    entrypoint:
-      - bash
-      - -c
-      - |
-        set -e
-        q() { PGPASSWORD="$$DB_PASSWORD" psql -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME" "$$@"; }
-        # 0000 이 옛 이름 테이블을 다시 만들고 0001 이 개명하려다 충돌한다. 한 번만 돌린다.
-        q -v ON_ERROR_STOP=1 -q -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-        for f in /migrations/*.sql; do
-          n=$$(basename "$$f")
-          if [ -n "$$(q -tAc "SELECT 1 FROM schema_migrations WHERE filename = '$$n'")" ]; then
-            echo "skip $$n"
-            continue
-          fi
-          echo "applying $$n"
-          q -v ON_ERROR_STOP=1 -q -f "$$f"
-          q -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations(filename) VALUES ('$$n')"
-        done
+    image: flyway/flyway:12-alpine
+    command: -url=jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}?sslmode=require
+      -user=${DB_USER} -password=${DB_PASSWORD}
+      -baselineOnMigrate=true -baselineVersion=1
+      migrate
+    volumes: [./migrations/versions:/flyway/sql:ro]
 
   # cypher-shell 을 쓰려고 neo4j 이미지를 빌린다. 대상은 원격 인스턴스다.
   neo4j-init:
@@ -107,7 +86,8 @@ services:
     ports:
       - "127.0.0.1:${AIRFLOW_WEB_PORT:?Parameter Store 에 AIRFLOW_WEB_PORT 가 없습니다}:8080"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      test:
+        ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -121,7 +101,11 @@ services:
     <<: *airflow-common
     command: scheduler
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"',
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -137,7 +121,11 @@ services:
     <<: *airflow-common
     command: dag-processor
     healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"',
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
