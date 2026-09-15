@@ -16,7 +16,7 @@ import os
 _ENV_DEFAULTS = {
     # DB 접속 (news 로더는 psycopg(3)로 직접 연결)
     "DB_HOST": "localhost",
-    "DB_PORT": "15432",
+    "DB_PORT": "5432",
     "DB_NAME": "finngraph",
     "DB_USER": "threeback",
     "DB_PASSWORD": "12345678",
