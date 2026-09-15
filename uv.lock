@@ -363,6 +363,23 @@ wheels = [
 ]
 
 [[package]]
+name = "apache-airflow-providers-slack"
+version = "9.10.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "apache-airflow" },
+    { name = "apache-airflow-providers-common-compat" },
+    { name = "apache-airflow-providers-common-sql" },
+    { name = "asgiref" },
+    { name = "slack-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/4b/6ce32d797252ac8a15634447445ea5d5434341512ed1d10b237a98a1f381/apache_airflow_providers_slack-9.10.2.tar.gz", hash = "sha256:1679226c0064810e9d31f3650e8488b4ba44348d52ab38cf4bc8e212ea6a6c9b", size = 67190, upload-time = "2026-06-22T19:59:59.119Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/8d/84ae235db2be07774c12b8cd763fe2312c626be6ffccac2c86fe93c84c93/apache_airflow_providers_slack-9.10.2-py3-none-any.whl", hash = "sha256:458c9acae9bf1b26c995a4b760a61c8a2e9da9a7b41bb014d2211e636e31ab83", size = 44045, upload-time = "2026-06-22T19:59:21.592Z" },
+]
+
+[[package]]
 name = "apache-airflow-providers-smtp"
 version = "3.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -992,6 +1009,7 @@ dependencies = [
 [package.optional-dependencies]
 airflow = [
     { name = "apache-airflow" },
+    { name = "apache-airflow-providers-slack" },
 ]
 news = [
     { name = "beautifulsoup4" },
@@ -1008,6 +1026,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.2" },
     { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=3.3" },
+    { name = "apache-airflow-providers-slack", marker = "extra == 'airflow'", specifier = ">=9" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
     { name = "beautifulsoup4", marker = "extra == 'news'", specifier = ">=4.12" },
     { name = "boto3", specifier = ">=1.34" },
@@ -3696,6 +3715,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "slack-sdk"
+version = "3.44.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/4e/371068dd7281139307e60cd18553b96b9c8c391a4c3040617192713a3cc4/slack_sdk-3.44.1.tar.gz", hash = "sha256:ca19505423789fa2a3189ff486f989f02e49289f008d0a5813df7255b3fb93ea", size = 256661, upload-time = "2026-09-03T14:21:13.879Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/fc/67352b742fc6fa520a550581b0284f5757e4e31a32327c2a00276747fd30/slack_sdk-3.44.1-py2.py3-none-any.whl", hash = "sha256:d6f20a0fbe3fecf9cac955c99d686301b48a645b7045472c3a0cdd186d7c42b2", size = 319865, upload-time = "2026-09-03T14:21:12.405Z" },
 ]
 
 [[package]]
