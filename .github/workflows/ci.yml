@@ -147,14 +147,14 @@ jobs:
               user=os.environ["DB_USER"],
               password=os.environ["DB_PASSWORD"],
            ) as conn:
-             with conn.cursor() as cur:
-                  cur.execute("""
-                      SELECT
-                          current_database(),
-                          current_schema(),
-                         to_regclass('public.news')
-                 """)
-                 print(cur.fetchone())
+              with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                      current_database(),
+                      current_schema(),
+                      to_regclass('public.news')
+                """)
+                print(cur.fetchone())
           PY
       - name: pytest (integration만)
         run: uv run pytest -m integration
