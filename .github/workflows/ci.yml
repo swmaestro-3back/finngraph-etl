@@ -130,6 +130,32 @@ jobs:
           -user="threeback" \
           -password="12345678" \
           migrate
+      - name: Check DB from Python
+        run: |
+          uv run python - <<'PY'
+          import os
+          import psycopg
+
+          print("HOST:", os.environ["DB_HOST"])
+          print("PORT:", os.environ["DB_PORT"])
+          print("DB:", os.environ["DB_NAME"])
+
+          with psycopg.connect(
+              host=os.environ["DB_HOST"],
+              port=os.environ["DB_PORT"],
+              dbname=os.environ["DB_NAME"],
+              user=os.environ["DB_USER"],
+              password=os.environ["DB_PASSWORD"],
+           ) as conn:
+             with conn.cursor() as cur:
+                  cur.execute("""
+                      SELECT
+                          current_database(),
+                          current_schema(),
+                         to_regclass('public.news')
+                 """)
+                 print(cur.fetchone())
+          PY
       - name: pytest (integration만)
         run: uv run pytest -m integration
 
