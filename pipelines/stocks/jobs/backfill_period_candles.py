@@ -1,14 +1,7 @@
 """과거 주봉·월봉 백필.
 
-일별 갱신(collect_daily_candles.run_period)과 같은 KIS 기간별시세를 쓴다. 다만 그쪽은
-설정값(STOCK_PERIOD_LOOKBACK_DAYS, 기본 120일)만 되짚어서 과거가 채워지지 않는다.
-여기서 구간을 직접 받아 그만큼 받는다.
-
-일봉 백필과 같은 원칙이다 — **지정한 구간을 그대로 받아 upsert 한다.** 이미 채워졌는지
-판정하지 않는다. upsert 가 멱등이고, 기간봉은 100건 페이지에 5년이 주봉 3콜·월봉 1콜로
-들어가 다시 받는 비용이 작다.
-
-수동 실행이 기본이다(DAG schedule=None).
+일별 갱신(collect_daily_candles.run_period)과 같은 KIS 기간별시세를 쓰되, 구간을 직접 받는다.
+일봉 백필과 같이 지정 구간을 그대로 upsert 하고 "이미 채워졌는지" 판정하지 않는다.
 """
 
 from __future__ import annotations
@@ -31,7 +24,6 @@ logger = get_logger(__name__)
 
 CHUNK_SIZE = 50
 
-# 지원하는 봉 종류. KIS FID_PERIOD_DIV_CODE 값이다.
 ALL_PERIODS = ("W", "M")
 
 
@@ -63,7 +55,7 @@ def run(
 
     settings = get_settings()
     today = now_kst().date()
-    # 일봉과 같은 연수를 쓴다. 기간봉만 따로 둘 이유가 없고, 차트가 같은 구간을 그린다.
+    # 차트가 일봉과 같은 구간을 그리므로 연수도 같은 설정을 쓴다.
     window_start = start or today - relativedelta(years=settings.stock_daily_backfill_years)
     window_end = end or today
 
@@ -99,7 +91,7 @@ def run(
                         )
                     )
                 except Exception:
-                    # 한 종목·한 봉의 실패가 배치 전체를 죽이면 안 된다.
+                    # 한 종목의 실패로 배치 전체를 죽이지 않는다.
                     logger.exception(
                         "기간봉 수집 실패: ticker=%s period=%s 구간=%s~%s",
                         ticker,
