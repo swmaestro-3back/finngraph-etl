@@ -20,7 +20,7 @@ from pipelines.common.logging import get_logger
 from pipelines.companies.loaders.diagnostics import describe_universe
 from pipelines.stocks.extractors.naver import BlockSuspectedError, fetch_investor_trends
 from pipelines.stocks.loaders.flows import fetch_investor_flow_counts, upsert_investor_flows
-from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
+from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks, fetch_stocks_by_tickers
 
 logger = get_logger(__name__)
 
@@ -31,32 +31,44 @@ ROWS_PER_PAGE = 365
 PROGRESS_INTERVAL = 100
 
 
-def run(pages: int = 1, limit: int | None = None) -> None:
+def run(pages: int = 1, tickers: list[str] | None = None) -> dict[str, int]:
     """투자자 수급을 pages년치 백필한다.
 
     Args:
         pages (int): 종목당 페이지 수. 1페이지가 365건이라 대략 연 단위다.
-        limit (int | None): 처리 종목 수 상한. 수동 점검용.
+        tickers (list[str] | None): 단축코드로 대상을 좁힌다. 생략하면 서비스 대상 전체.
+
+    Returns:
+        dict[str, int]: 처리 결과 요약. Airflow XCom 으로 노출된다.
     """
 
     with session_scope() as session:
-        targets = fetch_serviceable_stocks(session, limit)
+        if tickers:
+            targets, missing = fetch_stocks_by_tickers(session, tickers)
+            if missing:
+                logger.warning("찾지 못한 단축코드 %d개: %s", len(missing), missing)
+        else:
+            targets = fetch_serviceable_stocks(session)
         if not targets:
             logger.warning("수급 백필 대상이 0종목이다 — %s", describe_universe(session))
         existing_counts = fetch_investor_flow_counts(session)
 
     target_rows = pages * ROWS_PER_PAGE
-    remaining = [
-        (stock_id, ticker)
-        for stock_id, ticker in targets
-        if existing_counts.get(stock_id, 0) < target_rows
-    ]
+    # 종목을 지정했다면 "그걸 받아라"는 지시다. 건너뛰기 판정을 적용하지 않는다.
+    remaining = (
+        targets
+        if tickers
+        else [
+            (stock_id, ticker)
+            for stock_id, ticker in targets
+            if existing_counts.get(stock_id, 0) < target_rows
+        ]
+    )
     logger.info(
-        "수급 백필 시작: 대상 %d종목 중 %d종목 (%d종목은 이미 %d행 이상이라 건너뜀)",
+        "수급 백필 시작: 대상 %d종목 중 %d종목 (%d종목 건너뜀)",
         len(targets),
         len(remaining),
         len(targets) - len(remaining),
-        target_rows,
     )
 
     total_rows = 0
@@ -90,3 +102,5 @@ def run(pages: int = 1, limit: int | None = None) -> None:
             logger.info("수급 백필 진행: %d/%d종목, %d행", index, len(remaining), total_rows)
 
     logger.info("수급 백필 완료: %d행, 실패 %d종목 %s", total_rows, len(failed), failed[:10])
+
+    return {"targets": len(remaining), "rows": total_rows, "failed": len(failed)}
