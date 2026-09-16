@@ -16,6 +16,14 @@ from pipelines.common.clients.postgres import session_scope
 
 MIN_STOCKS = 3
 
+SELECT_LATEST_TRADE_DATE_SQL = text(
+    """
+    SELECT MAX(trade_date)
+      FROM stock_candles_daily
+     WHERE trade_date <= :as_of;
+    """
+)
+
 SELECT_THEME_CHANGES_SQL = text(
     """
     WITH latest AS (
@@ -62,6 +70,13 @@ class ThemeChange:
     trade_date: date
     change: float  # 편입 종목 등락률(%) 단순 평균
     stock_count: int
+
+
+def fetch_latest_trade_date(as_of: date) -> date | None:
+    with session_scope() as session:
+        row = session.execute(SELECT_LATEST_TRADE_DATE_SQL, {"as_of": as_of}).scalar()
+
+    return row
 
 
 def fetch_theme_changes(as_of: date, min_stocks: int = MIN_STOCKS) -> list[ThemeChange]:

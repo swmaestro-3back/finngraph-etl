@@ -28,6 +28,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # 컨테이너 안에서는 호스트 포트(localhost:15432)가 아니라 compose 네트워크의 db:5432로 접속한다.
     DATABASE_URL: postgresql+psycopg://${ETL_DB_USER:-threeback}:${ETL_DB_PASSWORD:-12345678}@db:5432/${ETL_DB_NAME:-finngraph}
+    HOT_THEMES_REDIS_URL: ${HOT_THEMES_REDIS_URL:-redis://host.docker.internal:16379/0}
     DB_HOST: db
     DB_PORT: "5432"
     DB_NAME: ${ETL_DB_NAME:-finngraph}
