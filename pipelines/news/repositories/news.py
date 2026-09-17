@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.transformers.duplicate_filter import normalize_url_for_duplicate
+from pipelines.news.transformers.filters.duplicate_filter import normalize_url_for_duplicate
 from pipelines.news.utils.date_utils import parse_news_pub_date
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,

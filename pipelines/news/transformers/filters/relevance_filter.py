@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-PROMPT_DIRECTORY = Path(__file__).with_name("prompts")
+PROMPT_DIRECTORY = Path(__file__).resolve().parents[1] / "prompts"
 
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_BATCH_SIZE = 10
@@ -27,13 +27,20 @@ class ArticleVerdict(BaseModel):
     id: int = Field(description="입력의 [기사 N] 에서 N. 입력에 있는 번호만, 하나도 빠짐없이.")
     valid: bool = Field(
         description=(
-            "그 상장사 자체의 사건(수주·실적·공시·투자·M&A 등)이 서술되어 있으면 true. "
-            "지수·타사·업황·거시 요인만으로 설명되는 시세 변동, 여러 종목 나열, "
-            "광고·홍보, 기업과 무관한 기사면 false."
+            "그 상장사가 주어나 목적어인 등록 predicate 관계(수주·공급·인수·투자·계약 등)가 "
+            "제목·요약에 명시되어 있거나(GATE 1), 그 상장사 자체의 사건(실적·유상증자·인허가·"
+            "소송·공시·증설 등)이 매출·비용·생산·공급·규제 등에 직접 영향을 주면(GATE 2) true. "
+            "둘 중 하나만 통과해도 true. 지수·타사·업황·거시 요인만으로 설명되는 시세 변동, "
+            "수혜주 전망, 여러 종목 나열, 광고·홍보, 기업과 무관한 기사면 false."
         )
     )
     companies: list[str] = Field(
-        description="그 기사의 후보 목록에서 글자 그대로 고른, 기사가 실제로 다루는 상장사."
+        description=(
+            "그 기사의 후보 목록에서 글자 그대로 고른, 기사를 valid 로 만든 관계·사건의 당사자인 "
+            "상장사만. 시세 변동만 서술된 회사('~도 상한가', '~등 관련주 강세', 동반 강세, 비교 "
+            "대상, 업종 배경, 지나가며 언급된 거래처)는 넣지 않는다. "
+            "보통 1개, 관계의 양 당사자면 2개."
+        )
     )
 
 

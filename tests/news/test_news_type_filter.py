@@ -8,7 +8,7 @@ def _item(title: str) -> dict:
 
 
 def _filter(items: list[dict]) -> tuple[list[dict], list[dict]]:
-    from pipelines.news.transformers.news_type_filter import filter_official_source_news
+    from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
 
     return filter_official_source_news(items, pipeline_input={}, official_source_threshold=0)
 

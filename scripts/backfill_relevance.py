@@ -19,7 +19,7 @@ from sqlalchemy import text
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.config import get_news_settings
 from pipelines.news.transformers.company_candidates import attach_candidate_companies
-from pipelines.news.transformers.relevance_filter import filter_relevant_news
+from pipelines.news.transformers.filters.relevance_filter import filter_relevant_news
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logging.getLogger("langchain_aws").setLevel(logging.WARNING)

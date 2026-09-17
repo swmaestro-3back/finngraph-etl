@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from pipelines.news.transformers.relevance_filter import (
+from pipelines.news.transformers.filters.relevance_filter import (
     ArticleInput,
     ArticleVerdict,
     BatchVerdict,
@@ -26,7 +26,7 @@ def _ok(article: ArticleInput) -> ArticleVerdict:
 
 
 def test_build_relevance_input_numbers_articles_and_lists_candidates():
-    from pipelines.news.transformers.relevance_filter import build_relevance_input
+    from pipelines.news.transformers.filters.relevance_filter import build_relevance_input
 
     text = build_relevance_input(
         [
@@ -43,7 +43,7 @@ def test_build_relevance_input_numbers_articles_and_lists_candidates():
 
 
 def test_validate_subjects_keeps_candidates_only_in_order(caplog):
-    from pipelines.news.transformers.relevance_filter import validate_subjects
+    from pipelines.news.transformers.filters.relevance_filter import validate_subjects
 
     kept = validate_subjects(
         ["에코프로", "삼성전자", "엘앤에프", "에코프로"], ["엘앤에프", "에코프로"], "양극재 급등"
@@ -55,7 +55,7 @@ def test_validate_subjects_keeps_candidates_only_in_order(caplog):
 
 
 def test_chunked():
-    from pipelines.news.transformers.relevance_filter import chunked
+    from pipelines.news.transformers.filters.relevance_filter import chunked
 
     assert chunked([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
     assert chunked([], 3) == []

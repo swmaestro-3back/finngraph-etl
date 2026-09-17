@@ -9,7 +9,9 @@ import pytest
 from pipelines.news.repositories.news_clusters import ClusterArticle
 from pipelines.news.transformers.cluster_titler import (
     ClusterTitle,
+    TitleTooLong,
     build_title_input,
+    load_system_prompt,
     title_clusters,
     validate_cluster_title,
 )
@@ -41,8 +43,15 @@ def test_validate_cluster_title_cleans_and_bounds():
 
     with pytest.raises(ValueError):
         validate_cluster_title("[특징주]", 30)
-    with pytest.raises(ValueError):
+    with pytest.raises(TitleTooLong):
         validate_cluster_title("아" * 31, 30)
+
+
+def test_load_system_prompt_injects_max_chars():
+    prompt = load_system_prompt(25)
+
+    assert "25자 이하" in prompt
+    assert "{max_chars}" not in prompt
 
 
 def test_title_clusters_isolates_failures_and_skips_empty():
@@ -53,7 +62,11 @@ def test_title_clusters_isolates_failures_and_skips_empty():
         if "실패" in text:
             raise RuntimeError("bedrock down")
         if "긴제목" in text:
-            return ClusterTitle(title="가" * 40)
+            return ClusterTitle(title="가" * 40)  # 축약 재요청에도 여전히 길다
+        if "[재요청]" in text:
+            return ClusterTitle(title="네오볼타 ESS 공급계약")
+        if "축약" in text:
+            return ClusterTitle(title="네오볼타 ESS 배터리 공급계약 체결 공시 발표")
         return ClusterTitle(title=" 노바티스 피하주사 계약 ")
 
     titles = title_clusters(
@@ -62,14 +75,19 @@ def test_title_clusters_isolates_failures_and_skips_empty():
             2: [_article("실패 기사")],
             3: [_article("긴제목 기사")],
             4: [],  # 멤버 없음 → 호출 안 함
+            5: [_article("축약 기사")],  # 한 번 넘치고 재요청에서 줄어든다
         },
         titler=titler,
         max_concurrency=2,
-        max_chars=30,
+        max_chars=20,
     )
 
-    assert titles == {1: "노바티스 피하주사 계약"}
-    assert len(calls) == 3
+    assert titles == {1: "노바티스 피하주사 계약", 5: "네오볼타 ESS 공급계약"}
+    # 1·2·3·5 첫 호출 + 3·5 축약 재요청
+    assert len(calls) == 6
+    shorten = [c for c in calls if "[재요청]" in c]
+    assert len(shorten) == 2
+    assert any("20자를 넘는다" in c and "공시 발표" in c for c in shorten)
 
 
 def test_title_clusters_empty_input_skips_llm():

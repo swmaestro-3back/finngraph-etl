@@ -1,9 +1,5 @@
-Summarize the article below in 4-5 sentences. Put the core event in the first sentence.
-
-[Title]
+[제목]
 $title
 
-[Body (the only source of truth)]
+[본문]
 $source_text
-
-[Summary]

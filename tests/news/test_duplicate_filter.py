@@ -13,7 +13,7 @@ def _item(link: str, title: str, companies: list[tuple[int, str]]) -> dict:
 
 
 def test_url_duplicate_merges_query_companies():
-    from pipelines.news.transformers.duplicate_filter import remove_duplicate_by_url
+    from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
 
     first = _item("https://a.com/1", "엘앤에프·에코프로 동반 급등", [(100, "엘앤에프")])
     second = _item("https://a.com/1?ref=x", "엘앤에프·에코프로 동반 급등", [(200, "에코프로")])
@@ -30,7 +30,7 @@ def test_url_duplicate_merges_query_companies():
 
 
 def test_merge_without_query_companies_is_noop():
-    from pipelines.news.transformers.duplicate_filter import merge_query_companies
+    from pipelines.news.transformers.filters.duplicate_filter import merge_query_companies
 
     target = {"title": "a"}
     merge_query_companies(target, {"title": "b"})
