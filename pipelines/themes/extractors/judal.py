@@ -26,7 +26,7 @@ class JudalExtractor(BaseExtractor):
             text = await response.text()
 
         soup = BeautifulSoup(text, "lxml")
-        theme_elements = soup.find_all("th", class_=["table-success", "text-left"])
+        theme_elements = soup.find_all("th", class_="table-success text-start")
 
         themes: list[Theme] = []
         for element in theme_elements:
@@ -84,7 +84,7 @@ class JudalExtractor(BaseExtractor):
                 text = await response.text()
 
             soup = BeautifulSoup(text, "lxml")
-            th_targets = soup.find_all("th", class_="table-success text-left")
+            th_targets = soup.find_all("th", class_="table-success text-start")
 
             logger.debug("[themeIdx=%s] %d개 종목 처리 중...", source_theme_id, len(th_targets))
 
