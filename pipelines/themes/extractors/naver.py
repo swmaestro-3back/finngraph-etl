@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import re
-
-from bs4 import BeautifulSoup
+import asyncio
+from typing import Any
 
 from pipelines.common.clients.http import http_client
 from pipelines.common.logging import get_logger
@@ -14,8 +13,15 @@ logger = get_logger(__name__)
 
 class NaverExtractor(BaseExtractor):
     """
-    네이버 증권은 UTF-8이 아닌 2000년대 초반 EUC-KR로 인코딩하여 보내줌
-    따라서 받은 Response를 현대적인 UTF-8로 인코딩을 하면 안되고 EUC-KR로 디코딩을 해야함
+    finance.naver.com 의 EUC-KR HTML 테이블이 stock.naver.com(Next.js) 으로 리다이렉트되면서
+    JSON API 로 전환했다.
+
+    - 테마 목록: rankings/v2/domestic/themes — 커서 기반 페이지네이션.
+      응답의 `cursor` 는 마지막 아이템 code 의 base64 이고 `hasNext` 가 False 가 될 때까지
+      같은 파라미터에 `cursor` 만 붙여 다시 호출하면 전체 테마를 순회한다(size 최대 100).
+    - 테마 설명: domestic/market/theme/{code}/info 의 `categoryInfo`.
+    - 테마 종목·편입 이유: domestic/market/theme/{code}/stocklist — `startIdx` 는 오프셋이 아니라
+      0-based 페이지 번호다(pageSize 최대 200). 빈 배열이 오면 끝.
     """
 
     source_name = "naver"
@@ -28,103 +34,127 @@ class NaverExtractor(BaseExtractor):
         "S7",
     ]
 
-    BASE_URL = "https://finance.naver.com"
+    BASE_URL = "https://stock.naver.com/api"
     HEADERS = {
         "User-Agent": (
-            "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36"
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         ),
-        "Upgrade-Insecure-Requests": "1",
-        "DNT": "1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
+        "Accept": "application/json",
+        "Referer": "https://stock.naver.com/market/stock/kr/theme",
     }
+
+    # 테마 목록은 순위 정렬만 지원한다(changeRate|tradingVolume|tradingValue|marketCap).
+    # 커서가 마지막 code 기준이라 정렬이 페이지 사이에 흔들리면 누락/중복이 생기므로
+    # 장중에도 비교적 안정적인 marketCap 을 쓰고, 방어적으로 code 중복도 제거한다.
+    THEME_LIST_SORT = "marketCap"
+    THEME_LIST_PAGE_SIZE = 100
+    STOCK_LIST_PAGE_SIZE = 200
+    # 테마당 info 1회 + stocklist 1회 이상이라 동시 요청 수를 제한한다.
+    CONCURRENCY = 5
+
+    async def _get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
+        session = http_client.get_session()
+        async with session.get(
+            url, params=params, headers=self.HEADERS, timeout=self.TIMEOUT
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
 
     async def fetch_themes(self) -> list[Theme]:
         """
         테마명 크롤링
         블랙리스트에 제거된 테마들만 크롤링
         """
+        url = f"{self.BASE_URL}/stockSecurity/rankings/v2/domestic/themes"
+        params: dict[str, Any] = {
+            "sortType": self.THEME_LIST_SORT,
+            "size": self.THEME_LIST_PAGE_SIZE,
+            "period": "daily",
+        }
+
         themes: list[Theme] = []
-        session = http_client.get_session()
-        for pagenum in range(1, 8):
-            url = f"{self.BASE_URL}/sise/theme.naver?&page={pagenum}"
+        seen: set[int] = set()
+        cursor: str | None = None
+        page = 0
+        while True:
+            page += 1
+            data = await self._get_json(url, {**params, "cursor": cursor} if cursor else params)
+            items = data.get("items") or []
+            logger.debug("테마 목록 %d페이지: %d개 (cursor=%s)", page, len(items), cursor)
 
-            # EUC-KR로 인코딩해서 보내주므로 EUC-KR로 디코딩해야함
-            async with session.get(url, headers=self.HEADERS, timeout=self.TIMEOUT) as resp:
-                text = await resp.text(encoding="euc-kr")
+            for item in items:
+                theme_name = str(item.get("name", "")).strip()
+                code = item.get("code")
+                if not theme_name or code is None:
+                    continue
 
-            soup = BeautifulSoup(text, "lxml")
-            for a in soup.select("#contentarea_left > table.type_1.theme > tr > td.col_type1 > a"):
-                theme_name = a.text.strip()
+                source_theme_id = int(code)
+                if source_theme_id in seen:
+                    continue
+                seen.add(source_theme_id)
 
                 # 테마 이름이 블랙리스트에 있다면 스킵
                 if theme_name in self.blacklist:
                     continue
 
-                href = str(a["href"])
-                source_theme_id = None
-                match = re.search(r"no=(\d+)", href)
-                if match:
-                    source_theme_id = int(match.group(1))
-
-                description = ""
-                try:
-                    async with session.get(
-                        f"{self.BASE_URL}{href}", headers=self.HEADERS
-                    ) as detail_resp:
-                        detail_text = await detail_resp.text(encoding="euc-kr")
-                    detail_soup = BeautifulSoup(detail_text, "lxml")
-                    info_tag = detail_soup.select_one("div.info_layer_wrap > p.info_txt")
-                    if info_tag:
-                        description = info_tag.text.strip()
-                except Exception:
-                    pass
-
                 themes.append(
-                    Theme(
-                        name=theme_name,
-                        source="naver",
-                        source_theme_id=source_theme_id,
-                        description=description,
-                    )
+                    Theme(name=theme_name, source="naver", source_theme_id=source_theme_id)
                 )
-                logger.debug("[%s] 테마 추출 완료", theme_name)
+
+            cursor = data.get("cursor")
+            if not data.get("hasNext") or not cursor or not items:
+                break
+
+        logger.info("테마 목록 %d개 수집 (%d페이지)", len(themes), page)
         return themes
+
+    async def fetch_theme_description(self, source_theme_id: int) -> str:
+        """테마 설명(categoryInfo) 조회. 실패하면 빈 문자열."""
+        url = f"{self.BASE_URL}/domestic/market/theme/{source_theme_id}/info"
+        try:
+            data = await self._get_json(url, {"marketType": "ALL"})
+            return str(data.get("categoryInfo") or "").strip()
+        except Exception:
+            logger.exception("themeCode=%s 설명 조회 중 에러 발생", source_theme_id)
+            return ""
 
     async def extract_theme_stock(
         self, source_theme_id: int | None = None, theme_name: str | None = None
     ) -> list[Company]:
-        url = f"{self.BASE_URL}/sise/sise_group_detail.naver?type=theme&no={source_theme_id}"
+        url = f"{self.BASE_URL}/domestic/market/theme/{source_theme_id}/stocklist"
         companies: list[Company] = []
+        seen: set[str] = set()
 
         try:
-            session = http_client.get_session()
-            async with session.get(url, headers=self.HEADERS, timeout=self.TIMEOUT) as resp:
-                text = await resp.text(encoding="euc-kr")
+            page = 0
+            while True:
+                items = await self._get_json(
+                    url,
+                    {
+                        "marketType": "ALL",
+                        "orderType": "priceTop",
+                        "startIdx": page,  # 0-based 페이지 번호
+                        "pageSize": self.STOCK_LIST_PAGE_SIZE,
+                    },
+                )
+                if not items:
+                    break
 
-            soup = BeautifulSoup(text, "lxml")
-            # 전체 테이블의 tr 파싱
-            for tr in soup.select("#contentarea > div:nth-child(5) > table > tbody > tr"):
-                # 주식명과 종목코드 파싱
-                a = tr.select_one("td.name > div > a")
-                if not a:
-                    continue
-                href = str(a.get("href", ""))
-                if "code=" not in href:
-                    continue
+                for item in items:
+                    ticker = str(item.get("itemcode") or "").strip()
+                    name = str(item.get("itemname") or "").strip()
+                    if not ticker or not name or ticker in seen:
+                        continue
+                    seen.add(ticker)
 
-                name = a.text.strip()
-                srtn = href.split("code=")[-1].strip()
-                if not srtn:
-                    continue
+                    # 테마 편입 이유
+                    reason = str(item.get("itemInfo") or "").strip() or None
+                    companies.append(Company(name=name, ticker=ticker, reason=reason))
 
-                # 테마 편입 이유 파싱
-                reason_tag = tr.select_one("div.info_layer_wrap > p.info_txt")
-                reason = reason_tag.text.strip() if reason_tag else None
-
-                companies.append(Company(name=name, ticker=srtn, reason=reason))
+                if len(items) < self.STOCK_LIST_PAGE_SIZE:
+                    break
+                page += 1
 
             logger.debug("[%s] %d개 종목 완료", theme_name, len(companies))
 
@@ -135,13 +165,19 @@ class NaverExtractor(BaseExtractor):
 
         return companies
 
-    async def extract(self) -> list[Theme]:
-        themes: list[Theme] = await self.fetch_themes()
-
-        for theme in themes:
+    async def _fill_theme(self, theme: Theme, semaphore: asyncio.Semaphore) -> None:
+        assert theme.source_theme_id is not None
+        async with semaphore:
+            theme.description = await self.fetch_theme_description(theme.source_theme_id)
             theme.companies = await self.extract_theme_stock(
                 source_theme_id=theme.source_theme_id, theme_name=theme.name
             )
+
+    async def extract(self) -> list[Theme]:
+        themes: list[Theme] = await self.fetch_themes()
+
+        semaphore = asyncio.Semaphore(self.CONCURRENCY)
+        await asyncio.gather(*(self._fill_theme(theme, semaphore) for theme in themes))
 
         logger.info("총 %d개 테마 추출 완료", len(themes))
         return themes

@@ -33,9 +33,9 @@ from pipelines.news.transformers.clustering import (
     seed_window,
 )
 from pipelines.news.transformers.company_candidates import attach_candidate_companies
-from pipelines.news.transformers.duplicate_filter import remove_duplicate_by_url
-from pipelines.news.transformers.news_type_filter import filter_official_source_news
-from pipelines.news.transformers.relevance_filter import filter_relevant_news
+from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
+from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
+from pipelines.news.transformers.filters.relevance_filter import filter_relevant_news
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import remove_leading_title_brackets
 

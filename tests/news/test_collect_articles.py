@@ -8,8 +8,8 @@ import pytest
 
 from pipelines.news.repositories import news_companies
 from pipelines.news.repositories.search_history import CompanyQuery, CompanyQueryBatch
-from pipelines.news.transformers import relevance_filter
-from pipelines.news.transformers.relevance_filter import ArticleVerdict, BatchVerdict
+from pipelines.news.transformers.filters import relevance_filter
+from pipelines.news.transformers.filters.relevance_filter import ArticleVerdict, BatchVerdict
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 

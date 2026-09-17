@@ -50,8 +50,9 @@ class NewsSettings(BaseSettings):
     cluster_keyword_count: int = Field(default=6, validation_alias="NEWS_CLUSTER_KEYWORD_COUNT")
     # 판정 기사 수(original_size)가 이 값 이상이 되면 LLM 으로 클러스터 이름을 짓는다.
     cluster_title_min_size: int = Field(default=3, validation_alias="NEWS_CLUSTER_TITLE_MIN_SIZE")
+    # 클러스터 이름 길이 상한. 시스템 프롬프트에 주입되고 검증에도 같은 값을 쓴다.
     cluster_title_max_chars: int = Field(
-        default=40, validation_alias="NEWS_CLUSTER_TITLE_MAX_CHARS"
+        default=25, validation_alias="NEWS_CLUSTER_TITLE_MAX_CHARS"
     )
 
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
@@ -59,6 +60,9 @@ class NewsSettings(BaseSettings):
     official_source_threshold: int = Field(default=0, validation_alias="OFFICIAL_SOURCE_THRESHOLD")
 
     request_delay: float = Field(default=1.0, validation_alias="REQUEST_DELAY")
+    # 본문 크롤링 동시 요청 수. 대상이 여러 언론사 페이지라 API 제한은 없고,
+    # 이 값이 유일한 상한이다.
+    news_body_fetch_workers: int = Field(default=8, validation_alias="NEWS_BODY_FETCH_WORKERS")
 
     news_llm_body_limit: int = Field(default=12000, validation_alias="NEWS_LLM_BODY_LIMIT")
     news_llm_max_tokens: int = Field(default=1024, validation_alias="NEWS_LLM_MAX_TOKENS")
