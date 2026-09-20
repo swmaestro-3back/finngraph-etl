@@ -50,12 +50,6 @@ if dag and task:
 
             run(merged_path)
 
-        @task
-        def embed_themes() -> None:
-            from pipelines.themes.jobs.embed_themes import run
-
-            run()
-
         # SOURCE별 task를 생성해 병렬 실행 fan-out
         extracted = [
             extract_source.override(task_id=f"extract_{source}")(source) for source in SOURCES
@@ -63,9 +57,10 @@ if dag and task:
 
         merged = merge_themes(extracted)
 
+        # Theme.theme_id 가 Postgres themes.id 라서 RDB 적재가 먼저 끝나야 한다.
+        postgres_loaded = load_postgres(merged)
         neo4j_loaded = load_neo4j(merged)
-        load_postgres(merged)
 
-        neo4j_loaded >> embed_themes()
+        postgres_loaded >> neo4j_loaded
 
     themes_sync_master()
