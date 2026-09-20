@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -100,3 +101,41 @@ class DartCorp:
     name_eng: str | None = None
     stock_code: str | None = None
     modify_date: date | None = None
+
+
+@dataclass(frozen=True)
+class UsCompany:
+    """미국 상장사 한 곳. 인덱스 크롤링(위키·한경)과 네이버 overview를 합친 결과.
+
+    Attributes:
+        name (str): 한경 한글명 표기 그대로. stocks.name에 들어가고, companies.name과 Neo4j
+            Company.name 키는 로더가 괄호·공백을 뺀 값(clean_company_name)으로 만든다.
+        name_eng (str): Wikipedia 영문명. company_aliases(lang='en')로 들어간다.
+        homepage (str | None): 네이버 url. 끝의 '/'는 뗀다.
+        raw_attributes (dict): stocks 칼럼이 없는 값. name_eng·index_market은 항상, 나머지
+            (reuters_code 포함)는 overview가 있을 때만 들어간다. stocks.standard_code는 US에서
+            NULL이다 — 원천이 위키피디아 인덱스라 표준코드가 없다.
+    """
+
+    ticker: str
+    market: str
+    name: str
+    name_eng: str
+    description: str | None = None
+    ceo_name: str | None = None
+    industry_code: str | None = None
+    homepage: str | None = None
+    address: str | None = None
+    fiscal_month: str | None = None
+    listed_date: date | None = None
+    listed_shares: int | None = None
+    raw_attributes: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class UsSyncResult:
+    """미국 상장사 Postgres 적재 결과. 세 문장 각각의 영향 행 수."""
+
+    company_count: int
+    stock_count: int
+    alias_count: int
