@@ -74,7 +74,7 @@ def build_upsert_cypher(market: str | None) -> str:
     return UPSERT_COMPANIES_CYPHER + "\n".join(clauses) + "\n"
 
 
-# US 시드(migrations/neo4j/0002_us_companies.cypher)는 이 잡의 원천이 아니다. 라벨로
+# US 시드(seed_graph_us_companies, companies_load_us DAG)는 이 잡의 원천이 아니다. 라벨로
 # 빼 두지 않으면 AAPL 같은 ticker가 $tickers(국내 종목코드)에 없다는 이유로 전부 지워진다.
 FOREIGN_LABELS = ("NYSE", "NASDAQ")
 
@@ -127,4 +127,70 @@ async def seed_graph_companies(rows: list[dict[str, Any]]) -> int:
         "Neo4j 상장사 시드 완료: 대상 %d개, 그래프 내 ticker 보유 %d개", len(listed), seeded
     )
 
+    return seeded
+
+
+# ── US(NYSE·NASDAQ) ───────────────────────────────────────────────────────────
+# KR 시드와 같은 순서(사명 변경 → upsert)지만 삭제 단계가 없다. 지수 이탈 종목은 그대로 둔다.
+# 예전에는 migrations/neo4j/0002_us_companies.cypher가 이 노드를 만들었다. 키(name=한글명)와
+# ticker가 같아 기존 노드를 그대로 흡수한다.
+US_MARKET_LABELS = ("NYSE", "NASDAQ")
+
+UPSERT_US_COMPANIES_CYPHER = """
+UNWIND $rows AS row
+MERGE (c:Company {name: row.name})
+SET c.company_id = row.company_id,
+    c.ticker = row.ticker,
+    c.en_name = row.en_name,
+    c.is_listed = true,
+    c.country = 'US',
+    c.market = row.market,
+    c.sp500 = row.sp500
+"""
+
+COUNT_US_SEEDED_CYPHER = "MATCH (c:Company) WHERE c:NYSE OR c:NASDAQ RETURN count(c) AS seeded"
+
+
+def build_us_upsert_cypher(market: str) -> str:
+    """시장 라벨을 리터럴로 박은 US upsert Cypher. 다른 US 라벨은 REMOVE 한다.
+
+    이전상장(NYSE↔NASDAQ) 시 옛 라벨이 남으면 시장별 스캔이 중복된다. 0002 시드가 남긴
+    kr_name 속성도 함께 지운다.
+    """
+
+    if market not in US_MARKET_LABELS:
+        raise ValueError(f"US 시장 라벨이 아닙니다: {market}")
+
+    stale = "".join(f":{label}" for label in US_MARKET_LABELS if label != market)
+    return UPSERT_US_COMPANIES_CYPHER + f"SET c:{market}\nREMOVE c{stale}, c.kr_name\n"
+
+
+async def seed_graph_us_companies(rows: list[dict[str, Any]], sp500_tickers: set[str]) -> int:
+    """US 법인 (company_id, name, ticker, market, en_name)을 Company 노드에 upsert.
+
+    sp500은 Postgres에 없는 Neo4j 전용 속성이다. 매 회차 us.json에서 다시 계산한
+    `sp500_tickers`로 여기서 붙인다 — S&P 500에서 빠진 티커는 다음 회차에 자동으로
+    false로 돌아간다. 호출자의 dict를 바꾸지 않도록 사본에 값을 얹는다.
+    """
+
+    if not rows:
+        logger.error("시드 원천(companies, country='US')이 비어 있어 중단합니다.")
+        return 0
+
+    rows = [{**row, "sp500": row["ticker"] in sp500_tickers} for row in rows]
+
+    by_market: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row["market"] not in US_MARKET_LABELS:
+            logger.warning("알 수 없는 US 시장, 건너뜀: %s %s", row["ticker"], row["market"])
+            continue
+        by_market[row["market"]].append(row)
+
+    await neo4j_database.execute(RENAME_COMPANIES_CYPHER, {"rows": rows})
+    for market, group in by_market.items():
+        await neo4j_database.execute(build_us_upsert_cypher(market), {"rows": group})
+
+    records = await neo4j_database.execute(COUNT_US_SEEDED_CYPHER)
+    seeded = records[0]["seeded"] if records else 0
+    logger.info("Neo4j US 상장사 시드 완료: 대상 %d개, 그래프 내 %d개", len(rows), seeded)
     return seeded
