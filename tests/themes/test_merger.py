@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 
-def test_merge_reason_joins_both_sentences() -> None:
+def test_merge_reason_keeps_the_longer_sentence() -> None:
     from pipelines.themes.transformers.merger import _merge_reason
 
-    assert _merge_reason("배터리 셀 생산", "전기차용 중대형 배터리 매출 비중") == (
-        "배터리 셀 생산\n전기차용 중대형 배터리 매출 비중"
+    assert (
+        _merge_reason("배터리 셀 생산", "전기차용 중대형 배터리 매출 비중")
+        == "전기차용 중대형 배터리 매출 비중"
     )
+    assert (
+        _merge_reason("전기차용 중대형 배터리 매출 비중", "배터리 셀 생산")
+        == "전기차용 중대형 배터리 매출 비중"
+    )
+
+
+def test_merge_reason_prefers_kept_side_on_tie() -> None:
+    from pipelines.themes.transformers.merger import _merge_reason
+
+    assert _merge_reason("양극재 공급", "음극재 공급") == "양극재 공급"
 
 
 def test_merge_reason_takes_the_only_available_side() -> None:
@@ -52,8 +63,8 @@ def test_merge_batch_unions_stocks_and_merges_shared_reasons() -> None:
     assert result is kept
     reasons = {c.ticker: c.reason for c in result.companies}
 
-    # 양쪽에 다 있는 종목은 두 문장이 이어붙는다
-    assert reasons["006400"] == "배터리 셀 생산\n전기차용 중대형 배터리 매출 비중"
+    # 양쪽에 다 있는 종목은 더 긴 사유만 남는다
+    assert reasons["006400"] == "전기차용 중대형 배터리 매출 비중"
     # 채택된 쪽에 사유가 없었으면 중복 테마의 문장으로 채워진다
     assert reasons["373220"] == "북미 합작 공장 증설"
     # 중복 테마에만 있던 종목도 합집합으로 편입되고, 그쪽 사유를 그대로 가져온다
