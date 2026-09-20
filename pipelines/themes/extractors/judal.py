@@ -69,6 +69,7 @@ class JudalExtractor(BaseExtractor):
                 )
             )
 
+        logger.info("[%s] 테마 목록 %d개 수집", self.source_name, len(themes))
         return themes
 
     async def extract_theme_stock(
@@ -85,8 +86,6 @@ class JudalExtractor(BaseExtractor):
 
             soup = BeautifulSoup(text, "lxml")
             th_targets = soup.find_all("th", class_="table-success text-start")
-
-            logger.debug("[themeIdx=%s] %d개 종목 처리 중...", source_theme_id, len(th_targets))
 
             for th in th_targets:
                 b_tag = th.find("b")
@@ -118,8 +117,18 @@ class JudalExtractor(BaseExtractor):
 
                 companies.append(Company(name=company_name, ticker=srtn, reason=reason))
 
+            logger.debug(
+                "[%s] theme=%s(id=%s) 종목 %d개",
+                self.source_name,
+                theme_name,
+                source_theme_id,
+                len(companies),
+            )
+
         except Exception:
-            logger.exception("themeIdx=%s 처리 중 에러 발생", source_theme_id)
+            logger.exception(
+                "[%s] theme=%s(id=%s) 종목 수집 실패", self.source_name, theme_name, source_theme_id
+            )
 
         return companies
 
@@ -127,9 +136,8 @@ class JudalExtractor(BaseExtractor):
         themes: list[Theme] = await self.fetch_themes()
 
         for theme in themes:
-            theme.companies = await self.extract_theme_stock(source_theme_id=theme.source_theme_id)
-            logger.debug("[theme_name=%s] 완료", theme.name)
+            theme.companies = await self.extract_theme_stock(
+                source_theme_id=theme.source_theme_id, theme_name=theme.name
+            )
             await asyncio.sleep(1)
-
-        logger.info("총 %d개 테마 추출 완료", len(themes))
         return themes
