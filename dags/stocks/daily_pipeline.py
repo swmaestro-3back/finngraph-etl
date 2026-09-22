@@ -60,6 +60,16 @@ if dag and task:
 
             run()
 
-        collect_daily_candles() >> collect_period_candles() >> collect_investor_flows()
+        # 백엔드가 새 일봉으로 핫테마를 선정해 Redis 에 발행하게 한다. 수급과 무관하므로
+        # 일봉 직후 분기한다
+        @task(retries=2, retry_delay=timedelta(minutes=2))
+        def publish_hot_themes() -> dict:
+            from pipelines.themes.jobs.publish_hot_themes import run
+
+            return run()
+
+        candles = collect_daily_candles()
+        candles >> collect_period_candles() >> collect_investor_flows()
+        candles >> publish_hot_themes()
 
     stocks_daily_pipeline()
