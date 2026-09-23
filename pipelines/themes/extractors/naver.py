@@ -81,7 +81,13 @@ class NaverExtractor(BaseExtractor):
             page += 1
             data = await self._get_json(url, {**params, "cursor": cursor} if cursor else params)
             items = data.get("items") or []
-            logger.debug("테마 목록 %d페이지: %d개 (cursor=%s)", page, len(items), cursor)
+            logger.debug(
+                "[%s] 테마 목록 %d페이지 %d개 (cursor=%s)",
+                self.source_name,
+                page,
+                len(items),
+                cursor,
+            )
 
             for item in items:
                 theme_name = str(item.get("name", "")).strip()
@@ -106,7 +112,7 @@ class NaverExtractor(BaseExtractor):
             if not data.get("hasNext") or not cursor or not items:
                 break
 
-        logger.info("테마 목록 %d개 수집 (%d페이지)", len(themes), page)
+        logger.info("[%s] 테마 목록 %d개 수집 (%d페이지)", self.source_name, len(themes), page)
         return themes
 
     async def fetch_theme_description(self, source_theme_id: int) -> str:
@@ -116,7 +122,7 @@ class NaverExtractor(BaseExtractor):
             data = await self._get_json(url, {"marketType": "ALL"})
             return str(data.get("categoryInfo") or "").strip()
         except Exception:
-            logger.exception("themeCode=%s 설명 조회 중 에러 발생", source_theme_id)
+            logger.exception("[%s] theme_id=%s 설명 조회 실패", self.source_name, source_theme_id)
             return ""
 
     async def extract_theme_stock(
@@ -156,11 +162,17 @@ class NaverExtractor(BaseExtractor):
                     break
                 page += 1
 
-            logger.debug("[%s] %d개 종목 완료", theme_name, len(companies))
+            logger.debug(
+                "[%s] theme=%s(id=%s) 종목 %d개",
+                self.source_name,
+                theme_name,
+                source_theme_id,
+                len(companies),
+            )
 
         except Exception:
             logger.exception(
-                "themeCode=%s, theme=%s 처리 중 에러 발생", source_theme_id, theme_name
+                "[%s] theme=%s(id=%s) 종목 수집 실패", self.source_name, theme_name, source_theme_id
             )
 
         return companies
@@ -178,6 +190,4 @@ class NaverExtractor(BaseExtractor):
 
         semaphore = asyncio.Semaphore(self.CONCURRENCY)
         await asyncio.gather(*(self._fill_theme(theme, semaphore) for theme in themes))
-
-        logger.info("총 %d개 테마 추출 완료", len(themes))
         return themes

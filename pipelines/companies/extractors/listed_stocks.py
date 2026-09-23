@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 #
 # 플래그는 COALESCE로 false를 채운다. 짝이 없을 때 null이 그대로 나가면 그래프 속성이
 # "미편입"이 아니라 "값 없음"이 되어, 하류 필터가 세 상태를 구분해야 한다.
+# US 법인은 companies_load_us DAG가 별도 로더(seed_graph_us_companies)로 시드하므로 여기서 제외한다.
 SELECT_COMPANIES_SQL = text(
     """
     SELECT c.id AS company_id, c.name, c.ticker, c.corp_code, c.is_listed, c.country,
@@ -32,6 +33,7 @@ SELECT_COMPANIES_SQL = text(
         ON s.ticker = c.ticker
        AND s.is_active
      WHERE c.is_listed
+       AND c.country = 'KR'
        AND c.ticker IS NOT NULL
        AND BTRIM(c.name) <> ''
     """
@@ -52,6 +54,39 @@ def fetch_companies(session: Session) -> list[dict[str, Any]]:
             "krx100": row.krx100,
             "krx300": row.krx300,
             "kosdaq150": row.kosdaq150,
+        }
+        for row in rows
+    ]
+
+
+# US 법인은 stocks(source='WIKIPEDIA')와 1:1이고 영문명은 raw_attributes에 있다.
+# 지수 편입 플래그는 여기 없다 — Neo4j 전용 속성이라 load_us_neo4j 잡이 인덱스 원본에서
+# 직접 계산한다.
+SELECT_US_COMPANIES_SQL = text(
+    """
+    SELECT c.id AS company_id, c.name, c.ticker, s.market,
+           s.raw_attributes->>'name_eng' AS en_name
+      FROM companies AS c
+      JOIN stocks AS s
+        ON s.company_id = c.id
+       AND s.is_active
+       AND s.source = 'WIKIPEDIA'
+     WHERE c.country = 'US'
+       AND c.is_listed
+       AND BTRIM(c.name) <> ''
+    """
+)
+
+
+def fetch_us_companies(session: Session) -> list[dict[str, Any]]:
+    rows = session.execute(SELECT_US_COMPANIES_SQL).all()
+    return [
+        {
+            "company_id": row.company_id,
+            "name": row.name,
+            "ticker": row.ticker,
+            "market": row.market,
+            "en_name": row.en_name,
         }
         for row in rows
     ]

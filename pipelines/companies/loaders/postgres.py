@@ -17,6 +17,8 @@ MARK_LISTED_SQL = text(
            updated_at = now()
       FROM stocks AS s
      WHERE c.ticker = s.ticker
+       -- US 법인은 companies_load_us가 직접 관리한다. 티커 충돌로 덮어쓰지 않게 KR만 본다.
+       AND c.country = 'KR'
        AND s.is_active
        AND BTRIM(s.name) <> ''
        AND (
@@ -63,12 +65,15 @@ LINK_STOCKS_TO_COMPANIES_SQL = text(
 
 # 종목명을 별칭으로 적재
 # companies_alias에 종목명 저장
+# US 종목(source='WIKIPEDIA')은 자체 로더가 영문 별칭을 넣는다.
+# 여기 섞이면 출처가 KIS_MASTER로 잘못 찍힌다.
 INSERT_COMPANY_ALIASES_SQL = text(
     """
     INSERT INTO company_aliases (company_id, alias, lang, source)
     SELECT s.company_id, s.name, 'ko', :source
       FROM stocks AS s
      WHERE s.is_active
+       AND s.source = 'KIS_MASTER'
        AND s.company_id IS NOT NULL
        AND BTRIM(s.name) <> ''
     ON CONFLICT (alias, company_id) DO NOTHING

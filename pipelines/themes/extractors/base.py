@@ -86,4 +86,13 @@ class BaseExtractor(ABC):
             저장된 파일의 절대 경로(Path).
         """
         themes = await self.extract()
+        stock_count = sum(len(t.companies) for t in themes)
+        empty_count = sum(1 for t in themes if not t.companies)
+        logger.info(
+            "[%s] %d개 테마 추출 완료 (종목 %d건, 종목 없는 테마 %d개)",
+            self.source_name,
+            len(themes),
+            stock_count,
+            empty_count,
+        )
         return self.save(themes)

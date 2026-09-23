@@ -30,6 +30,7 @@ AGENTS.md
 
 # 로컬 테스트 데이터 푸시 방지용
 pipelines/themes/data/*
+pipelines/companies/data/*
 tests/triples/*
 
 # 프롬프트 및 온톨로지 푸시 방지용

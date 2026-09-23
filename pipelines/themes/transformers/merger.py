@@ -11,11 +11,14 @@ from pipelines.themes.transformers.duplicate_matcher import find_duplicate_name
 
 logger = get_logger(__name__)
 
-# 중복 테마의 편입 사유를 이어붙일 때 쓰는 구분자. 임베딩 입력(theme_text)과 같은 관례다.
-REASON_SEPARATOR = "\n"
-
 
 def _merge_reason(kept: str | None, incoming: str | None) -> str | None:
+    """두 소스(judal, naver)의 편입 사유 중 더 긴 쪽을 택한다.
+
+    이어붙이지 않는 이유: 같은 종목의 사유는 소스마다 같은 내용을 상세도만 달리
+    설명하는 경우가 대부분이라, 합치면 중복 문장이 되고 임베딩 입력도 지저분해진다.
+    길이가 같으면 채택된(kept) 쪽을 유지한다.
+    """
 
     kept_text = (kept or "").strip()
     incoming_text = (incoming or "").strip()
@@ -26,7 +29,10 @@ def _merge_reason(kept: str | None, incoming: str | None) -> str | None:
     if not kept_text:
         return incoming_text
 
-    return f"{kept_text}{REASON_SEPARATOR}{incoming_text}"
+    if len(incoming_text) > len(kept_text):
+        return incoming_text
+
+    return kept_text
 
 
 def _merge_companies(kept: Theme, dropped: Theme) -> tuple[int, int]:

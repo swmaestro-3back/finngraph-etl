@@ -28,6 +28,14 @@ SELECT_EXISTING_THEMES_SQL = text(
     """
 )
 
+# 테마 PK 조회. Neo4j Theme.theme_id 의 원천이다.
+SELECT_THEME_IDS_SQL = text(
+    """
+    SELECT id, name
+      FROM themes;
+    """
+)
+
 
 def fetch_stock_names_by_tickers(tickers: list[str]) -> dict[str, str]:
 
@@ -55,3 +63,12 @@ def fetch_existing_themes() -> dict[str, set[str]]:
             stocks.add(ticker)
 
     return existing
+
+
+def fetch_theme_ids() -> dict[str, int]:
+    """전체 테마의 {name: id}. 테마 수가 적어 매 회차 전량 조회해도 부담이 없다."""
+
+    with session_scope() as session:
+        rows = session.execute(SELECT_THEME_IDS_SQL).fetchall()
+
+    return {name: theme_id for theme_id, name in rows}

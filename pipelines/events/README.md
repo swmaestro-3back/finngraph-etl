@@ -51,13 +51,14 @@ Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 
 
 ## 배포 순서
 
-1. `migrations/neo4j/0002_us_companies.cypher`(한글 `name` 키)와 `0003_events.cypher` 가
-   neo4j-init 으로 적용돼 있을 것. neo4j-init 은 매 기동마다 전체를 재실행하며 둘 다 멱등입니다.
-   구 0002(영문 `name`)가 적용된 로컬 Neo4j 볼륨에서는 `[1]` 리네임 단계가
-   `company_name_unique` 위반으로 실패할 수 있으므로 `docker compose down -v` 후
-   재기동합니다(dev 에는 구 0002 가 적용된 적이 없습니다).
+1. `0003_events.cypher` 가 neo4j-init 으로 적용돼 있을 것. neo4j-init 은 매 기동마다
+   전체를 재실행하며 멱등입니다.
 2. `companies_sync_master.seed_graph` 가 한 번은 성공해 KRX `is_listed` 가 채워져 있을 것.
-3. `dags/news/scheduled_pipeline.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은
+3. US Company 노드는 `companies_load_us` DAG 의 `seed_graph_us_companies` job 이 동적으로
+   시드합니다 — 마이그레이션에 들어 있지 않으므로 `docker compose down -v` 뒤에는
+   `companies_crawl_us` 를 한 번 수동 실행해야 합니다(뒤이어 `companies_load_us` 가 Asset 으로
+   자동으로 따라붙어 US 기업 간선이 붙습니다).
+4. `dags/news/scheduled_pipeline.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은
    없습니다. 구독 DAG 만 있으면 Asset 이 발행될 때까지 기다리고, outlet 만 있으면 소비자
    없는 Asset 이벤트가 기록될 뿐입니다.
 
