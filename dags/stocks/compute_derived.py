@@ -12,6 +12,9 @@ cron으로 "20:00"처럼 못 박으면 앞 단계가 늦어지거나 실패한 �
 오늘 재무를 섞은 값이 나온다. 지표가 틀렸다는 사실이 화면에 드러나지 않아 더 나쁘다.
 
 PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 재무가 먼저 확정돼야 한다.
+
+계산이 끝난 뒤 백엔드에 핫테마 발행과 브리핑 생성을 차례로 요청한다. 둘 다 밸류에이션이
+있는 날을 기준일로 삼으므로 여기 뒤가 아니면 전날 값으로 만들어진다.
 """
 
 from __future__ import annotations
@@ -45,11 +48,17 @@ if dag and task:
             run()
 
         @task(retries=2, retry_delay=timedelta(minutes=2))
+        def publish_hot_themes() -> dict:
+            from pipelines.themes.jobs.publish_hot_themes import run
+
+            return run()
+
+        @task(retries=2, retry_delay=timedelta(minutes=2))
         def publish_briefing() -> dict:
             from pipelines.briefings.jobs.publish_briefing import run
 
             return run()
 
-        compute_derived() >> publish_briefing()
+        compute_derived() >> publish_hot_themes() >> publish_briefing()
 
     stocks_compute_derived()
