@@ -10,6 +10,8 @@
 
 끝나면 Asset을 발행한다. 파생 지표(PER·PBR·수익률)는 시세와 재무가 둘 다 있어야
 계산되므로, 시각이 아니라 두 Asset이 모두 갱신된 시점에 기동한다(stocks_compute_derived).
+핫테마 발행과 브리핑 생성도 그 뒤에 붙는다 — 백엔드가 기준일을 캔들·밸류에이션이 둘 다
+있는 날로 잡기 때문에, 일봉 직후에 발행하면 전날 값이 나간다.
 
 18:00에 도는 이유는 장 마감(15:30)과 정산 시차 때문이다. 마감 직후에는 당일 일봉이
 확정되지 않는다.
@@ -60,16 +62,6 @@ if dag and task:
 
             run()
 
-        # 백엔드가 새 일봉으로 핫테마를 선정해 Redis 에 발행하게 한다. 수급과 무관하므로
-        # 일봉 직후 분기한다
-        @task(retries=2, retry_delay=timedelta(minutes=2))
-        def publish_hot_themes() -> dict:
-            from pipelines.themes.jobs.publish_hot_themes import run
-
-            return run()
-
-        candles = collect_daily_candles()
-        candles >> collect_period_candles() >> collect_investor_flows()
-        candles >> publish_hot_themes()
+        collect_daily_candles() >> collect_period_candles() >> collect_investor_flows()
 
     stocks_daily_pipeline()
