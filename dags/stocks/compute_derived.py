@@ -16,7 +16,7 @@ PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 재무가 먼저 확�
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from airflow.sdk import Asset, dag, task
@@ -44,6 +44,12 @@ if dag and task:
 
             run()
 
-        compute_derived()
+        @task(retries=2, retry_delay=timedelta(minutes=2))
+        def publish_briefing() -> dict:
+            from pipelines.briefings.jobs.publish_briefing import run
+
+            return run()
+
+        compute_derived() >> publish_briefing()
 
     stocks_compute_derived()
