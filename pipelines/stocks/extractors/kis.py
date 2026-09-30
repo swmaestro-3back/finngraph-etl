@@ -31,6 +31,9 @@ DIVIDEND_TR_ID = "HHKDB669102C0"
 PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 PRICE_TR_ID = "FHKST01010100"
 
+HOLIDAY_PATH = "/uapi/domestic-stock/v1/quotations/chk-holiday"
+HOLIDAY_TR_ID = "CTCA0903R"
+
 # 기간 조회 1회 최대 건수. 이 수만큼 돌아오면 더 있을 수 있다는 신호다.
 CHART_PAGE_SIZE = 100
 
@@ -192,6 +195,21 @@ def fetch_foreign_holding(ticker: str, client: KisClient | None = None) -> Forei
         listed_shares=listed_shares,
         ratio=ratio,
     )
+
+
+def is_market_open(target: date, client: KisClient | None = None) -> bool:
+    """KIS 휴장일 조회로 해당 날짜의 개장 여부를 확인한다."""
+
+    client = client or get_kis_client()
+    data = client.request(
+        HOLIDAY_PATH,
+        HOLIDAY_TR_ID,
+        {"BASS_DT": target.strftime("%Y%m%d"), "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
+    )
+    for row in data.get("output") or []:
+        if _parse_date(row.get("bass_dt")) == target:
+            return row.get("opnd_yn") == "Y"
+    raise ValueError(f"휴장일 조회 응답에 {target} 이 없다")
 
 
 # -- 내부 --------------------------------------------------------------------

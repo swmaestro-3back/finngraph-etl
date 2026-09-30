@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.stocks.loaders.candles import (
+    aggregate_current_period_candles,
     upsert_daily_candles,
     upsert_period_candles,
 )
@@ -206,3 +207,133 @@ def test_period_candles_separate_week_and_month() -> None:
         ).scalar()
 
     assert count == 2
+
+
+def _period(period: str, base_date: date, close: str) -> PeriodCandle:
+    price = Decimal(close)
+    return PeriodCandle(
+        ticker=TICKER,
+        period=period,
+        base_date=base_date,
+        open=price,
+        high=price,
+        low=price,
+        close=price,
+        volume=10,
+    )
+
+
+def _period_rows(period: str) -> list[tuple[date, Decimal]]:
+    with session_scope() as session:
+        return session.execute(
+            text(
+                """
+                SELECT c.base_date, c.close FROM stock_candles_period AS c
+                  JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker AND c.period = :period
+                 ORDER BY c.base_date
+                """
+            ),
+            {"ticker": TICKER, "period": period},
+        ).all()
+
+
+def test_monthly_candle_updates_same_row_within_month() -> None:
+    """진행 중인 달은 KIS가 조회일을 base_date로 주지만 1일로 정규화되어 한 행만 갱신된다."""
+    _load_stock()
+
+    for day, close in ((11, "100"), (15, "110"), (29, "120")):
+        with session_scope() as session:
+            upsert_period_candles(session, [_period("M", date(2026, 9, day), close)])
+
+    assert _period_rows("M") == [(date(2026, 9, 1), Decimal("120"))]
+
+
+def test_weekly_candle_is_keyed_by_monday() -> None:
+    """휴장으로 화요일에 시작한 주도 월요일 키로 들어간다."""
+    _load_stock()
+
+    with session_scope() as session:
+        upsert_period_candles(session, [_period("W", date(2026, 8, 18), "100")])
+
+    assert _period_rows("W") == [(date(2026, 8, 17), Decimal("100"))]
+
+
+def test_aggregate_current_period_from_daily_candles() -> None:
+    """최신 일봉이 속한 주·월 봉만 일봉으로 합성한다. 지난 구간 행은 건드리지 않는다."""
+    _load_stock()
+    daily = [
+        DailyCandle(
+            ticker=TICKER,
+            trade_date=date(2026, 9, 25),
+            open=Decimal("90"),
+            high=Decimal("95"),
+            low=Decimal("85"),
+            close=Decimal("92"),
+            volume=5,
+            trade_value=50,
+        ),
+        DailyCandle(
+            ticker=TICKER,
+            trade_date=date(2026, 9, 28),
+            open=Decimal("100"),
+            high=Decimal("110"),
+            low=Decimal("99"),
+            close=Decimal("105"),
+            volume=10,
+            trade_value=100,
+        ),
+        DailyCandle(
+            ticker=TICKER,
+            trade_date=date(2026, 9, 29),
+            open=Decimal("106"),
+            high=Decimal("120"),
+            low=Decimal("101"),
+            close=Decimal("115"),
+            volume=20,
+            trade_value=200,
+        ),
+    ]
+    with session_scope() as session:
+        upsert_daily_candles(session, daily)
+        upsert_period_candles(
+            session, [_period("W", date(2026, 9, 21), "1"), _period("M", date(2026, 8, 1), "1")]
+        )
+        rows = aggregate_current_period_candles(session, date(2026, 9, 1))
+
+    assert rows == 2
+    with session_scope() as session:
+        got = session.execute(
+            text(
+                """
+                SELECT c.period, c.base_date, c.open, c.high, c.low, c.close, c.volume, c.trade_value
+                  FROM stock_candles_period AS c JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker ORDER BY c.period, c.base_date
+                """
+            ),
+            {"ticker": TICKER},
+        ).all()
+    assert [tuple(r) for r in got] == [
+        ("M", date(2026, 8, 1), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), 10, None),
+        (
+            "M",
+            date(2026, 9, 1),
+            Decimal("90"),
+            Decimal("120"),
+            Decimal("85"),
+            Decimal("115"),
+            35,
+            350,
+        ),
+        ("W", date(2026, 9, 21), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), 10, None),
+        (
+            "W",
+            date(2026, 9, 28),
+            Decimal("100"),
+            Decimal("120"),
+            Decimal("99"),
+            Decimal("115"),
+            30,
+            300,
+        ),
+    ]

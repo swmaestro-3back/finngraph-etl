@@ -10,7 +10,11 @@ import unittest
 from datetime import date, timedelta
 from decimal import Decimal
 
-from pipelines.stocks.extractors.kis import fetch_daily_candles, fetch_period_candles
+from pipelines.stocks.extractors.kis import (
+    fetch_daily_candles,
+    fetch_period_candles,
+    is_market_open,
+)
 
 
 class FakeKisClient:
@@ -97,6 +101,34 @@ class ChartExtractorTest(unittest.TestCase):
     def test_period_rejects_unknown_code(self) -> None:
         with self.assertRaises(ValueError):
             fetch_period_candles("005930", "D", date(2026, 1, 1), date(2026, 8, 7), client=None)
+
+
+class MarketOpenTest(unittest.TestCase):
+    def test_reads_opnd_yn_for_target_date(self) -> None:
+        client = FakeKisClient(
+            [
+                {
+                    "output": [
+                        {"bass_dt": "20260925", "opnd_yn": "N"},
+                        {"bass_dt": "20260928", "opnd_yn": "Y"},
+                    ]
+                }
+            ]
+        )
+
+        self.assertFalse(is_market_open(date(2026, 9, 25), client=client))
+        self.assertEqual(client.calls[0]["params"]["BASS_DT"], "20260925")
+
+    def test_open_day(self) -> None:
+        client = FakeKisClient([{"output": [{"bass_dt": "20260928", "opnd_yn": "Y"}]}])
+
+        self.assertTrue(is_market_open(date(2026, 9, 28), client=client))
+
+    def test_missing_date_raises(self) -> None:
+        client = FakeKisClient([{"output": [{"bass_dt": "20260929", "opnd_yn": "Y"}]}])
+
+        with self.assertRaises(ValueError):
+            is_market_open(date(2026, 9, 28), client=client)
 
 
 if __name__ == "__main__":

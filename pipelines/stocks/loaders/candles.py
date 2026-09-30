@@ -7,6 +7,8 @@ extractor는 단축코드로 말하고 테이블은 stock_id를 키로 쓴다. �
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -40,8 +42,55 @@ UPSERT_PERIOD_CANDLE_SQL = text(
       stock_id, period, base_date, open, high, low, close, volume, trade_value, updated_at
     )
     VALUES (
-      :stock_id, :period, :base_date, :open, :high, :low, :close, :volume, :trade_value, now()
+      :stock_id, :period,
+      date_trunc(
+        CASE :period WHEN 'W' THEN 'week' ELSE 'month' END, CAST(:base_date AS date)
+      )::date,
+      :open, :high, :low, :close, :volume, :trade_value, now()
     )
+    ON CONFLICT (stock_id, period, base_date) DO UPDATE SET
+      open = EXCLUDED.open,
+      high = EXCLUDED.high,
+      low = EXCLUDED.low,
+      close = EXCLUDED.close,
+      volume = EXCLUDED.volume,
+      trade_value = COALESCE(EXCLUDED.trade_value, stock_candles_period.trade_value),
+      updated_at = now()
+    """
+)
+
+
+AGGREGATE_CURRENT_PERIOD_SQL = text(
+    """
+    WITH latest AS (
+      SELECT stock_id, max(trade_date) AS last_date
+        FROM stock_candles_daily
+       GROUP BY stock_id
+      HAVING max(trade_date) >= :since
+    ),
+    bucket AS (
+      SELECT d.stock_id, p.period,
+             date_trunc(CASE p.period WHEN 'W' THEN 'week' ELSE 'month' END, l.last_date)::date
+               AS base_date,
+             d.trade_date, d.open, d.high, d.low, d.close, d.volume, d.trade_value
+        FROM latest AS l
+        JOIN stock_candles_daily AS d ON d.stock_id = l.stock_id
+        CROSS JOIN (VALUES ('W'), ('M')) AS p(period)
+       WHERE d.trade_date <= l.last_date
+         AND d.trade_date >= date_trunc(
+               CASE p.period WHEN 'W' THEN 'week' ELSE 'month' END, l.last_date
+             )::date
+    )
+    INSERT INTO stock_candles_period (
+      stock_id, period, base_date, open, high, low, close, volume, trade_value, updated_at
+    )
+    SELECT stock_id, period, base_date,
+           (array_agg(open ORDER BY trade_date))[1],
+           max(high), min(low),
+           (array_agg(close ORDER BY trade_date DESC))[1],
+           sum(volume), sum(trade_value), now()
+      FROM bucket
+     GROUP BY stock_id, period, base_date
     ON CONFLICT (stock_id, period, base_date) DO UPDATE SET
       open = EXCLUDED.open,
       high = EXCLUDED.high,
@@ -93,7 +142,7 @@ def upsert_daily_candles(session: Session, candles: list[DailyCandle], source: s
 
 
 def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
-    """주봉·월봉을 적재한다."""
+    """주봉·월봉을 적재한다. base_date는 구간 시작일(주: 월요일, 월: 1일)로 정규화한다."""
 
     if not candles:
         return 0
@@ -119,3 +168,9 @@ def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
 
     session.execute(UPSERT_PERIOD_CANDLE_SQL, payload)
     return len(payload)
+
+
+def aggregate_current_period_candles(session: Session, since: date) -> int:
+    """최신 일봉이 속한 이번 주·이번 달 봉을 일봉으로 계산해 적재한다."""
+
+    return session.execute(AGGREGATE_CURRENT_PERIOD_SQL, {"since": since}).rowcount
