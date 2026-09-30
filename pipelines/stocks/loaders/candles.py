@@ -40,7 +40,11 @@ UPSERT_PERIOD_CANDLE_SQL = text(
       stock_id, period, base_date, open, high, low, close, volume, trade_value, updated_at
     )
     VALUES (
-      :stock_id, :period, :base_date, :open, :high, :low, :close, :volume, :trade_value, now()
+      :stock_id, :period,
+      date_trunc(
+        CASE :period WHEN 'W' THEN 'week' ELSE 'month' END, CAST(:base_date AS date)
+      )::date,
+      :open, :high, :low, :close, :volume, :trade_value, now()
     )
     ON CONFLICT (stock_id, period, base_date) DO UPDATE SET
       open = EXCLUDED.open,
@@ -93,7 +97,7 @@ def upsert_daily_candles(session: Session, candles: list[DailyCandle], source: s
 
 
 def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
-    """주봉·월봉을 적재한다."""
+    """주봉·월봉을 적재한다. base_date는 구간 시작일(주: 월요일, 월: 1일)로 정규화한다."""
 
     if not candles:
         return 0

@@ -22,8 +22,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 try:
+    from airflow.exceptions import AirflowSkipException
     from airflow.sdk import Asset, dag, task
 except ImportError:
+    AirflowSkipException = None
     Asset = None
     dag = None
     task = None
@@ -42,6 +44,15 @@ if dag and task:
         tags=["stocks"],
     )
     def stocks_daily_pipeline():
+        @task(retries=1)
+        def check_market_open() -> None:
+            from pipelines.common.utils.time import now_kst
+            from pipelines.stocks.extractors.kis import is_market_open
+
+            today = now_kst().date()
+            if not is_market_open(today):
+                raise AirflowSkipException(f"{today} 휴장일 — 수집을 건너뛴다")
+
         @task(retries=2)
         def collect_daily_candles() -> None:
             from pipelines.stocks.jobs.collect_daily_candles import run
@@ -62,6 +73,7 @@ if dag and task:
 
             run()
 
-        collect_daily_candles() >> collect_period_candles() >> collect_investor_flows()
+        candles = check_market_open() >> collect_daily_candles()
+        candles >> collect_period_candles() >> collect_investor_flows()
 
     stocks_daily_pipeline()
