@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.stocks.loaders.candles import (
+    aggregate_current_period_candles,
     upsert_daily_candles,
     upsert_period_candles,
 )
@@ -256,3 +257,83 @@ def test_weekly_candle_is_keyed_by_monday() -> None:
         upsert_period_candles(session, [_period("W", date(2026, 8, 18), "100")])
 
     assert _period_rows("W") == [(date(2026, 8, 17), Decimal("100"))]
+
+
+def test_aggregate_current_period_from_daily_candles() -> None:
+    """최신 일봉이 속한 주·월 봉만 일봉으로 합성한다. 지난 구간 행은 건드리지 않는다."""
+    _load_stock()
+    daily = [
+        DailyCandle(
+            ticker=TICKER,
+            trade_date=date(2026, 9, 25),
+            open=Decimal("90"),
+            high=Decimal("95"),
+            low=Decimal("85"),
+            close=Decimal("92"),
+            volume=5,
+            trade_value=50,
+        ),
+        DailyCandle(
+            ticker=TICKER,
+            trade_date=date(2026, 9, 28),
+            open=Decimal("100"),
+            high=Decimal("110"),
+            low=Decimal("99"),
+            close=Decimal("105"),
+            volume=10,
+            trade_value=100,
+        ),
+        DailyCandle(
+            ticker=TICKER,
+            trade_date=date(2026, 9, 29),
+            open=Decimal("106"),
+            high=Decimal("120"),
+            low=Decimal("101"),
+            close=Decimal("115"),
+            volume=20,
+            trade_value=200,
+        ),
+    ]
+    with session_scope() as session:
+        upsert_daily_candles(session, daily)
+        upsert_period_candles(
+            session, [_period("W", date(2026, 9, 21), "1"), _period("M", date(2026, 8, 1), "1")]
+        )
+        rows = aggregate_current_period_candles(session, date(2026, 9, 1))
+
+    assert rows == 2
+    with session_scope() as session:
+        got = session.execute(
+            text(
+                """
+                SELECT c.period, c.base_date, c.open, c.high, c.low, c.close, c.volume, c.trade_value
+                  FROM stock_candles_period AS c JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker ORDER BY c.period, c.base_date
+                """
+            ),
+            {"ticker": TICKER},
+        ).all()
+    assert [tuple(r) for r in got] == [
+        ("M", date(2026, 8, 1), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), 10, None),
+        (
+            "M",
+            date(2026, 9, 1),
+            Decimal("90"),
+            Decimal("120"),
+            Decimal("85"),
+            Decimal("115"),
+            35,
+            350,
+        ),
+        ("W", date(2026, 9, 21), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), 10, None),
+        (
+            "W",
+            date(2026, 9, 28),
+            Decimal("100"),
+            Decimal("120"),
+            Decimal("99"),
+            Decimal("115"),
+            30,
+            300,
+        ),
+    ]
