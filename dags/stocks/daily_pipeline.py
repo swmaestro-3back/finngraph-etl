@@ -2,7 +2,12 @@
 
 순서가 의미를 갖는다.
 
-    일봉 → 기간봉(주·월) → 투자자 수급
+    일봉 ─┬─ 기간봉(주·월) ──────────────┐
+          └─ 테마 일봉 → 테마 기간봉 ──┴─ 투자자 수급
+
+테마 봉은 종목 일봉으로 계산하는 시총 가중 지수라 일봉 뒤에 두고, KIS 를 쓰지 않아 기간봉과
+병렬이다. 수급이 두 갈래 뒤에 있으므로 Asset(etl://stocks/daily)은 테마 봉까지 있는 상태에서
+발행되고, 그 뒤의 핫테마 발행이 테마 봉을 읽을 수 있다.
 
 같은 KIS 호출 예산을 쓰는 작업은 한 DAG에 묶어 동시 실행을 피한다 — 여러 DAG가 겹치면
 초당 호출 한도에 걸린다. 수급은 네이버 API 라 KIS 예산과 무관하지만, 마감 후 확정값을
@@ -65,6 +70,21 @@ if dag and task:
 
             run_period()
 
+        @task(retries=2)
+        def calculate_theme_daily() -> int:
+            from pipelines.themes.jobs.calculate_theme_candles import run_daily
+
+            return run_daily()
+
+        @task(retries=2)
+        def calculate_theme_period() -> int:
+            from pipelines.common.config import get_settings
+            from pipelines.common.utils.time import now_kst
+            from pipelines.themes.jobs.calculate_theme_candles import run_period
+
+            since = now_kst().date() - timedelta(days=get_settings().theme_daily_lookback_days)
+            return run_period(since=since)
+
         # 수급은 네이버 비공식 API 라 차단 의심 시 즉시 실패한다. 기본 5분 재시도는
         # 차단이 풀리기에 짧아 간격을 늘려 둔다.
         @task(retries=2, retry_delay=timedelta(minutes=15), outlets=[stocks_daily_collected])
@@ -74,6 +94,8 @@ if dag and task:
             run()
 
         candles = check_market_open() >> collect_daily_candles()
-        candles >> collect_period_candles() >> collect_investor_flows()
+        flows = collect_investor_flows()
+        candles >> collect_period_candles() >> flows
+        candles >> calculate_theme_daily() >> calculate_theme_period() >> flows
 
     stocks_daily_pipeline()

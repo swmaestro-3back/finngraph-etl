@@ -10,7 +10,7 @@ dags/
 ├── health/       # 운영 상 헬스체크용
 ├── news/         # 뉴스 수집·군집화 → 트리플 추출 → 요약 통합 파이프라인
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
-└── themes/       # 테마 크롤링
+└── themes/       # 테마 크롤링 · 테마 지수 봉 백필
 ```
 
 > 단, 폴더 구조는 **소스코드 정리용**이다. Airflow UI는 파일 경로가 아니라 `dag_id`와 `tags`로 DAG를 묶어 나열한다.
@@ -31,12 +31,14 @@ dags/
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-18 * * *` (06~18시 매 정각) |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
+| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
 | stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
 | themes | `themes/sync_master.py` | `themes_sync_master` | `themes` | `0 23 * * 0` (매주 일요일 23시) |
+| themes | `themes/backfill_candles.py` | `themes_backfill_candles` | `themes`, `backfill`, `manual` | 수동 |
 
 ## Asset 의존
 
@@ -48,13 +50,20 @@ stocks_sync_master ──────────► etl://stocks/master ──�
                      (평일 08시)
 
 stocks_daily_pipeline ───────► etl://stocks/daily ───┐
-  (평일 18시, 일봉→기간봉→수급)                       ├──► stocks_compute_derived
-companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PBR·수익률)
+  (평일 18시, 일봉→[기간봉 ∥ 테마 일봉→테마 기간봉]→수급)  ├──► stocks_compute_derived
+companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
   (평일 19시)
 ```
 
 `stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
 기동한다. PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 시세와 재무가 모두 필요하다.
+
+테마 지수 봉(`theme_candles_daily`·`theme_candles_period`)은 종목 일봉으로 계산하는 시총 가중
+지수다. 수급 태스크가 테마 봉 뒤에 있으므로 `etl://stocks/daily` 는 테마 봉까지 있는 상태에서
+발행되고, `stocks_compute_derived` 의 핫테마 발행이 테마 봉을 읽을 수 있다. 장중에는
+`stocks_intraday_candles` 가 매시간 같은 lookback 구간을 다시 계산한다.
+
+> **배포 순서(테마 봉).** `V5__theme_candles.sql` 을 먼저 적용하고 `themes_backfill_candles` 를 장외 시간에 한 번 실행한다. V5 없이 배포하면 `calculate_theme_daily` 가 실패해 `etl://stocks/daily` 가 발행되지 않고 파생·핫테마·브리핑이 그날 멈춘다.
 
 ```
 themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
@@ -97,9 +106,10 @@ flowchart TB
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
+    TBC["themes_backfill_candles<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class CDP,CGD,SCD,SBD,SBI,HC,DCD,DBF cron
+    class CDP,CGD,SCD,SBD,SBI,HC,DCD,DBF,TBC cron
 ```
 
 ## `dag_id`
