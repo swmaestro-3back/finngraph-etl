@@ -206,3 +206,53 @@ def test_period_candles_separate_week_and_month() -> None:
         ).scalar()
 
     assert count == 2
+
+
+def _period(period: str, base_date: date, close: str) -> PeriodCandle:
+    price = Decimal(close)
+    return PeriodCandle(
+        ticker=TICKER,
+        period=period,
+        base_date=base_date,
+        open=price,
+        high=price,
+        low=price,
+        close=price,
+        volume=10,
+    )
+
+
+def _period_rows(period: str) -> list[tuple[date, Decimal]]:
+    with session_scope() as session:
+        return session.execute(
+            text(
+                """
+                SELECT c.base_date, c.close FROM stock_candles_period AS c
+                  JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker AND c.period = :period
+                 ORDER BY c.base_date
+                """
+            ),
+            {"ticker": TICKER, "period": period},
+        ).all()
+
+
+def test_monthly_candle_updates_same_row_within_month() -> None:
+    """진행 중인 달은 KIS가 조회일을 base_date로 주지만 1일로 정규화되어 한 행만 갱신된다."""
+    _load_stock()
+
+    for day, close in ((11, "100"), (15, "110"), (29, "120")):
+        with session_scope() as session:
+            upsert_period_candles(session, [_period("M", date(2026, 9, day), close)])
+
+    assert _period_rows("M") == [(date(2026, 9, 1), Decimal("120"))]
+
+
+def test_weekly_candle_is_keyed_by_monday() -> None:
+    """휴장으로 화요일에 시작한 주도 월요일 키로 들어간다."""
+    _load_stock()
+
+    with session_scope() as session:
+        upsert_period_candles(session, [_period("W", date(2026, 8, 18), "100")])
+
+    assert _period_rows("W") == [(date(2026, 8, 17), Decimal("100"))]
