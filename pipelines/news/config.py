@@ -33,7 +33,7 @@ class NewsSettings(BaseSettings):
     # search_history.last_searched_at 이 이 간격을 넘긴 기업만 이번 런의 검색 대상이다.
     search_interval_hours: int = Field(default=4, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
     # 런마다 검색할 급등락 테마 수. 상승 상위 절반 + 하락 상위 절반.
-    theme_count: int = Field(default=40, validation_alias="NEWS_THEME_COUNT")
+    theme_count: int = Field(default=30, validation_alias="NEWS_THEME_COUNT")
     hot_themes_redis_url: str = Field(
         default="redis://localhost:16379/0", validation_alias="HOT_THEMES_REDIS_URL"
     )
