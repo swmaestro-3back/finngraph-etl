@@ -89,6 +89,13 @@ class Settings(BaseSettings):
         default=120,
         validation_alias="STOCK_PERIOD_LOOKBACK_DAYS",
     )
+    # 테마 지수 일봉 재계산 구간. 구간 첫 거래일은 t-1 로만 쓰므로
+    # stock_daily_lookback_days 이하여야 모든 수익률 쌍이 수정주가로 다시 받은 종목 일봉 안에
+    # 들어간다.
+    theme_daily_lookback_days: int = Field(
+        default=10,
+        validation_alias="THEME_DAILY_LOOKBACK_DAYS",
+    )
 
     bedrock_region: str = Field(default="", validation_alias="BEDROCK_REGION")
     # 테마 임베딩(themes.embedding/theme_stocks.reason_embedding) 생성용. 모델은
