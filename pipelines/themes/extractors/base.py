@@ -16,6 +16,9 @@ logger = get_logger(__name__)
 # .gitignore가 `pipelines/themes/data/*`를 고정하므로 위치가 어긋나면 산출물이 커밋된다.
 DATA_ROOT = Path(__file__).parents[1] / "data"
 
+# 편입 종목이 이 수 미만인 테마는 테마로서 의미가 약해 저장하지 않는다
+MIN_THEME_STOCKS = 3
+
 
 def today_folder() -> Path:
     """`pipelines/themes/data/{YYYYMMDD}`를 만들고 반환한다."""
@@ -60,6 +63,21 @@ class BaseExtractor(ABC):
         fetch_themes와 extract_theme_stock을 실행하는 extract 메서드
         """
 
+    def drop_small_themes(self, themes: list[Theme]) -> list[Theme]:
+        """편입 종목이 MIN_THEME_STOCKS 개 미만인 테마를 제외한다."""
+
+        kept = [t for t in themes if len(t.companies) >= MIN_THEME_STOCKS]
+        dropped = [t for t in themes if len(t.companies) < MIN_THEME_STOCKS]
+        if dropped:
+            logger.info(
+                "[%s] 종목 %d개 미만 테마 %d개 제외: %s",
+                self.source_name,
+                MIN_THEME_STOCKS,
+                len(dropped),
+                ", ".join(f"{t.name}({len(t.companies)})" for t in dropped),
+            )
+        return kept
+
     def save(self, themes: list[Theme]) -> Path:
         """수집된 테마 데이터를 JSON 파일로 저장한다.
 
@@ -95,4 +113,4 @@ class BaseExtractor(ABC):
             stock_count,
             empty_count,
         )
-        return self.save(themes)
+        return self.save(self.drop_small_themes(themes))

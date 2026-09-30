@@ -123,22 +123,22 @@ def test_merge_existing_renames_theme_to_db_name_when_normalized_name_matches() 
     assert [c.ticker for c in result.companies] == ["006400"]
 
 
-def test_merge_existing_renames_contained_name_with_heavy_stock_overlap() -> None:
+def test_merge_existing_renames_parenthetical_variant_with_heavy_stock_overlap() -> None:
     from pipelines.themes.models import Company, Theme
     from pipelines.themes.transformers.merger import merge_existing
 
     tickers = ["005930", "000660", "035420", "035720", "051910"]
     crawled = Theme(
-        name="반도체 소재",
+        name="메타버스(Metaverse)",
         source="naver",
         companies=[Company(name=f"종목{t}", ticker=t) for t in tickers + ["247540"]],
     )
-    # 배치 내 중복 판정과 같은 규칙: 이름 포함 관계 + 종목 90% 이상 겹침
-    existing = {"반도체소재": set(tickers)}
+    # 배치 내 중복 판정과 같은 규칙: 괄호 뗀 이름 일치 + 일반 테마 종목 80% 이상 포함
+    existing = {"메타버스": set(tickers)}
 
     [result] = merge_existing([crawled], existing)
 
-    assert result.name == "반도체소재"
+    assert result.name == "메타버스"
     # 종목은 그대로 통과한다. 기존에 없던 종목은 로더가 추가한다
     assert "247540" in {c.ticker for c in result.companies}
 
