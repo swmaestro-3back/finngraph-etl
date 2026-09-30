@@ -1,8 +1,12 @@
 """장중 일봉 갱신.
 
-09~16시 매 정각 일봉을 받고, 그 일봉으로 이번 주·이번 달 봉을 계산한다. 주·월봉의 확정값은
+09~17시 매 정각 일봉을 받고, 그 일봉으로 이번 주·이번 달 봉을 계산한다. 주·월봉의 확정값은
 18시 stocks_daily_pipeline이 KIS에서 받아 같은 키에 덮어쓴다. Asset은 발행하지 않는다 —
 파생 지표 계산은 마감 후 한 번이면 된다.
+
+테마 지수는 매시간 최근 lookback(기본 10일) 구간의 테마 일봉을 다시 계산한다. 종목 일봉
+수집도 같은 창을 다시 받으므로 창을 맞춘다. 실제로 값이 바뀌는 행은 대개 당일뿐이다. 그 일봉으로
+테마 주·월봉도 갱신한다. 테마 계산은 KIS 를 호출하지 않아 종목 기간봉 합성과 병렬로 둔다.
 """
 
 from __future__ import annotations
@@ -50,6 +54,25 @@ if dag and task:
 
             return run()
 
-        check_market_open() >> collect_daily_candles() >> aggregate_period_candles()
+        @task(retries=1)
+        def calculate_theme_daily() -> int:
+            from pipelines.themes.jobs.calculate_theme_candles import run_daily
+
+            return run_daily()
+
+        @task(retries=1)
+        def aggregate_theme_period() -> int:
+            from datetime import timedelta
+
+            from pipelines.common.config import get_settings
+            from pipelines.common.utils.time import now_kst
+            from pipelines.themes.jobs.calculate_theme_candles import run_period
+
+            since = now_kst().date() - timedelta(days=get_settings().theme_daily_lookback_days)
+            return run_period(since=since)
+
+        candles = check_market_open() >> collect_daily_candles()
+        candles >> aggregate_period_candles()
+        candles >> calculate_theme_daily() >> aggregate_theme_period()
 
     stocks_intraday_candles()
