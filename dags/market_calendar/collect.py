@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -22,6 +22,7 @@ if dag and task:
         catchup=False,
         max_active_runs=1,
         tags=["market_calendar"],
+        default_args={"execution_timeout": timedelta(minutes=30)},
     )
     def market_calendar_collect():
         @task(retries=1)
@@ -60,6 +61,7 @@ if dag and task:
 
             return run()
 
+        # 각 단계는 all_done으로 끝까지 돌리고, 하나라도 실패하면 여기서 DAG run을 실패로 남긴다.
         @task
         def finish() -> None:
             return None
