@@ -7,6 +7,9 @@
 테마 지수는 매시간 최근 lookback(기본 10일) 구간의 테마 일봉을 다시 계산한다. 종목 일봉
 수집도 같은 창을 다시 받으므로 창을 맞춘다. 실제로 값이 바뀌는 행은 대개 당일뿐이다. 그 일봉으로
 테마 주·월봉도 갱신한다. 테마 계산은 KIS 를 호출하지 않아 종목 기간봉 합성과 병렬로 둔다.
+
+일봉이 들어오면 백엔드에 핫테마 재발행을 요청하고, 성공하면 etl://themes/hot 을 발행해
+news_scheduled_pipeline 이 정각을 기다리지 않고 새 핫테마로 뉴스를 검색하게 한다.
 """
 
 from __future__ import annotations
@@ -14,15 +17,17 @@ from __future__ import annotations
 from datetime import datetime
 
 try:
-    from airflow.sdk import dag, task
+    from airflow.sdk import Asset, dag, task
     from airflow.sdk.exceptions import AirflowSkipException
 except ImportError:
     AirflowSkipException = None
+    Asset = None
     dag = None
     task = None
 
 
 if dag and task:
+    hot_themes_published = Asset("etl://themes/hot")
 
     @dag(
         dag_id="stocks_intraday_candles",
@@ -71,8 +76,15 @@ if dag and task:
             since = now_kst().date() - timedelta(days=get_settings().theme_daily_lookback_days)
             return run_period(since=since)
 
+        @task(retries=1, outlets=[hot_themes_published])
+        def publish_hot_themes() -> dict:
+            from pipelines.themes.jobs.publish_hot_themes import run
+
+            return run()
+
         candles = check_market_open() >> collect_daily_candles()
         candles >> aggregate_period_candles()
         candles >> calculate_theme_daily() >> aggregate_theme_period()
+        candles >> publish_hot_themes()
 
     stocks_intraday_candles()
