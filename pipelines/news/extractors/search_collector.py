@@ -169,8 +169,10 @@ def iter_search_news_pages(
         session.close()
 
 
-def build_search_query(query: CompanyQuery) -> str:
-    return get_news_settings().search_query_template.format(name=query.name)
+def build_search_queries(query: CompanyQuery) -> list[str]:
+    return [
+        template.format(name=query.name) for template in get_news_settings().search_query_templates
+    ]
 
 
 def collection_cutoff(query: CompanyQuery, run_started_at: datetime) -> datetime:
@@ -209,22 +211,26 @@ def drop_older_than(
 
 
 def collect_stock_news(query: CompanyQuery, run_started_at: datetime) -> list[dict[str, Any]]:
-    """종목 하나를 최신순으로 검색
+    """종목 하나를 검색어마다 최신순으로 검색
 
-    읽다가 cutoff 보다 오래된 기사가 하나라도 나오면 그 페이지에서 멈춤
+    검색어마다 읽다가 cutoff 보다 오래된 기사가 하나라도 나오면 그 페이지에서 멈춤. 검색어 사이에
+    겹치는 기사는 호출자의 URL 중복 제거가 거른다.
     """
 
-    keyword = build_search_query(query)
     cutoff = collection_cutoff(query, run_started_at)
     collected: list[dict[str, Any]] = []
 
-    for page_items in iter_search_news_pages(keyword=keyword):
-        tag_query_companies(page_items, query, keyword)
-        fresh, old = drop_older_than(page_items, cutoff)
-        collected.extend(fresh)
+    for index, keyword in enumerate(build_search_queries(query)):
+        if index > 0:
+            time.sleep(get_news_settings().request_delay)
 
-        if old and page_items[-1] is old[-1]:
-            break
+        for page_items in iter_search_news_pages(keyword=keyword):
+            tag_query_companies(page_items, query, keyword)
+            fresh, old = drop_older_than(page_items, cutoff)
+            collected.extend(fresh)
+
+            if old and page_items[-1] is old[-1]:
+                break
 
     return collected
 
