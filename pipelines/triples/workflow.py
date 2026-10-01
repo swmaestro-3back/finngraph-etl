@@ -60,15 +60,14 @@ class GraphRunner:
         triplet_builder: TripletBuilder,
     ):
 
-        async def canonicalize_article(state: GraphState) -> dict:
-            """Replace gazetteer surface forms in the article with canonical names."""
-            canonicalized_article = await asyncio.to_thread(
-                entity_extractor.canonicalize, state["article"]
-            )
-            return {"article": canonicalized_article}
-
         async def extract_entities(state: GraphState) -> dict:
-            """Extract entities based on pre-built knowledge base"""
+            """Extract entities based on pre-built knowledge base
+
+            The article is left as written: rewriting surface forms to canonical names before
+            verification would hide false hits ("삼전동" -> "삼성전자동") from the verifier.
+            Entities are deduped by surface form, so two spellings of one company stay separate
+            candidates and are verified on their own.
+            """
             gazetteer_entities = await asyncio.to_thread(entity_extractor.extract, state["article"])
 
             seen: set[str] = set()
@@ -114,16 +113,14 @@ class GraphRunner:
 
         workflow = StateGraph(GraphState)
 
-        workflow.add_node("canonicalize_article", canonicalize_article)
         workflow.add_node("extract_entities", extract_entities)
         workflow.add_node("verify_entities", verify_entities)
         workflow.add_node("extract_relations", extract_relations)
         workflow.add_node("annotate_frames", annotate_frames)
         workflow.add_node("build_triplets", build_triplets)
 
-        workflow.set_entry_point("canonicalize_article")
+        workflow.set_entry_point("extract_entities")
 
-        workflow.add_edge("canonicalize_article", "extract_entities")
         # Skip the LLM calls when no relation is possible; triplets stay unset (job reads it as [])
         workflow.add_conditional_edges(
             "extract_entities", route_after_extract, ["verify_entities", END]

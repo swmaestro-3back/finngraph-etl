@@ -13,7 +13,8 @@ from __future__ import annotations
 from pipelines.triples.models import Triplet
 from pipelines.triples.ontology.predicate_dict import PREDICATE_DICT
 
-# 모든 엔드포인트는 gazetteer로 정규화된 기업명이다.
+# 모든 엔드포인트는 gazetteer 정규명이다. 본문은 치환하지 않으므로 Triplet 의 Entity.text 는
+# 본문 표기 그대로이고, 그래프·원장으로 나갈 때 여기서 Entity.canonical 로 바꾼다.
 NODE_LABEL = "Company"
 
 
@@ -27,7 +28,7 @@ def edge_of(triplet: Triplet) -> tuple[str, str, str] | None:
 
     if triplet.predicate not in PREDICATE_DICT:
         return None
-    return (triplet.subject.text, triplet.predicate, triplet.object.text)
+    return (triplet.subject.canonical, triplet.predicate, triplet.object.canonical)
 
 
 def source_row_of(triplet: Triplet, name_to_ticker: dict[str, str]) -> dict | None:

@@ -65,17 +65,20 @@ class EntityExtractor:
     def canonicalize(self, text: str) -> str:
         """
         Replace gazetteer surface forms with their canonical names
+
+        Not used by the triples workflow, which keeps the article as written. The events
+        pipeline calls it (events/transformers/candidates.py).
         """
         return self._canonicalizer.replace_keywords(text)
 
     def extract(self, text: str) -> list[Entity]:
         """
-        Extract entities using gazetteer
+        Extract entities using gazetteer, each as the article spells it plus its canonical name
         """
         entities: list[Entity] = []
         for processor in self._processors.values():
-            for canonical in processor.extract_keywords(text):
-                entities.append(Entity(text=canonical))
+            for canonical, start, end in processor.extract_keywords(text, span_info=True):
+                entities.append(Entity(text=text[start:end], canonical=canonical))
         return entities
 
     async def verify(self, text: str, entities: list[Entity]) -> list[Entity]:

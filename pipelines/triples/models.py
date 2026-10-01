@@ -42,9 +42,15 @@ Impact = Literal[
 
 
 class Entity(BaseModel):
-    """An anchor-slot value: a company that matched the gazetteer."""
+    """An anchor-slot value: a company that matched the gazetteer.
 
-    text: str = Field(description="기업 표면형 (gazetteer canonical)")
+    The article is never rewritten, so the LLM stages work on `text` exactly as the article
+    spells it. `canonical` is only used once a triplet leaves the workflow, as the graph node
+    name and the ledger endpoint (see edges.py).
+    """
+
+    text: str = Field(description="본문에 적힌 그대로의 기업 표기 (gazetteer surface form)")
+    canonical: str = Field(description="gazetteer 정규명 — 그래프 노드명·원장 엔드포인트")
 
 
 class RawEntityJudgement(BaseModel):
