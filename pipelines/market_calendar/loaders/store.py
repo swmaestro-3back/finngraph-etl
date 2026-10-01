@@ -92,6 +92,17 @@ INSERT_IPO_SQL = text(
       :ticker, :name, :subscr_start, :subscr_end, :offer_price, :pay_date, :refund_date,
       :listing_date, :lead_managers, :basis_date, CAST(:detail AS jsonb), now()
     )
+    ON CONFLICT (ticker, subscr_start) DO UPDATE SET
+      name = EXCLUDED.name,
+      subscr_end = EXCLUDED.subscr_end,
+      offer_price = EXCLUDED.offer_price,
+      pay_date = EXCLUDED.pay_date,
+      refund_date = EXCLUDED.refund_date,
+      listing_date = EXCLUDED.listing_date,
+      lead_managers = EXCLUDED.lead_managers,
+      basis_date = EXCLUDED.basis_date,
+      detail = EXCLUDED.detail,
+      updated_at = now()
     """
 )
 
