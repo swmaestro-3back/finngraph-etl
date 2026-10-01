@@ -26,7 +26,7 @@ def ensure_bedrock_token() -> None:
 
 
 @lru_cache
-def get_bedrock_client(region: str, timeout: int) -> Any:
+def get_bedrock_client(region: str, timeout: int, max_pool_connections: int = 10) -> Any:
     import boto3
     from botocore.config import Config
 
@@ -39,26 +39,32 @@ def get_bedrock_client(region: str, timeout: int) -> Any:
             read_timeout=timeout,
             connect_timeout=timeout,
             retries={"max_attempts": 2, "mode": "standard"},
+            # 기본 풀은 10 이라 스레드가 그보다 많으면 연결을 버렸다 다시 맺는다.
+            max_pool_connections=max_pool_connections,
         ),
     )
 
 
-# Titan invoke_model 은 요청당 텍스트 1건에 건당 ~0.5초라 순차로는 전량 백필이
-# 시간 단위로 걸린다. boto3 클라이언트는 스레드 안전하므로 스레드로 병렬화하되,
-# 워커 수는 Titan 의 분당 요청 쿼터 안쪽으로 잡는다.
-EMBED_MAX_WORKERS = 8
+# Titan invoke_model 은 요청당 텍스트 1건만 받아(다건 배치 API 없음) 건당 ~0.5초가 걸린다.
+# boto3 클라이언트는 스레드 안전하므로 스레드로 병렬화하되, 워커 수는 Titan 의 분당 요청
+# 쿼터 안쪽으로 잡는다(BEDROCK_EMBEDDING_MAX_WORKERS).
 
 
 def embed_texts(texts: list[str], dim: int) -> list[list[float]]:
     """Titan Embed v2 로 텍스트 목록을 임베딩한다. 순서는 입력 순서와 같다.
 
-    normalize=True 지만 조회가 코사인(<=>)이라 결과에는 영향이 없다.
+    normalize=True 지만 조회가 코사인이라 결과에는 영향이 없다.
     """
     import json
     from concurrent.futures import ThreadPoolExecutor
 
     settings = get_settings()
-    client = get_bedrock_client(settings.bedrock_region, settings.bedrock_request_timeout)
+    max_workers = max(1, settings.bedrock_embedding_max_workers)
+    client = get_bedrock_client(
+        settings.bedrock_region,
+        settings.bedrock_request_timeout,
+        max_pool_connections=max_workers,
+    )
 
     def embed_one(text: str) -> list[float]:
         response = client.invoke_model(
@@ -70,7 +76,7 @@ def embed_texts(texts: list[str], dim: int) -> list[list[float]]:
     if len(texts) <= 1:
         return [embed_one(text) for text in texts]
 
-    with ThreadPoolExecutor(max_workers=EMBED_MAX_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(pool.map(embed_one, texts))
 
 

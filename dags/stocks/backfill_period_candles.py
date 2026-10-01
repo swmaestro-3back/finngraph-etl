@@ -72,6 +72,13 @@ if dag and task:
                 periods=params["periods"] or None,
             )
 
-        backfill_period_candles()
+        @task(retries=1)
+        def calculate_change_rates(params: dict) -> int:
+            from pipelines.stocks.jobs.calculate_change_rates import backfill_since, run_period
+
+            start = date.fromisoformat(params["start_date"]) if params["start_date"] else None
+            return run_period(since=backfill_since(start), tickers=params["tickers"] or None)
+
+        backfill_period_candles() >> calculate_change_rates()
 
     stocks_backfill_period_candles()

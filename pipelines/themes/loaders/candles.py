@@ -72,6 +72,36 @@ UPSERT_THEME_DAILY_SQL = text(
 )
 
 
+# 등락률(change_rate)은 직전 봉 종가 대비 %다. 체인 지수라 지수 종가의 비가 곧 구성 종목
+# 등락률의 가중 평균이므로 종목 봉과 같은 식을 쓴다. 참여 종목이 없어 행이 빠진 날이 있으면
+# 그 앞의 마지막 봉이 기준이다. since 이후를 끝까지 다시 계산하고 값이 달라진 행만 고친다.
+# 적재와 분리된 단계(jobs/calculate_theme_candles.run_change_rates)가 부른다.
+REFRESH_THEME_DAILY_CHANGE_RATE_SQL = text(
+    """
+    UPDATE theme_candles_daily AS c
+       SET change_rate = r.change_rate
+      FROM (
+        SELECT d.theme_id, d.trade_date,
+               ROUND((d.close / NULLIF(prev.close, 0) - 1) * 100, 2) AS change_rate
+          FROM theme_candles_daily AS d
+          LEFT JOIN LATERAL (
+                 SELECT p.close FROM theme_candles_daily AS p
+                  WHERE p.theme_id = d.theme_id AND p.trade_date < d.trade_date
+                  ORDER BY p.trade_date DESC LIMIT 1
+               ) AS prev ON true
+         WHERE d.trade_date >= :since
+           AND (
+                 CAST(:theme_ids AS bigint[]) IS NULL
+                 OR d.theme_id = ANY(CAST(:theme_ids AS bigint[]))
+               )
+      ) AS r
+     WHERE c.theme_id = r.theme_id
+       AND c.trade_date = r.trade_date
+       AND c.change_rate IS DISTINCT FROM r.change_rate
+    """
+)
+
+
 def fetch_theme_ids(session: Session) -> list[int]:
     """편입 종목이 하나라도 있는 테마 id."""
 
@@ -166,6 +196,38 @@ REBUILD_THEME_PERIOD_SQL = text(
 )
 
 
+# since 가 속한 주·월의 봉부터 등락률을 직전 주·월 봉 대비로 다시 계산한다.
+REFRESH_THEME_PERIOD_CHANGE_RATE_SQL = text(
+    """
+    UPDATE theme_candles_period AS c
+       SET change_rate = r.change_rate
+      FROM (
+        SELECT d.theme_id, d.period, d.base_date,
+               ROUND((d.close / NULLIF(prev.close, 0) - 1) * 100, 2) AS change_rate
+          FROM theme_candles_period AS d
+          LEFT JOIN LATERAL (
+                 SELECT p.close FROM theme_candles_period AS p
+                  WHERE p.theme_id = d.theme_id
+                    AND p.period = d.period
+                    AND p.base_date < d.base_date
+                  ORDER BY p.base_date DESC LIMIT 1
+               ) AS prev ON true
+         WHERE d.base_date >= date_trunc(
+                 CASE d.period WHEN 'W' THEN 'week' ELSE 'month' END, CAST(:since AS date)
+               )::date
+           AND (
+                 CAST(:theme_ids AS bigint[]) IS NULL
+                 OR d.theme_id = ANY(CAST(:theme_ids AS bigint[]))
+               )
+      ) AS r
+     WHERE c.theme_id = r.theme_id
+       AND c.period = r.period
+       AND c.base_date = r.base_date
+       AND c.change_rate IS DISTINCT FROM r.change_rate
+    """
+)
+
+
 def rebuild_theme_period_candles(
     session: Session, since: date, theme_ids: list[int] | None = None
 ) -> int:
@@ -203,3 +265,18 @@ def upsert_theme_daily_candles(session: Session, candles: list[ThemeCandle]) -> 
         ],
     )
     return len(candles)
+
+
+def refresh_theme_change_rates(
+    session: Session, since: date, theme_ids: list[int] | None = None
+) -> int:
+    """since 이후 테마 일봉과, since 가 속한 주·월부터의 주봉·월봉 등락률을 다시 계산한다.
+
+    Returns:
+        int: 값이 바뀐 행 수 (일봉·주봉·월봉 합계).
+    """
+
+    params = {"since": since, "theme_ids": list(theme_ids) if theme_ids else None}
+    daily = session.execute(REFRESH_THEME_DAILY_CHANGE_RATE_SQL, params).rowcount
+    period = session.execute(REFRESH_THEME_PERIOD_CHANGE_RATE_SQL, params).rowcount
+    return daily + period

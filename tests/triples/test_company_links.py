@@ -14,9 +14,9 @@ from pipelines.triples.models import Entity, Triplet  # noqa: E402
 
 def _triplet(subject: str, obj: str, predicate: str = "SUPPLIES_TO") -> Triplet:
     return Triplet(
-        subject=Entity(text=subject),
+        subject=Entity(text=subject, canonical=subject),
         predicate=predicate,
-        object=Entity(text=obj),
+        object=Entity(text=obj, canonical=obj),
         source_sentence="원문 문장",
         evidence="근거 문장",
         polarity="affirmed",

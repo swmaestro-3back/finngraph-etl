@@ -22,18 +22,6 @@ def normalize_url_for_duplicate(url: str) -> str:
         return url.strip()
 
 
-def merge_query_companies(target: dict[str, Any], source: dict[str, Any]) -> None:
-
-    merged: dict[int, dict[str, Any]] = {
-        int(company["company_id"]): company for company in target.get("_query_companies", [])
-    }
-
-    for company in source.get("_query_companies", []):
-        merged.setdefault(int(company["company_id"]), company)
-
-    target["_query_companies"] = list(merged.values())
-
-
 def remove_duplicate_by_url(
     items: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -56,8 +44,8 @@ def remove_duplicate_by_url(
 
         matched_key = next((url_key for url_key in url_keys if url_key in seen_url_map), None)
 
+        # 같은 기사가 여러 종목 검색에 걸리면 먼저 걸린 종목의 기사만 남는다
         if matched_key:
-            merge_query_companies(seen_url_map[matched_key], item)
             removed_items.append(
                 {
                     "removed_item": item,
@@ -74,6 +62,6 @@ def remove_duplicate_by_url(
         for url_key in url_keys:
             seen_url_map[url_key] = item
 
-    logging.info(f"총 {len(items)}개 중 {len(removed_items)}개 URL 중복으로 인한 드랍")
+    logging.debug(f"총 {len(items)}개 중 {len(removed_items)}개 URL 중복으로 인한 드랍")
 
     return unique_items, removed_items

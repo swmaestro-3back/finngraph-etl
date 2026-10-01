@@ -103,11 +103,11 @@ def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
         return "", published_at
 
     except requests.exceptions.RequestException as e:
-        logging.warning(f"요청 실패: {type(e).__name__}")
+        logging.debug(f"요청 실패: {type(e).__name__}")
         return "", ""
 
     except Exception as e:
-        logging.warning(f"추출 실패: {type(e).__name__}")
+        logging.debug(f"추출 실패: {type(e).__name__}")
         return "", ""
 
 
@@ -182,11 +182,11 @@ def fetch_article_body_from_url(url: str) -> str:
         return ""
 
     except requests.exceptions.RequestException as e:
-        logging.warning(f"요청 실패: {url} / {e}")
+        logging.debug(f"요청 실패: {url} / {e}")
         return ""
 
     except Exception as e:
-        logging.warning(f"추출 실패: {url} / {type(e).__name__}: {e}")
+        logging.debug(f"추출 실패: {url} / {type(e).__name__}: {e}")
         return ""
 
 
@@ -211,7 +211,7 @@ def _fetch_item_body(item: dict[str, Any]) -> dict[str, Any]:
 
         if removed_body_noise:
             title = get_printable_text(item.get("title", ""))
-            logging.info(f"노이즈 제거: {title} / {len(removed_body_noise)}개")
+            logging.debug(f"노이즈 제거: {title} / {len(removed_body_noise)}개")
 
         if text:
             return item
@@ -256,13 +256,13 @@ def _fetch_item_body(item: dict[str, Any]) -> dict[str, Any]:
 
     if text:
         body_source_label = "대상" if is_anchor_link(body_source_url) else body_source_url
-        logging.info(
+        logging.debug(
             f"추출 성공: {title} / "
             f"{len(text)}자 / source={body_source_label} / "
             f"노이즈 제거={len(removed_body_noise)}개"
         )
     else:
-        logging.info(f"추출 실패: {title}")
+        logging.debug(f"추출 실패: {title}")
 
     return item
 

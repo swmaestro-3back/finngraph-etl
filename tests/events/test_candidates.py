@@ -16,7 +16,7 @@ GAZETTEER = {
 
 
 class FakeExtractor:
-    """EntityExtractor 와 같은 두 메서드. 반환 항목은 .text 만 가진다."""
+    """EntityExtractor 와 같은 두 메서드. 반환 항목은 .canonical 만 가진다."""
 
     def __init__(self, gazetteer: dict[str, list[str]]):
         self._processor = KeywordProcessor(case_sensitive=True)
@@ -26,7 +26,7 @@ class FakeExtractor:
         return self._processor.replace_keywords(text)
 
     def extract(self, text: str) -> list:
-        return [SimpleNamespace(text=name) for name in self._processor.extract_keywords(text)]
+        return [SimpleNamespace(canonical=name) for name in self._processor.extract_keywords(text)]
 
 
 def test_canonicalizes_text_and_returns_canonical_candidates():

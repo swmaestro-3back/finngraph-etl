@@ -2,8 +2,11 @@
 
 순서가 의미를 갖는다.
 
-    일봉 ─┬─ 기간봉(주·월) ──────────────┐
-          └─ 테마 일봉 → 테마 기간봉 ──┴─ 투자자 수급
+    일봉 ─┬─ 기간봉(주·월) → 종목 등락률 ──────────────┐
+          └─ 테마 일봉 → 테마 기간봉 → 테마 등락률 ──┴─ 투자자 수급
+
+등락률(change_rate)은 직전 봉 종가 대비 %로, 봉 적재와 분리된 태스크가 다시 받은 구간 전체를
+재계산한다. 종목 쪽은 일봉·기간봉이 모두 적재된 뒤에, 테마 쪽은 테마 기간봉 뒤에 둔다.
 
 테마 봉은 종목 일봉으로 계산하는 시총 가중 지수라 일봉 뒤에 두고, KIS 를 쓰지 않아 기간봉과
 병렬이다. 수급이 두 갈래 뒤에 있으므로 Asset(etl://stocks/daily)은 테마 봉까지 있는 상태에서
@@ -85,6 +88,18 @@ if dag and task:
             since = now_kst().date() - timedelta(days=get_settings().theme_daily_lookback_days)
             return run_period(since=since)
 
+        @task(retries=2)
+        def calculate_stock_change_rates() -> int:
+            from pipelines.stocks.jobs.calculate_change_rates import run_daily, run_period
+
+            return run_daily() + run_period()
+
+        @task(retries=2)
+        def calculate_theme_change_rates() -> int:
+            from pipelines.themes.jobs.calculate_theme_candles import run_change_rates
+
+            return run_change_rates()
+
         # 수급은 네이버 비공식 API 라 차단 의심 시 즉시 실패한다. 기본 5분 재시도는
         # 차단이 풀리기에 짧아 간격을 늘려 둔다.
         @task(retries=2, retry_delay=timedelta(minutes=15), outlets=[stocks_daily_collected])
@@ -95,7 +110,13 @@ if dag and task:
 
         candles = check_market_open() >> collect_daily_candles()
         flows = collect_investor_flows()
-        candles >> collect_period_candles() >> flows
-        candles >> calculate_theme_daily() >> calculate_theme_period() >> flows
+        candles >> collect_period_candles() >> calculate_stock_change_rates() >> flows
+        (
+            candles
+            >> calculate_theme_daily()
+            >> calculate_theme_period()
+            >> calculate_theme_change_rates()
+            >> flows
+        )
 
     stocks_daily_pipeline()

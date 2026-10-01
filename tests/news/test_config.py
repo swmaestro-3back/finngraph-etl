@@ -9,8 +9,15 @@ def test_search_defaults():
     settings = NewsSettings(_env_file=None)
 
     assert settings.search_sort == "date"
-    assert settings.search_query_templates == ["특징주,{name}", "{name}"]
-    assert settings.search_max_pages == 3
+    assert settings.search_query_templates == [
+        "{name},공급",
+        "{name},계약",
+        "{name},수혜",
+        "{name},호재",
+        "{name},악재",
+        "{name},특징주",
+    ]
+    assert settings.search_max_pages == 5
     assert settings.search_lookback_days == 180
     assert settings.search_interval_hours == 2
     assert settings.news_llm_batch_size == 10

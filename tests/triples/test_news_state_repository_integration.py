@@ -43,7 +43,7 @@ def news_row():
 
 
 def test_new_row_is_fetched_as_unprocessed(news_row):
-    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items(limit=10000)]
+    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items()]
     assert news_row in ids
 
 
@@ -51,7 +51,7 @@ def test_mark_with_triples_sets_true(news_row):
     mark_triple_extraction_result([news_row], [])
 
     # TRUE는 "시도 완료"를 겸하므로 추출 대상에서 빠진다
-    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items(limit=10000)]
+    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items()]
     assert news_row not in ids
 
     with session_scope() as session:
@@ -66,7 +66,7 @@ def test_mark_without_triples_sets_false(news_row):
     mark_triple_extraction_result([], [news_row])
 
     # FALSE도 "시도 완료"라 추출 대상에서 빠진다 — 미시도(NULL)와 구분되는 지점
-    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items(limit=10000)]
+    ids = [item["news_id"] for item in fetch_unprocessed_triple_news_items()]
     assert news_row not in ids
 
     with session_scope() as session:

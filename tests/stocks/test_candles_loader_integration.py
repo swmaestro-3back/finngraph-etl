@@ -16,8 +16,11 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
+from pipelines.stocks.jobs import calculate_change_rates
 from pipelines.stocks.loaders.candles import (
     aggregate_current_period_candles,
+    refresh_daily_change_rates,
+    refresh_period_change_rates,
     upsert_daily_candles,
     upsert_period_candles,
 )
@@ -336,4 +339,154 @@ def test_aggregate_current_period_from_daily_candles() -> None:
             30,
             300,
         ),
+    ]
+
+
+def _daily_change_rates() -> list[tuple]:
+    with session_scope() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT c.trade_date, c.change_rate FROM stock_candles_daily AS c
+                  JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker
+                 ORDER BY c.trade_date
+                """
+            ),
+            {"ticker": TICKER},
+        )
+        return [tuple(row) for row in rows]
+
+
+def _period_change_rates(period: str) -> list[tuple]:
+    with session_scope() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT c.base_date, c.change_rate FROM stock_candles_period AS c
+                  JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker AND c.period = :period
+                 ORDER BY c.base_date
+                """
+            ),
+            {"ticker": TICKER, "period": period},
+        )
+        return [tuple(row) for row in rows]
+
+
+def test_daily_change_rate_is_vs_previous_bar() -> None:
+    """직전 봉 종가 대비 %. 첫 봉은 NULL 이고, 거래가 없던 날은 건너뛰어 마지막 봉과 비교한다."""
+    _load_stock()
+
+    with session_scope() as session:
+        upsert_daily_candles(
+            session,
+            [
+                _daily(date(2026, 8, 5), "100"),
+                _daily(date(2026, 8, 6), "110"),
+                # 8/7 은 봉이 없다(거래정지).
+                _daily(date(2026, 8, 10), "99"),
+            ],
+        )
+        refresh_daily_change_rates(session, since=date(2026, 8, 5))
+
+    assert _daily_change_rates() == [
+        (date(2026, 8, 5), None),
+        (date(2026, 8, 6), Decimal("10.00")),
+        (date(2026, 8, 10), Decimal("-10.00")),
+    ]
+
+
+def test_daily_change_rate_uses_bar_before_since_and_refreshes_later_bars() -> None:
+    """since 첫 행은 그 앞의 봉과 비교하고, 과거 종가가 바뀌면 그 뒤 봉도 다시 계산한다."""
+    stock_id = _load_stock()
+    with session_scope() as session:
+        upsert_daily_candles(
+            session, [_daily(date(2026, 8, 5), "100"), _daily(date(2026, 8, 7), "120")]
+        )
+        refresh_daily_change_rates(session, since=date(2026, 8, 5), stock_ids=[stock_id])
+
+    with session_scope() as session:
+        # 가운데 날만 적재한다. 8/6 은 8/5 대비, 8/7 은 새로 생긴 8/6 대비가 된다.
+        upsert_daily_candles(session, [_daily(date(2026, 8, 6), "80")])
+        changed = refresh_daily_change_rates(session, since=date(2026, 8, 6), stock_ids=[stock_id])
+
+    assert changed == 2
+
+    assert _daily_change_rates() == [
+        (date(2026, 8, 5), None),
+        (date(2026, 8, 6), Decimal("-20.00")),
+        (date(2026, 8, 7), Decimal("50.00")),
+    ]
+
+
+def test_period_change_rate_is_vs_previous_period_bar() -> None:
+    """주봉은 직전 주봉, 월봉은 직전 월봉 대비다. 서로 섞이지 않는다."""
+    _load_stock()
+
+    with session_scope() as session:
+        upsert_period_candles(
+            session,
+            [
+                _period("W", date(2026, 8, 10), "100"),
+                _period("W", date(2026, 8, 17), "105"),
+                _period("M", date(2026, 7, 1), "200"),
+                _period("M", date(2026, 8, 1), "150"),
+            ],
+        )
+        refresh_period_change_rates(session, since=date(2026, 7, 1))
+
+    assert _period_change_rates("W") == [
+        (date(2026, 8, 10), None),
+        (date(2026, 8, 17), Decimal("5.00")),
+    ]
+    assert _period_change_rates("M") == [
+        (date(2026, 7, 1), None),
+        (date(2026, 8, 1), Decimal("-25.00")),
+    ]
+
+
+def test_aggregated_period_candle_gets_change_rate() -> None:
+    """장중에 일봉으로 합성한 이번 주·이번 달 봉에도 등락률이 채워진다."""
+    _load_stock()
+    with session_scope() as session:
+        upsert_period_candles(
+            session, [_period("W", date(2026, 9, 21), "100"), _period("M", date(2026, 8, 1), "92")]
+        )
+        upsert_daily_candles(session, [_daily(date(2026, 9, 28), "115")])
+        aggregate_current_period_candles(session, date(2026, 9, 28))
+        # 이번 주 중간 날짜를 줘도 그 주·그 달의 봉부터 다시 계산한다.
+        refresh_period_change_rates(session, since=date(2026, 9, 30))
+
+    assert _period_change_rates("W") == [
+        (date(2026, 9, 21), None),
+        (date(2026, 9, 28), Decimal("15.00")),
+    ]
+    assert _period_change_rates("M") == [
+        (date(2026, 8, 1), None),
+        (date(2026, 9, 1), Decimal("25.00")),
+    ]
+
+
+def test_change_rate_jobs_narrow_by_ticker() -> None:
+    """job 은 단축코드로 대상을 좁히고, 없는 단축코드만 주면 아무것도 건드리지 않는다."""
+    _load_stock()
+    with session_scope() as session:
+        upsert_daily_candles(
+            session, [_daily(date(2026, 8, 5), "100"), _daily(date(2026, 8, 6), "110")]
+        )
+        upsert_period_candles(
+            session,
+            [_period("W", date(2026, 8, 10), "100"), _period("W", date(2026, 8, 17), "105")],
+        )
+
+    assert calculate_change_rates.run_daily(since=date(2026, 8, 5), tickers=[UNKNOWN_TICKER]) == 0
+    assert calculate_change_rates.run_period(since=date(2026, 8, 10), tickers=[UNKNOWN_TICKER]) == 0
+    assert calculate_change_rates.run_daily(since=date(2026, 8, 5), tickers=[TICKER]) == 1
+    assert calculate_change_rates.run_period(since=date(2026, 8, 10), tickers=[TICKER]) == 1
+
+    assert _daily_change_rates() == [(date(2026, 8, 5), None), (date(2026, 8, 6), Decimal("10.00"))]
+    assert _period_change_rates("W") == [
+        (date(2026, 8, 10), None),
+        (date(2026, 8, 17), Decimal("5.00")),
     ]

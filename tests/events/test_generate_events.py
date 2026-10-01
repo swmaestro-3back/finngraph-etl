@@ -24,7 +24,7 @@ class FakeExtractor:
         return self._processor.replace_keywords(text)
 
     def extract(self, text: str) -> list:
-        return [SimpleNamespace(text=n) for n in self._processor.extract_keywords(text)]
+        return [SimpleNamespace(canonical=n) for n in self._processor.extract_keywords(text)]
 
 
 class StubGenerator:

@@ -23,8 +23,6 @@ from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)
 
-DEFAULT_LIMIT = 200
-
 
 async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     """
@@ -73,7 +71,7 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
         )
     except Exception as e:
         logger.warning(
-            "트리플 추출 실패 (triple_extracted=NULL 유지, 다음 런 재시도): news_id=%s, %s: %s",
+            "[extract_triples] 추출 실패 (다음 런 재시도): news_id=%s, %s: %s",
             news_id,
             type(e).__name__,
             e,
@@ -83,17 +81,17 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     return "has_triples" if has_triplets else "no_triples"
 
 
-async def extract_unprocessed_triples(limit: int = DEFAULT_LIMIT) -> dict[str, int]:
+async def extract_unprocessed_triples() -> dict[str, int]:
     """
-    미처리(material) 뉴스를 폴링해 트리플을 추출하고 원장·그래프에 적재
+    미처리(material) 뉴스를 전량 폴링해 트리플을 추출하고 원장·그래프에 적재
     """
 
-    items = fetch_unprocessed_triple_news_items(limit=limit)
+    items = fetch_unprocessed_triple_news_items()
 
     stats = {"fetched": len(items), "has_triples": 0, "no_triples": 0, "failed": 0}
 
     if not items:
-        logger.info("트리플 추출 대상 뉴스가 없습니다.")
+        logger.info("[extract_triples] 대상 뉴스 없음")
         return stats
 
     # 트리플관계 추출 LangGraph Runner 생성
@@ -106,7 +104,7 @@ async def extract_unprocessed_triples(limit: int = DEFAULT_LIMIT) -> dict[str, i
             stats[status] += 1
 
     logger.info(
-        "트리플 추출 완료: 조회 %d개, 관계있음 %d개, 관계없음 %d개, 실패 %d개",
+        "[extract_triples] 완료: 조회 %d / 관계있음 %d / 관계없음 %d / 실패 %d",
         stats["fetched"],
         stats["has_triples"],
         stats["no_triples"],

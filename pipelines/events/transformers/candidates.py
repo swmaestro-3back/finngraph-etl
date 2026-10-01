@@ -23,7 +23,7 @@ def extract_company_candidates(
     seen: set[str] = set()
     for text in texts:
         for entity in extractor.extract(text):
-            name = entity.text
+            name = entity.canonical
             if name in seen:
                 continue
             seen.add(name)

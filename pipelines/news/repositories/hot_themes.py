@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -14,6 +13,10 @@ HOT_THEMES_KEY = "etl:hot-themes"
 _SOCKET_TIMEOUT_SECONDS = 2.0
 
 
+class HotThemesUnavailableError(RuntimeError):
+    """백엔드 핫테마를 쓸 수 없다 — 키 없음, 계약 위반, 기준일 불일치."""
+
+
 @dataclass(frozen=True)
 class HotThemes:
     trade_date: date | None
@@ -21,29 +24,26 @@ class HotThemes:
     tickers: list[str] = field(default_factory=list)
 
 
-def fetch_hot_themes() -> HotThemes | None:
+def fetch_hot_themes() -> HotThemes:
+    """백엔드가 발행한 핫테마. Redis 장애(redis.RedisError)는 그대로 올린다."""
+
+    client = redis.Redis.from_url(
+        get_news_settings().hot_themes_redis_url,
+        socket_timeout=_SOCKET_TIMEOUT_SECONDS,
+        socket_connect_timeout=_SOCKET_TIMEOUT_SECONDS,
+        decode_responses=True,
+    )
     try:
-        client = redis.Redis.from_url(
-            get_news_settings().hot_themes_redis_url,
-            socket_timeout=_SOCKET_TIMEOUT_SECONDS,
-            socket_connect_timeout=_SOCKET_TIMEOUT_SECONDS,
-            decode_responses=True,
-        )
-        try:
-            raw = client.get(HOT_THEMES_KEY)
-        finally:
-            client.close()
-    except redis.RedisError as exc:
-        logging.warning("핫테마 Redis 조회 실패 — 자체 선정으로 폴백한다: %s", exc)
-        return None
+        raw = client.get(HOT_THEMES_KEY)
+    finally:
+        client.close()
 
     if raw is None:
-        logging.info("핫테마 키 없음(%s) — 자체 선정으로 폴백한다", HOT_THEMES_KEY)
-        return None
+        raise HotThemesUnavailableError(f"핫테마 키 없음: {HOT_THEMES_KEY}")
 
     parsed = parse_hot_themes(raw)
     if parsed is None:
-        logging.warning("핫테마 페이로드 파싱 실패 — 자체 선정으로 폴백한다")
+        raise HotThemesUnavailableError(f"핫테마 페이로드 파싱 실패: {HOT_THEMES_KEY}")
     return parsed
 
 

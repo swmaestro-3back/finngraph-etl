@@ -6,6 +6,9 @@
   lookback(10일) → run_period(since=today−lookback)
 - 백필 DAG(themes_backfill_candles): 인자로 받은 구간
 
+등락률(change_rate)은 봉 계산과 분리된 단계다. 세 지점 모두 일봉·기간봉 뒤에
+run_change_rates(since) 를 같은 구간으로 부른다.
+
 구간의 첫 거래일은 t-1 로만 쓰고 둘째 거래일부터 계산한다. 종목 일봉 수집이 최근 10일을
 수정주가로 다시 받기 때문에, 구간 밖의 (미조정) 종가와 안의 (조정) 종가를 짝지으면 분할 뒤
 지수가 튄다. 그래서 테마 lookback 은 종목 lookback 이하여야 한다.
@@ -29,6 +32,7 @@ from pipelines.themes.loaders.candles import (
     fetch_theme_ids,
     fetch_trading_calendar,
     rebuild_theme_period_candles,
+    refresh_theme_change_rates,
     upsert_theme_daily_candles,
 )
 from pipelines.themes.transformers.theme_index import compute_theme_candles
@@ -107,4 +111,25 @@ def run_period(since: date | None = None, theme_ids: list[int] | None = None) ->
     with session_scope() as session:
         rows = rebuild_theme_period_candles(session, since, theme_ids)
     logger.info("테마 주·월봉 재집계 완료: %d행 (기준 %s)", rows, since)
+    return rows
+
+
+def run_change_rates(since: date | None = None, theme_ids: list[int] | None = None) -> int:
+    """since 이후 테마 일봉·주봉·월봉의 등락률(직전 봉 종가 대비 %)을 다시 계산한다.
+
+    체인 지수라 지수 종가의 비가 곧 구성 종목 등락률의 가중 평균이다. 일봉·기간봉 계산 뒤에
+    같은 구간으로 부른다.
+
+    Args:
+        since (date | None): 재계산 시작일. 생략하면 오늘 − THEME_DAILY_LOOKBACK_DAYS.
+        theme_ids (list[int] | None): 대상 테마. 생략하면 전체.
+
+    Returns:
+        int: 값이 바뀐 행 수.
+    """
+
+    since = since or now_kst().date() - timedelta(days=get_settings().theme_daily_lookback_days)
+    with session_scope() as session:
+        rows = refresh_theme_change_rates(session, since, theme_ids)
+    logger.info("테마 봉 등락률 계산 완료: %d행 변경 (기준 %s)", rows, since)
     return rows

@@ -57,9 +57,12 @@ class TripletBuilder:
     def _violates_irreflexivity(self, frame: RelationFrame) -> bool:
         """
         True if the predicate is marked irreflexive in the ontology and subject == object
+
+        Compared by canonical name, so two spellings of one company ("삼전", "삼성전자") count
+        as the same endpoint.
         """
         spec = self._predicate_dict.get(frame.predicate, {})
-        return bool(spec.get("irreflexive")) and frame.subject.text == frame.object.text
+        return bool(spec.get("irreflexive")) and frame.subject.canonical == frame.object.canonical
 
     def stats(self, relation_frames: list[RelationFrame]) -> dict:
         """

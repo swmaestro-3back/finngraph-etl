@@ -93,7 +93,7 @@ def test_only_triple_extracted_news_is_summarize_target(link):
     news_id = item["_news_id"]
 
     def targets():
-        return [i["_news_id"] for i in fetch_unsummarized_news_items(limit=100000)]
+        return [i["_news_id"] for i in fetch_unsummarized_news_items()]
 
     assert news_id not in targets()  # 미시도(NULL)
     mark_triple_extraction_result([], [news_id])

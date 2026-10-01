@@ -64,14 +64,13 @@ SELECT_STORED_LINKS_SQL = text(
 # 요약 대상: 삼중항 추출을 마쳤고 요약이 아직 없는 기사
 SELECT_UNSUMMARIZED_NEWS_SQL = text(
     """
-    SELECT id, title, text
+    SELECT id, title, text, published_at
       FROM news
      WHERE triple_extracted = TRUE
        AND (summary IS NULL OR BTRIM(summary) = '')
        AND text IS NOT NULL
        AND BTRIM(text) <> ''
-     ORDER BY id ASC
-     LIMIT :limit;
+     ORDER BY id ASC;
     """
 )
 
@@ -245,7 +244,7 @@ def save_news_items(
 ) -> dict[str, int]:
 
     if not items:
-        logging.info("뉴스가 없습니다.")
+        logging.debug("뉴스가 없습니다.")
         return {
             "inserted_count": 0,
             "updated_count": 0,
@@ -266,7 +265,7 @@ def save_news_items(
 
             if not has_article_body(item):
                 skipped_no_body_count += 1
-                logging.info(f"저장 스킵: {title}")
+                logging.debug(f"저장 스킵: {title}")
                 continue
 
             try:
@@ -286,20 +285,20 @@ def save_news_items(
 
                 if action == "inserted":
                     inserted_count += 1
-                    logging.info(f"뉴스 신규 저장 완료: id={news_id}, title={title}")
+                    logging.debug(f"뉴스 신규 저장 완료: id={news_id}, title={title}")
                 elif action == "skipped_existing":
                     skipped_existing_count += 1
-                    logging.info(f"이미 DB에 있어 저장 스킵: id={news_id}, title={title}")
+                    logging.debug(f"이미 DB에 있어 저장 스킵: id={news_id}, title={title}")
                 else:
                     updated_count += 1
-                    logging.info(f"기존 뉴스 업데이트 완료: id={news_id}, title={title}")
+                    logging.debug(f"기존 뉴스 업데이트 완료: id={news_id}, title={title}")
 
             except Exception as e:
                 failed_count += 1
 
-                logging.error(f"뉴스 저장 실패: title={title}, error={type(e).__name__}: {e}")
+                logging.error(f"뉴스 저장 실패: {type(e).__name__}: {e}")
 
-        logging.info(
+        logging.debug(
             f"뉴스 DB 저장 완료: 신규저장 {inserted_count}개, "
             f"기존업데이트 {updated_count}개, "
             f"기존뉴스스킵 {skipped_existing_count}개, "
@@ -347,26 +346,28 @@ def remove_stored_by_url(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         and normalize_url_for_duplicate(item.get("originallink")) not in stored_urls
     ]
 
-    logging.info(f"총 {len(items)}개 중 {len(items) - len(kept)}개 DB 저장된 URL 로 드랍")
+    logging.debug(f"총 {len(items)}개 중 {len(items) - len(kept)}개 DB 저장된 URL 로 드랍")
 
     return kept
 
 
-def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
+def fetch_unsummarized_news_items() -> list[dict[str, Any]]:
+    """요약 대상 전량. 런마다 상한 없이 밀린 기사를 모두 처리한다."""
 
     with session_scope() as session:
-        rows = session.execute(SELECT_UNSUMMARIZED_NEWS_SQL, {"limit": limit}).fetchall()
+        rows = session.execute(SELECT_UNSUMMARIZED_NEWS_SQL).fetchall()
 
         items = []
 
         for row in rows:
-            news_id, title, news_text = row
+            news_id, title, news_text, published_at = row
 
             items.append(
                 {
                     "_news_id": news_id,
                     "title": title or "",
                     "_text": news_text or "",
+                    "_published_at": published_at,
                 }
             )
 
@@ -382,7 +383,7 @@ def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
     ]
 
     if not normalized:
-        logging.info("저장할 요약이 없습니다.")
+        logging.debug("저장할 요약이 없습니다.")
         return {"saved_count": 0}
 
     saved_count = 0
@@ -400,6 +401,6 @@ def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
                     f"요약 저장 실패(건너뜀): news_id={news_id}, error={type(e).__name__}: {e}"
                 )
 
-    logging.info(f"요약 저장 완료: {saved_count}개")
+    logging.debug(f"요약 저장 완료: {saved_count}개")
 
     return {"saved_count": saved_count}

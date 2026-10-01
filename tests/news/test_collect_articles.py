@@ -20,7 +20,7 @@ def _item(title: str, link: str, description: str = "") -> dict:
         "link": link,
         "originallink": link,
         "pubDate": "Wed, 09 Sep 2026 10:00:00 +0900",
-        "_query_companies": [{"company_id": 100, "name": "엘앤에프"}],
+        "_query_company": {"company_id": 100, "name": "엘앤에프"},
     }
 
 
@@ -45,7 +45,6 @@ def wired(monkeypatch):
         "news_companies": [],
         "marked": [],
         "seed_window": [],
-        "resolved_names": [],
         "titles": [],
     }
 
@@ -62,11 +61,14 @@ def wired(monkeypatch):
     monkeypatch.setattr(job, "validate_search_settings", lambda: None)
     monkeypatch.setattr(job, "fetch_due_company_queries", lambda ids, hours, now: batch)
     # 200 번 기업의 검색은 실패한 것으로 본다
-    monkeypatch.setattr(
-        job,
-        "collect_company_news",
-        lambda queries, run_started_at: ([fresh, market, existing], [200]),
-    )
+    calls["collect_window"] = []
+
+    def fake_collect(queries, run_started_at, lookback_days, max_pages):
+        calls["collect_window"].append((lookback_days, max_pages))
+        return [fresh, market, existing], [200]
+
+    monkeypatch.setattr(job, "collect_company_news", fake_collect)
+    monkeypatch.setattr(job, "fetch_due_krx300_queries", lambda hours, now, company_ids: batch)
     monkeypatch.setattr(
         job, "remove_stored_by_url", lambda items: [i for i in items if i is not existing]
     )
@@ -118,11 +120,6 @@ def wired(monkeypatch):
         job, "update_cluster_title", lambda cid, title: calls["titles"].append((cid, title))
     )
 
-    def fake_resolve(names):
-        calls["resolved_names"].append(sorted(names))
-        return {"삼성SDI": 300}  # 엘앤에프는 일부러 빼서 출처 종목 fallback 을 검증한다
-
-    monkeypatch.setattr(news_companies, "fetch_company_ids_by_stock_names", fake_resolve)
     monkeypatch.setattr(
         news_companies,
         "insert_news_companies",
@@ -137,13 +134,7 @@ def wired(monkeypatch):
     async def judge(articles):
         return BatchVerdict(
             verdicts=[
-                ArticleVerdict(
-                    id=article.id,
-                    valid=not article.title.startswith("코스피"),
-                    companies=[]
-                    if article.title.startswith("코스피")
-                    else list(article.candidates),
-                )
+                ArticleVerdict(id=article.id, valid=not article.title.startswith("코스피"))
                 for article in articles
             ]
         )
@@ -161,10 +152,9 @@ def test_run_filters_then_clusters_then_links_and_marks_only_searched(wired):
     result = job.run(theme_ids=[10, 11])
 
     assert result == {"created": 1, "updated": 0, "failed": 0}
-    # 시장 일반 기사는 invalid 로, 기존 기사는 DB 대조로 버려져 fresh 하나만 저장·연결된다.
-    # gazetteer 가 찾은 삼성SDI 와 출처 종목 엘앤에프가 모두 연결된다 (엘앤에프는 해석 실패 → 출처 fallback)
-    assert calls["resolved_names"] == [["삼성SDI", "엘앤에프"]]
-    assert calls["news_companies"] == [(900, [100, 300])]
+    # 시장 일반 기사는 검색 종목명이 없어서, 기존 기사는 DB 대조로 버려져 fresh 하나만 저장·연결된다.
+    # 검색 대상 기업 엘앤에프에만 연결된다 (본문에 나온 삼성SDI 는 삼중항 추출이 연결한다)
+    assert calls["news_companies"] == [(900, [100])]
     # 기준을 넘은 클러스터에 이름이 붙는다
     assert calls["titles"] == [(77, "양극재 공급계약")]
     # 검색에 성공한 기업만 search_history 에 기록된다 — 실패한 200 은 다음 런에 다시 읽는다
@@ -223,3 +213,22 @@ def test_run_raises_before_marking_when_all_relevance_judgments_fail(wired, monk
 
     # 마킹 전에 올라가야 Airflow 재시도가 같은 창을 다시 읽는다
     assert calls["marked"] == []
+
+
+def test_run_krx300_passes_collection_window_and_marks_searched(wired):
+    job, calls = wired
+
+    result = job.run_krx300([100, 200], lookback_days=180, max_pages=8)
+
+    assert result == {"created": 1, "updated": 0, "failed": 0}
+    # 백필이 넓힌 수집 창이 수집기까지 내려간다 — 스케줄 런(run)은 None 으로 설정값을 쓴다
+    assert calls["collect_window"] == [(180, 8)]
+    assert calls["marked"] == [[100]]
+
+
+def test_run_uses_settings_collection_window(wired):
+    job, calls = wired
+
+    job.run(theme_ids=[10, 11])
+
+    assert calls["collect_window"] == [(None, None)]

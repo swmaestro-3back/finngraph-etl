@@ -175,20 +175,24 @@ def build_search_queries(query: CompanyQuery) -> list[str]:
     ]
 
 
-def collection_cutoff(query: CompanyQuery, run_started_at: datetime) -> datetime:
+def collection_cutoff(
+    query: CompanyQuery, run_started_at: datetime, lookback_days: int | None = None
+) -> datetime:
 
-    lookback = run_started_at - timedelta(days=get_news_settings().search_lookback_days)
+    if lookback_days is None:
+        lookback_days = get_news_settings().search_lookback_days
+    lookback = run_started_at - timedelta(days=lookback_days)
     if query.watermark is None:
         return lookback
     return max(query.watermark, lookback)
 
 
-def tag_query_companies(
+def tag_query_company(
     items: list[dict[str, Any]], query: CompanyQuery, search_keyword: str
 ) -> None:
 
     for item in items:
-        item["_query_companies"] = [{"company_id": query.company_id, "name": query.name}]
+        item["_query_company"] = {"company_id": query.company_id, "name": query.name}
         item["_search_keyword"] = search_keyword
 
 
@@ -210,22 +214,27 @@ def drop_older_than(
     return kept, removed
 
 
-def collect_stock_news(query: CompanyQuery, run_started_at: datetime) -> list[dict[str, Any]]:
+def collect_stock_news(
+    query: CompanyQuery,
+    run_started_at: datetime,
+    lookback_days: int | None = None,
+    max_pages: int | None = None,
+) -> list[dict[str, Any]]:
     """종목 하나를 검색어마다 최신순으로 검색
 
     검색어마다 읽다가 cutoff 보다 오래된 기사가 하나라도 나오면 그 페이지에서 멈춤. 검색어 사이에
-    겹치는 기사는 호출자의 URL 중복 제거가 거른다.
+    겹치는 기사는 호출자의 URL 중복 제거가 거른다. lookback_days·max_pages 가 None 이면 설정값.
     """
 
-    cutoff = collection_cutoff(query, run_started_at)
+    cutoff = collection_cutoff(query, run_started_at, lookback_days)
     collected: list[dict[str, Any]] = []
 
     for index, keyword in enumerate(build_search_queries(query)):
         if index > 0:
             time.sleep(get_news_settings().request_delay)
 
-        for page_items in iter_search_news_pages(keyword=keyword):
-            tag_query_companies(page_items, query, keyword)
+        for page_items in iter_search_news_pages(keyword=keyword, max_pages=max_pages):
+            tag_query_company(page_items, query, keyword)
             fresh, old = drop_older_than(page_items, cutoff)
             collected.extend(fresh)
 
@@ -236,7 +245,10 @@ def collect_stock_news(query: CompanyQuery, run_started_at: datetime) -> list[di
 
 
 def collect_company_news(
-    queries: list[CompanyQuery], run_started_at: datetime
+    queries: list[CompanyQuery],
+    run_started_at: datetime,
+    lookback_days: int | None = None,
+    max_pages: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[int]]:
     """기업 목록을 순회 수집한다. 기업 하나의 실패는 경고 후 건너뛰고, 전부 실패하면 올린다.
 
@@ -249,10 +261,10 @@ def collect_company_news(
 
     for index, query in enumerate(queries):
         try:
-            collected.extend(collect_stock_news(query, run_started_at))
+            collected.extend(collect_stock_news(query, run_started_at, lookback_days, max_pages))
         except NewsSearchError as e:
             failed_company_ids.append(query.company_id)
-            logging.warning(
+            logging.debug(
                 "종목 수집 실패(건너뜀): %s (company_id=%s): %s", query.name, query.company_id, e
             )
 

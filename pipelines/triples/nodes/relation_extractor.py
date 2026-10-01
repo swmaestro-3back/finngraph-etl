@@ -41,7 +41,7 @@ def build_candidate_frames(
     """
 
     # Anchor slots are the only ones checked against NER output. Product slots are free text.
-    entity_texts = {entity.text.strip() for entity in entities}
+    entity_by_text = {entity.text.strip(): entity for entity in entities}
     normalized_text = normalize_whitespace(text)
 
     frames: list[CandidateFrame] = []
@@ -53,7 +53,7 @@ def build_candidate_frames(
         # Discard if subject or object is not in extracted entities
         subject_text = raw_frame.subject.strip()
         object_text = raw_frame.object.strip()
-        if subject_text not in entity_texts or object_text not in entity_texts:
+        if subject_text not in entity_by_text or object_text not in entity_by_text:
             continue
 
         # Product slot: accept any span the article actually contains. The substring check is
@@ -77,8 +77,8 @@ def build_candidate_frames(
         frames.append(
             CandidateFrame(
                 predicate=raw_frame.predicate,
-                subject=Entity(text=subject_text),
-                object=Entity(text=object_text),
+                subject=entity_by_text[subject_text],
+                object=entity_by_text[object_text],
                 item=item,
                 source_sentence=source_sentence,
                 clause=clause,
@@ -121,8 +121,7 @@ class RelationExtractor:
         """
         Extract relation candidates from the article
         """
-        entity_lines = [f"- {entity.text}" for entity in entities]
-        entities_str = "\n".join(entity_lines) if entity_lines else "없음"
+        entities_str = "\n".join(f"- {entity.text}" for entity in entities)
 
         # The predicate dictionary and few-shot examples already live in PROMPT's fixed system
         # prefix, so text and entities are the only per-request variables.

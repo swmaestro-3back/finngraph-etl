@@ -73,15 +73,16 @@ def test_collection_cutoff(settings):
 
     stale = CompanyQuery(100, "엘앤에프", watermark=NOW - timedelta(days=400))
     assert collection_cutoff(stale, NOW) == lookback  # 워터마크가 lookback 보다 오래되면 lookback
+    assert collection_cutoff(QUERY, NOW, lookback_days=30) == NOW - timedelta(days=30)
 
 
-def test_tag_query_companies_sets_origin_and_keyword():
-    from pipelines.news.extractors.search_collector import tag_query_companies
+def test_tag_query_company_sets_origin_and_keyword():
+    from pipelines.news.extractors.search_collector import tag_query_company
 
     items = [{"title": "a"}, {"title": "b"}]
-    tag_query_companies(items, QUERY, "특징주,엘앤에프")
+    tag_query_company(items, QUERY, "특징주,엘앤에프")
 
-    assert items[0]["_query_companies"] == [{"company_id": 100, "name": "엘앤에프"}]
+    assert items[0]["_query_company"] == {"company_id": 100, "name": "엘앤에프"}
     assert items[1]["_search_keyword"] == "특징주,엘앤에프"
 
 
@@ -134,6 +135,23 @@ def test_collect_stock_news_reads_up_to_max_pages_when_all_fresh(settings, fake_
     assert len(items) == 300
 
 
+def test_collect_stock_news_overrides_max_pages_and_lookback(settings, fake_pages):
+    from pipelines.news.extractors.search_collector import collect_stock_news
+
+    pages, calls = fake_pages
+    for page_no in range(5):
+        pages[1 + page_no * 100] = [_raw(f"https://{page_no}/{i}", hours_ago=1) for i in range(100)]
+
+    items = collect_stock_news(QUERY, NOW, max_pages=5)
+    assert [start for _, start in calls] == [1, 101, 201, 301, 401]  # 설정 3 대신 인자 5
+    assert len(items) == 500
+
+    calls.clear()
+    pages[1] = [_raw("https://x/new", hours_ago=1), _raw("https://x/old", hours_ago=24 * 3)]
+    items = collect_stock_news(QUERY, NOW, lookback_days=2)
+    assert [i["link"] for i in items] == ["https://x/new"]  # 설정 180일 대신 2일로 자른다
+
+
 def test_collect_stock_news_short_page_ends_pagination(settings, fake_pages):
     from pipelines.news.extractors.search_collector import collect_stock_news
 
@@ -170,10 +188,10 @@ def test_collect_company_news_isolates_stock_failure(settings, monkeypatch):
     ok = CompanyQuery(company_id=100, name="엘앤에프")
     bad = CompanyQuery(company_id=200, name="에코프로")
 
-    def fake_collect(query, run_started_at):
+    def fake_collect(query, run_started_at, lookback_days, max_pages):
         if query is bad:
             raise NewsSearchError("boom")
-        return [{"title": "t", "_query_companies": []}]
+        return [{"title": "t", "_query_company": {"company_id": 100, "name": "엘앤에프"}}]
 
     monkeypatch.setattr(search_collector, "collect_stock_news", fake_collect)
 
@@ -187,7 +205,7 @@ def test_collect_company_news_raises_when_all_fail(settings, monkeypatch):
     from pipelines.news.extractors import search_collector
     from pipelines.news.extractors.search_collector import NewsSearchError, collect_company_news
 
-    def fake_collect(query, run_started_at):
+    def fake_collect(query, run_started_at, lookback_days, max_pages):
         raise NewsSearchError("boom")
 
     monkeypatch.setattr(search_collector, "collect_stock_news", fake_collect)
