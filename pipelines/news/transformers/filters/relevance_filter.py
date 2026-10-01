@@ -1,5 +1,5 @@
 """
-LLM 필터 - 관련 기사가 유효한 기사인지 판정하고 관련 종목을 추출
+LLM 필터 - 기사가 검색 대상 종목 하나에 대한 유효한 기사인지 판정
 """
 
 from __future__ import annotations
@@ -27,19 +27,12 @@ class ArticleVerdict(BaseModel):
     id: int = Field(description="입력의 [기사 N] 에서 N. 입력에 있는 번호만, 하나도 빠짐없이.")
     valid: bool = Field(
         description=(
-            "그 상장사가 주어나 목적어인 등록 predicate 관계(수주·공급·인수·투자·계약 등)가 "
-            "제목·요약에 명시되어 있거나(GATE 1), 그 상장사 자체의 사건(실적·유상증자·인허가·"
+            "대상 종목이 주어나 목적어인 등록 predicate 관계(수주·공급·인수·투자·계약 등)가 "
+            "제목·요약에 명시되어 있거나(GATE 1), 대상 종목 자체의 사건(실적·유상증자·인허가·"
             "소송·공시·증설 등)이 매출·비용·생산·공급·규제 등에 직접 영향을 주면(GATE 2) true. "
-            "둘 중 하나만 통과해도 true. 지수·타사·업황·거시 요인만으로 설명되는 시세 변동, "
-            "수혜주 전망, 여러 종목 나열, 광고·홍보, 기업과 무관한 기사면 false."
-        )
-    )
-    companies: list[str] = Field(
-        description=(
-            "그 기사의 후보 목록에서 글자 그대로 고른, 기사를 valid 로 만든 관계·사건의 당사자인 "
-            "상장사만. 시세 변동만 서술된 회사('~도 상한가', '~등 관련주 강세', 동반 강세, 비교 "
-            "대상, 업종 배경, 지나가며 언급된 거래처)는 넣지 않는다. "
-            "보통 1개, 관계의 양 당사자면 2개."
+            "둘 중 하나만 통과해도 true. 대상 종목이 시세 변동만 서술되거나 지나가며 언급된 기사, "
+            "지수·타사·업황·거시 요인만으로 설명되는 시세 변동, 수혜주 전망, 여러 종목 나열, "
+            "광고·홍보면 false."
         )
     )
 
@@ -55,7 +48,7 @@ class ArticleInput:
     id: int
     title: str
     description: str
-    candidates: tuple[str, ...]
+    company: str
 
 
 Judge = Callable[[list[ArticleInput]], Awaitable[BatchVerdict]]
@@ -65,7 +58,6 @@ Judge = Callable[[list[ArticleInput]], Awaitable[BatchVerdict]]
 class RelevanceResult:
     passed: list[dict[str, Any]] = field(default_factory=list)
     invalid: list[dict[str, Any]] = field(default_factory=list)
-    irrelevant: list[dict[str, Any]] = field(default_factory=list)
     failed: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -77,51 +69,11 @@ def load_system_prompt() -> str:
 def build_relevance_input(articles: list[ArticleInput]) -> str:
     blocks: list[str] = []
     for article in articles:
-        candidate_lines = (
-            "\n".join(f"- {name}" for name in article.candidates)
-            if article.candidates
-            else "- (없음)"
-        )
         blocks.append(
             f"[기사 {article.id}]\n제목: {article.title}\n요약: {article.description}\n"
-            f"후보 종목:\n{candidate_lines}"
+            f"대상 종목: {article.company}"
         )
     return "\n\n".join(blocks)
-
-
-def validate_subjects(subjects: list[str], candidates: list[str], title: str = "") -> list[str]:
-    """후보 밖 이름은 드랍하고 순서를 유지한 채 중복을 없앤다.
-
-    후보 밖 이름이 반복해서 뜨면 gazetteer 표면형 누락일 가능성이 크다 — 후보와 제목을 같이
-    남겨 LLM 추론인지 사전 누락인지 구분할 수 있게 한다.
-    """
-
-    allowed = set(candidates)
-    kept: list[str] = []
-    for name in subjects:
-        if name not in allowed:
-            logging.warning(
-                "후보 밖 종목명 드랍: %s (후보: %s / 제목: %s)", name, candidates, title
-            )
-            continue
-        if name in kept:
-            continue
-        kept.append(name)
-    return kept
-
-
-def apply_verdict(item: dict[str, Any], candidates: list[str], verdict: ArticleVerdict) -> str:
-    """판정을 기사에 적용하고 버킷 이름을 돌려준다. 통과 기사에 _subject_names 를 붙인다."""
-
-    if not verdict.valid:
-        return "invalid"
-
-    subjects = validate_subjects(verdict.companies, candidates, item.get("title", ""))
-    if not subjects:
-        return "irrelevant"
-
-    item["_subject_names"] = subjects
-    return "passed"
 
 
 def chunked(values: list, size: int) -> list[list]:
@@ -146,7 +98,7 @@ class RelevanceJudge:
         # langchain_aws 가 호출마다 찍는 "Using Bedrock Converse API ..." INFO 를 끈다
         logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 
-        # 판정 하나가 30~40 토큰이라 묶음 크기에 비례해 잡는다. 모자라면 응답이 잘려 검증에
+        # 판정 하나가 20 토큰 안팎이라 묶음 크기에 비례해 잡는다. 모자라면 응답이 잘려 검증에
         # 실패하고 묶음 전체가 개별 fallback 으로 떨어져 오히려 비싸진다.
         if max_tokens is None:
             max_tokens = max(DEFAULT_MAX_TOKENS, 64 * get_news_settings().news_llm_batch_size)
@@ -182,16 +134,16 @@ async def judge_items(
     inputs: list[ArticleInput] = []
 
     for index, item in enumerate(items):
-        candidates = tuple(item.get("_candidate_companies", []))
-        if not candidates:
-            buckets[index] = "irrelevant"
+        company = item.get("_query_company")
+        if not company:
+            buckets[index] = "invalid"
             continue
         inputs.append(
             ArticleInput(
                 id=index,
                 title=item.get("title", ""),
                 description=item.get("description", ""),
-                candidates=candidates,
+                company=company["name"],
             )
         )
 
@@ -233,18 +185,7 @@ async def judge_items(
             if verdict is None:
                 buckets[article.id] = "failed"
                 continue
-            try:
-                buckets[article.id] = apply_verdict(
-                    items[article.id], list(article.candidates), verdict
-                )
-            except Exception as e:
-                logging.warning(
-                    "관련성 판정 적용 실패(이번 런에서만 버림): title=%s, %s: %s",
-                    items[article.id].get("title", ""),
-                    type(e).__name__,
-                    e,
-                )
-                buckets[article.id] = "failed"
+            buckets[article.id] = "passed" if verdict.valid else "invalid"
 
         # 묶음은 동시에 돌아 완료 순서가 섞이므로 완료 수만 센다
         progress["batches"] += 1
