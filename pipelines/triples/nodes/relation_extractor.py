@@ -121,8 +121,7 @@ class RelationExtractor:
         """
         Extract relation candidates from the article
         """
-        entity_lines = [f"- {entity.text}" for entity in entities]
-        entities_str = "\n".join(entity_lines) if entity_lines else "없음"
+        entities_str = "\n".join(f"- {entity.text}" for entity in entities)
 
         # The predicate dictionary and few-shot examples already live in PROMPT's fixed system
         # prefix, so text and entities are the only per-request variables.
