@@ -41,8 +41,6 @@ class NewsSettings(BaseSettings):
     search_lookback_days: int = Field(default=180, validation_alias="NEWS_SEARCH_LOOKBACK_DAYS")
     # search_history.last_searched_at 이 이 간격을 넘긴 기업만 이번 런의 검색 대상이다.
     search_interval_hours: int = Field(default=2, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
-    # 런마다 검색할 급등락 테마 수. 상승 상위 절반 + 하락 상위 절반.
-    theme_count: int = Field(default=30, validation_alias="NEWS_THEME_COUNT")
     hot_themes_redis_url: str = Field(
         default="redis://localhost:16379/0", validation_alias="HOT_THEMES_REDIS_URL"
     )
@@ -78,10 +76,6 @@ class NewsSettings(BaseSettings):
     news_llm_max_concurrency: int = Field(default=4, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
     # 관련성 필터가 한 번의 LLM 호출에 넣는 기사 수. 시스템 프롬프트 반복과 요청 수를 줄인다.
     news_llm_batch_size: int = Field(default=10, validation_alias="NEWS_LLM_BATCH_SIZE")
-    news_llm_max_items_per_run: int = Field(
-        default=100,
-        validation_alias="NEWS_LLM_MAX_ITEMS_PER_RUN",
-    )
 
     @field_validator("anchor_host", mode="after")
     @classmethod

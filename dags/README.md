@@ -30,6 +30,7 @@ dags/
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/scheduled_pipeline.py` | `news_scheduled_pipeline` | `news`, `triples` | `0 6-18 * * *` (06~18시 매 정각) |
+| news | `news/backfill_krx300.py` | `news_backfill_krx300` | `news`, `triples`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각) |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
@@ -65,6 +66,14 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 
 > **배포 순서(테마 봉).** `V5__theme_candles.sql` 을 먼저 적용하고 `themes_backfill_candles` 를 장외 시간에 한 번 실행한다. V5 없이 배포하면 `calculate_theme_daily` 가 실패해 `etl://stocks/daily` 가 발행되지 않고 파생·핫테마·브리핑이 그날 멈춘다.
 
+종목·테마 봉 네 테이블의 `change_rate` 는 직전 봉 종가 대비 등락률(%)이다. 일봉은 직전 거래일,
+주봉·월봉은 직전 주·월 봉이 기준이고 첫 봉은 NULL 이다. 봉 적재와 분리된 태스크
+(`calculate_stock_change_rates`·`calculate_theme_change_rates`, 백필 DAG 는 `calculate_change_rates`)가
+적재 뒤에 다시 받은 구간 전체를 재계산한다. 테마는 체인 지수라 지수 종가의 비가 곧 구성 종목
+등락률의 가중 평균이다.
+
+> **배포 순서(등락률).** `V6__candle_change_rate.sql`(컬럼만 추가)을 코드보다 먼저 적용한다. V6 없이 배포하면 등락률 태스크가 실패해 `etl://stocks/daily` 가 발행되지 않는다. 기존 행은 `themes_backfill_candles` 와, 종목은 `pipelines.stocks.jobs.calculate_change_rates` 의 `run_daily`·`run_period` 를 과거 `since` 로 한 번 실행해 채운다(KIS 재수집 불필요).
+
 ```
 themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
   (일요일 23시)                                                  ├──► companies_sync_service_companies
@@ -88,8 +97,8 @@ news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters �
 위해서다. 뒤따르는 `extract_triples`는 `trigger_rule="all_done"`이라 그 스킵과 무관하게
 밀린 기사를 처리한다.
 
-`select_themes`가 최신 일봉 기준 급등락 테마(상승 상위 20 + 하락 상위 20, `NEWS_THEME_COUNT`)를
-고르고, `collect_articles`가 그 테마의 편입 기업을 검색한다(`특징주,{종목명}`·`{종목명}` 두 번, 최신순, 기업별
+`select_themes`가 백엔드가 Redis(`etl:hot-themes`, `HOT_THEMES_REDIS_URL`)에 발행한 핫테마를
+읽고 — 조회 실패·키 없음·기준일 불일치면 폴백 없이 태스크가 실패한다 — `collect_articles`가 그 테마의 편입 기업을 검색한다(`특징주,{종목명}`·`{종목명}` 두 번, 최신순, 기업별
 `search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
 `theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
 

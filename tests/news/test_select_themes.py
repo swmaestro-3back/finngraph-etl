@@ -2,18 +2,23 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+import redis
+
 from pipelines.news.jobs import select_themes as job
-from pipelines.news.repositories.hot_themes import HotThemes
-from pipelines.news.repositories.theme_changes import ThemeChange
+from pipelines.news.repositories.hot_themes import HotThemes, HotThemesUnavailableError
+
+
+def _raise(exc: Exception):
+    def raiser(*args, **kwargs):
+        raise exc
+
+    return raiser
 
 
 def test_explicit_theme_ids_bypass_everything(monkeypatch):
-    monkeypatch.setattr(
-        job, "fetch_hot_themes", lambda: (_ for _ in ()).throw(AssertionError("Redis 조회됨"))
-    )
-    monkeypatch.setattr(
-        job, "fetch_theme_changes", lambda as_of: (_ for _ in ()).throw(AssertionError("DB 조회됨"))
-    )
+    monkeypatch.setattr(job, "fetch_hot_themes", _raise(AssertionError("Redis 조회됨")))
+    monkeypatch.setattr(job, "fetch_latest_trade_date", _raise(AssertionError("DB 조회됨")))
 
     assert job.run([12, "34"]) == [12, 34]
 
@@ -22,59 +27,34 @@ def test_uses_backend_hot_themes_when_trade_date_matches(monkeypatch):
     d = date(2026, 9, 11)
     monkeypatch.setattr(job, "fetch_hot_themes", lambda: HotThemes(d, [7, 3, 9]))
     monkeypatch.setattr(job, "fetch_latest_trade_date", lambda as_of: d)
-    monkeypatch.setattr(
-        job, "fetch_theme_changes", lambda as_of: (_ for _ in ()).throw(AssertionError("폴백됨"))
-    )
 
     assert job.run(None) == [7, 3, 9]
+    assert job.run([]) == [7, 3, 9]
 
 
-def test_falls_back_when_hot_themes_stale(monkeypatch):
+def test_fails_when_hot_themes_stale(monkeypatch):
     monkeypatch.setattr(job, "fetch_hot_themes", lambda: HotThemes(date(2026, 9, 10), [7, 3, 9]))
     monkeypatch.setattr(job, "fetch_latest_trade_date", lambda as_of: date(2026, 9, 11))
-    monkeypatch.setattr(
-        job,
-        "fetch_theme_changes",
-        lambda as_of: [ThemeChange(1, "a", date(2026, 9, 11), 5.0, 5)],
-    )
 
-    assert job.run(None) == [1]
+    with pytest.raises(HotThemesUnavailableError, match="기준일 불일치"):
+        job.run(None)
 
 
-def test_falls_back_when_hot_themes_trade_date_null(monkeypatch):
+def test_fails_when_hot_themes_trade_date_null(monkeypatch):
     monkeypatch.setattr(job, "fetch_hot_themes", lambda: HotThemes(None, [7]))
     monkeypatch.setattr(job, "fetch_latest_trade_date", lambda as_of: date(2026, 9, 11))
-    monkeypatch.setattr(
-        job,
-        "fetch_theme_changes",
-        lambda as_of: [ThemeChange(1, "a", date(2026, 9, 11), 5.0, 5)],
-    )
 
-    assert job.run(None) == [1]
+    with pytest.raises(HotThemesUnavailableError, match="기준일 불일치"):
+        job.run(None)
 
 
-def test_selects_momentum_themes_from_latest_candles(monkeypatch):
-    from pipelines.news import config
+def test_propagates_hot_themes_fetch_failure(monkeypatch):
+    monkeypatch.setattr(job, "fetch_latest_trade_date", _raise(AssertionError("DB 조회됨")))
 
-    monkeypatch.setenv("NEWS_THEME_COUNT", "2")
-    config.get_news_settings.cache_clear()
-    monkeypatch.setattr(job, "fetch_hot_themes", lambda: None)
-    seen: list[date] = []
+    monkeypatch.setattr(job, "fetch_hot_themes", _raise(redis.ConnectionError("down")))
+    with pytest.raises(redis.ConnectionError):
+        job.run(None)
 
-    def fake_fetch(as_of):
-        seen.append(as_of)
-        d = date(2026, 9, 11)
-        return [
-            ThemeChange(1, "a", d, 5.0, 5),
-            ThemeChange(2, "b", d, -3.0, 5),
-            ThemeChange(3, "c", d, 1.0, 5),
-        ]
-
-    monkeypatch.setattr(job, "fetch_theme_changes", fake_fetch)
-    try:
-        assert job.run([]) == [1, 2]
-        assert job.run(None) == [1, 2]
-    finally:
-        config.get_news_settings.cache_clear()
-
-    assert len(seen) == 2 and all(isinstance(d, date) for d in seen)
+    monkeypatch.setattr(job, "fetch_hot_themes", _raise(HotThemesUnavailableError("키 없음")))
+    with pytest.raises(HotThemesUnavailableError):
+        job.run(None)

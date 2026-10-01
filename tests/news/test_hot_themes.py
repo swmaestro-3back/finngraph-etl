@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date
 
+import pytest
 import redis
 
 from pipelines.news.repositories import hot_themes as repo
@@ -68,19 +69,28 @@ def test_fetch_returns_parsed_payload(monkeypatch):
 
     fetched = repo.fetch_hot_themes()
 
-    assert fetched is not None and fetched.theme_ids == [12, 34]
+    assert fetched.theme_ids == [12, 34]
 
 
-def test_fetch_falls_back_to_none_when_key_missing(monkeypatch):
+def test_fetch_raises_when_key_missing(monkeypatch):
     monkeypatch.setattr(repo.redis.Redis, "from_url", lambda *a, **k: FakeRedis(None))
 
-    assert repo.fetch_hot_themes() is None
+    with pytest.raises(repo.HotThemesUnavailableError, match="키 없음"):
+        repo.fetch_hot_themes()
 
 
-def test_fetch_falls_back_to_none_on_redis_error(monkeypatch):
+def test_fetch_raises_when_payload_invalid(monkeypatch):
+    monkeypatch.setattr(repo.redis.Redis, "from_url", lambda *a, **k: FakeRedis("not-json"))
+
+    with pytest.raises(repo.HotThemesUnavailableError, match="파싱 실패"):
+        repo.fetch_hot_themes()
+
+
+def test_fetch_propagates_redis_error(monkeypatch):
     def raise_error(*a, **k):
         raise redis.ConnectionError("down")
 
     monkeypatch.setattr(repo.redis.Redis, "from_url", raise_error)
 
-    assert repo.fetch_hot_themes() is None
+    with pytest.raises(redis.ConnectionError):
+        repo.fetch_hot_themes()
