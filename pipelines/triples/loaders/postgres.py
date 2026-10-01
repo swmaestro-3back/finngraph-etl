@@ -90,10 +90,10 @@ def insert_news_companies(news_id: int, company_ids: list[int]) -> int:
     return inserted_count
 
 
-def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]]:
+def fetch_unprocessed_triple_news_items() -> list[dict[str, Any]]:
     """
     Triple ETL에서 사용.
-    삼중항 추출이 아직 시도되지 않은(triple_extracted IS NULL) 뉴스를 조회한다.
+    삼중항 추출이 아직 시도되지 않은(triple_extracted IS NULL) 뉴스를 상한 없이 전량 조회한다.
     추출 중 예외가 난 뉴스는 NULL로 남아 다음 런에서 자동 재시도된다.
     """
 
@@ -106,12 +106,11 @@ def fetch_unprocessed_triple_news_items(limit: int = 100) -> list[dict[str, Any]
         WHERE triple_extracted IS NULL
           AND text IS NOT NULL
           AND BTRIM(text) <> ''
-        ORDER BY id ASC
-        LIMIT :limit;
+        ORDER BY id ASC;
     """
 
     with session_scope() as session:
-        rows = session.execute(text(query), {"limit": limit}).fetchall()
+        rows = session.execute(text(query)).fetchall()
 
         return [
             {"news_id": int(news_id), "text": news_text, "mentioned_at": mentioned_at}

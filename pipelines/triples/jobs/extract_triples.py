@@ -23,8 +23,6 @@ from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)
 
-DEFAULT_LIMIT = 200
-
 
 async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     """
@@ -83,12 +81,12 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     return "has_triples" if has_triplets else "no_triples"
 
 
-async def extract_unprocessed_triples(limit: int = DEFAULT_LIMIT) -> dict[str, int]:
+async def extract_unprocessed_triples() -> dict[str, int]:
     """
-    미처리(material) 뉴스를 폴링해 트리플을 추출하고 원장·그래프에 적재
+    미처리(material) 뉴스를 전량 폴링해 트리플을 추출하고 원장·그래프에 적재
     """
 
-    items = fetch_unprocessed_triple_news_items(limit=limit)
+    items = fetch_unprocessed_triple_news_items()
 
     stats = {"fetched": len(items), "has_triples": 0, "no_triples": 0, "failed": 0}
 

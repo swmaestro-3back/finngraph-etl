@@ -70,8 +70,7 @@ SELECT_UNSUMMARIZED_NEWS_SQL = text(
        AND (summary IS NULL OR BTRIM(summary) = '')
        AND text IS NOT NULL
        AND BTRIM(text) <> ''
-     ORDER BY id ASC
-     LIMIT :limit;
+     ORDER BY id ASC;
     """
 )
 
@@ -352,10 +351,11 @@ def remove_stored_by_url(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
-def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
+def fetch_unsummarized_news_items() -> list[dict[str, Any]]:
+    """요약 대상 전량. 런마다 상한 없이 밀린 기사를 모두 처리한다."""
 
     with session_scope() as session:
-        rows = session.execute(SELECT_UNSUMMARIZED_NEWS_SQL, {"limit": limit}).fetchall()
+        rows = session.execute(SELECT_UNSUMMARIZED_NEWS_SQL).fetchall()
 
         items = []
 
