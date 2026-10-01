@@ -90,6 +90,13 @@ if dag and task:
             start, _ = _window(params)
             return run_period(since=start, theme_ids=params["theme_ids"] or None)
 
-        backfill_theme_daily() >> backfill_theme_period()
+        @task(retries=1)
+        def calculate_change_rates(params: dict) -> int:
+            from pipelines.themes.jobs.calculate_theme_candles import run_change_rates
+
+            start, _ = _window(params)
+            return run_change_rates(since=start, theme_ids=params["theme_ids"] or None)
+
+        backfill_theme_daily() >> backfill_theme_period() >> calculate_change_rates()
 
     themes_backfill_candles()

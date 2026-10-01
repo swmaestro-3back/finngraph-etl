@@ -7,6 +7,8 @@
 테마 지수는 매시간 최근 lookback(기본 10일) 구간의 테마 일봉을 다시 계산한다. 종목 일봉
 수집도 같은 창을 다시 받으므로 창을 맞춘다. 실제로 값이 바뀌는 행은 대개 당일뿐이다. 그 일봉으로
 테마 주·월봉도 갱신한다. 테마 계산은 KIS 를 호출하지 않아 종목 기간봉 합성과 병렬로 둔다.
+
+등락률(change_rate)은 봉 적재와 분리된 태스크가 각 갈래 끝에서 다시 계산한다.
 """
 
 from __future__ import annotations
@@ -71,8 +73,25 @@ if dag and task:
             since = now_kst().date() - timedelta(days=get_settings().theme_daily_lookback_days)
             return run_period(since=since)
 
+        @task(retries=1)
+        def calculate_stock_change_rates() -> int:
+            from pipelines.stocks.jobs.calculate_change_rates import run_daily, run_period
+
+            return run_daily() + run_period()
+
+        @task(retries=1)
+        def calculate_theme_change_rates() -> int:
+            from pipelines.themes.jobs.calculate_theme_candles import run_change_rates
+
+            return run_change_rates()
+
         candles = check_market_open() >> collect_daily_candles()
-        candles >> aggregate_period_candles()
-        candles >> calculate_theme_daily() >> aggregate_theme_period()
+        candles >> aggregate_period_candles() >> calculate_stock_change_rates()
+        (
+            candles
+            >> calculate_theme_daily()
+            >> aggregate_theme_period()
+            >> calculate_theme_change_rates()
+        )
 
     stocks_intraday_candles()
