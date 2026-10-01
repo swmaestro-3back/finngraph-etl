@@ -22,16 +22,18 @@ class NewsSettings(BaseSettings):
     search_display: int = Field(default=100, validation_alias="SEARCH_DISPLAY")
     # 최신순. 테마 last_searched_at 을 워터마크로 삼아 페이지를 멈추려면 날짜 순이어야 한다.
     search_sort: str = Field(default="date", validation_alias="SEARCH_SORT")
-    # 종목명으로 실제 검색어를 만드는 서식. "특징주,{name}" 은 개별 종목 시세 기사만 고른다.
-    search_query_template: str = Field(
-        default="특징주,{name}", validation_alias="NEWS_SEARCH_QUERY_TEMPLATE"
+    # 종목명으로 실제 검색어를 만드는 서식 목록. 기업마다 서식 수만큼 검색한다.
+    # "특징주,{name}" 은 개별 종목 시세 기사를, "{name}" 은 그 밖의 기업 기사를 고른다.
+    # env 는 JSON 배열로 준다 (예: ["특징주,{name}","{name}"]).
+    search_query_templates: list[str] = Field(
+        default=["특징주,{name}", "{name}"], validation_alias="NEWS_SEARCH_QUERY_TEMPLATES"
     )
     # 종목당 페이지 상한. 워터마크보다 오래된 기사가 나오면 그 전에 멈춘다.
     search_max_pages: int = Field(default=3, validation_alias="NEWS_SEARCH_MAX_PAGES")
     # 워터마크가 없는 종목(첫 검색)은 이 일수까지만 거슬러 수집한다.
     search_lookback_days: int = Field(default=180, validation_alias="NEWS_SEARCH_LOOKBACK_DAYS")
     # search_history.last_searched_at 이 이 간격을 넘긴 기업만 이번 런의 검색 대상이다.
-    search_interval_hours: int = Field(default=4, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
+    search_interval_hours: int = Field(default=2, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
     # 런마다 검색할 급등락 테마 수. 상승 상위 절반 + 하락 상위 절반.
     theme_count: int = Field(default=30, validation_alias="NEWS_THEME_COUNT")
     hot_themes_redis_url: str = Field(

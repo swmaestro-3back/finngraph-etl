@@ -28,7 +28,7 @@ def settings(monkeypatch):
 
     monkeypatch.setenv("SEARCH_DISPLAY", "100")
     monkeypatch.setenv("SEARCH_SORT", "date")
-    monkeypatch.setenv("NEWS_SEARCH_QUERY_TEMPLATE", "특징주,{name}")
+    monkeypatch.setenv("NEWS_SEARCH_QUERY_TEMPLATES", '["특징주,{name}"]')
     monkeypatch.setenv("NEWS_SEARCH_MAX_PAGES", "3")
     monkeypatch.setenv("NEWS_SEARCH_LOOKBACK_DAYS", "180")
     monkeypatch.setenv("REQUEST_DELAY", "0")
@@ -53,10 +53,15 @@ def fake_pages(monkeypatch):
     return pages, calls
 
 
-def test_build_search_query_uses_template(settings):
-    from pipelines.news.extractors.search_collector import build_search_query
+def test_build_search_queries_uses_templates(settings, monkeypatch):
+    from pipelines.news import config
+    from pipelines.news.extractors.search_collector import build_search_queries
 
-    assert build_search_query(QUERY) == "특징주,엘앤에프"
+    assert build_search_queries(QUERY) == ["특징주,엘앤에프"]
+
+    monkeypatch.setenv("NEWS_SEARCH_QUERY_TEMPLATES", '["특징주,{name}","{name}"]')
+    config.get_news_settings.cache_clear()
+    assert build_search_queries(QUERY) == ["특징주,엘앤에프", "엘앤에프"]
 
 
 def test_collection_cutoff(settings):
@@ -139,6 +144,23 @@ def test_collect_stock_news_short_page_ends_pagination(settings, fake_pages):
 
     assert len(items) == 40
     assert [start for _, start in calls] == [1]
+
+
+def test_collect_stock_news_searches_each_template(settings, fake_pages, monkeypatch):
+    from pipelines.news import config
+    from pipelines.news.extractors.search_collector import collect_stock_news
+
+    monkeypatch.setenv("NEWS_SEARCH_QUERY_TEMPLATES", '["특징주,{name}","{name}"]')
+    config.get_news_settings.cache_clear()
+
+    pages, calls = fake_pages
+    pages[1] = [_raw(f"https://a/{i}", hours_ago=0.5) for i in range(40)]
+
+    items = collect_stock_news(MARKED, NOW)
+
+    assert calls == [("특징주,엘앤에프", 1), ("엘앤에프", 1)]
+    assert len(items) == 80  # 같은 기사도 검색어별로 태깅되고, 중복은 호출자가 URL 로 거른다
+    assert {i["_search_keyword"] for i in items} == {"특징주,엘앤에프", "엘앤에프"}
 
 
 def test_collect_company_news_isolates_stock_failure(settings, monkeypatch):
