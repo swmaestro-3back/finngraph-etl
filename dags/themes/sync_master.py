@@ -50,6 +50,12 @@ if dag and task:
 
             run(merged_path)
 
+        @task
+        def embed_themes() -> None:
+            from pipelines.themes.jobs.embed_themes import run
+
+            run()
+
         # SOURCE별 task를 생성해 병렬 실행 fan-out
         extracted = [
             extract_source.override(task_id=f"extract_{source}")(source) for source in SOURCES
@@ -61,6 +67,7 @@ if dag and task:
         postgres_loaded = load_postgres(merged)
         neo4j_loaded = load_neo4j(merged)
 
-        postgres_loaded >> neo4j_loaded
+        # 임베딩은 Neo4j 의 Theme 노드·BELONGS_TO 간선에 쓰므로 Neo4j 적재 뒤 마지막에 돈다.
+        postgres_loaded >> neo4j_loaded >> embed_themes()
 
     themes_sync_master()

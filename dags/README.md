@@ -69,13 +69,14 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
   (일요일 23시)                                                  ├──► companies_sync_service_companies
   extract_judal → merge_themes (naver 는 사이트 개편으로 제외)                   │      (AssetAny: 둘 중 하나만 갱신돼도 기동)
-    → (load_neo4j ∥ load_postgres) → embed_themes                │
+    → load_postgres → load_neo4j → embed_themes                  │
 companies_sync_master ───────────► etl://companies/linked ──────┘
 ```
 
 `themes_sync_master`에서 Asset을 발행하는 task는 `load_postgres` 하나다 — 수집 대상 파생은
 RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 기다릴 이유가 없다. `embed_themes`는
-`load_neo4j` 뒤에만 걸려 있어 `load_postgres`와는 독립적으로 실패·재시도된다.
+맨 마지막(`load_neo4j` 뒤)에 돌고, Asset 발행 이후라 실패해도 수집 대상 파생을 막지 않는다.
+임베딩이 없는 노드·간선만 대상이라 재시도는 남은 분량부터 이어서 채운다.
 
 ```
 news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters ──► events_promote_clusters
