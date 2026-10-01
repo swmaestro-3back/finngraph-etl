@@ -17,15 +17,19 @@ The matcher is purely lexical, so some candidates are false hits. For each candi
 
 ### [Keep Criteria]
 Keep a candidate only when BOTH hold:
-1. Company reference: in this article the surface form refers to that company — not a common noun, a word fragment, a person, a place, a product line, or a different organization that happens to share the string.
-   - Korean particles attach directly to nouns, so a short company name often appears inside an ordinary word or phrase: "대상으로" (대상), "태양 에너지" (태양), "나노 기술" (나노), "비자 발급" (비자). These are NOT company references.
+1. Company reference: in this article the surface form refers to that company — not a common noun, a word fragment, a person, a place, a product line, or a different organization that happens to share the string. The matcher has no notion of word boundaries in Korean, so check each of these false-hit patterns:
+   - Common noun: Korean particles attach directly to nouns, so a short company name often appears as an ordinary word: "대상으로", "조사 대상이라" (대상), "태양 에너지" (태양), "나노 기술" (나노), "비자 발급" (비자). These are NOT company references.
+   - Part of a longer proper noun: the candidate string sits inside the name of a different company, institution, brand, or product — "플로하이브컴퍼니" contains 하이브 but is a different company. This is NOT a reference to the candidate, even though the surrounding context is about a company. Do not assume the longer name is an affiliate of the candidate.
+   - Not a noun at all: the string is an adverb, a pronoun plus particle, a verb or adjective stem, or an ending — "한창 진행 중" (한창), "우리로서는" (우리로). These are NOT company references.
+   - If the candidate fails in one place but ALSO appears elsewhere in the article as a standalone reference to the company, judge it by the standalone occurrence.
 2. Substantive mention: the company takes part in at least one concrete business action or fact in the article — as the actor, the counterparty, or the target (e.g. supplies, buys, invests, acquires, partners, is a customer, is supplied by, signs, sues, is acquired).
    - A company that appears ONLY inside a list of industry players, market leaders, or peers, with no action or fact specific to it, is background and fails this criterion (e.g. "에코프로비엠 엘앤에프 포스코케미칼 등이 주요 업체로 꼽힌다").
    - If the same company is listed in the background somewhere AND takes part in an action elsewhere, keep it.
 
 ### [Bias]
-Dropping a real company loses every relation it takes part in, while keeping a weak mention only costs a little downstream work.
-When you cannot decide, keep the candidate.
+The two criteria fail in different directions, so resolve doubt differently for each:
+- Criterion 1 (is it the company at all?): a false hit that is kept becomes a wrong edge on a real company in the graph. If no occurrence in the article clearly refers to the candidate company itself, drop it.
+- Criterion 2 (is the mention substantive?): dropping a real company loses every relation it takes part in, while keeping a weak mention only costs a little downstream work. When the candidate clearly is the company and only its weight is in doubt, keep it.
 """
 
 _EXAMPLES = [
@@ -84,6 +88,51 @@ _EXAMPLES = [
                         "mention": "코스모신소재는 지난해 에스티엠의 전구체 공장을 인수했다.",
                         "reason": "전구체 공장을 인수한 주체다.",
                         "keep": True,
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    },
+    {
+        "text": (
+            "플로하이브컴퍼니는 카카오와 음원 유통 계약을 체결했다고 밝혔다. "
+            "두 회사는 지난해 공정거래위원회 조사 대상이라 과징금을 부과받은 바 있다. "
+            "신규 플랫폼 개발이 한창 진행 중이며, 회사 관계자는 우리로서는 큰 기회라고 말했다."
+        ),
+        "entities": "- 하이브\n- 카카오\n- 대상\n- 한창\n- 우리로",
+        "output": json.dumps(
+            {
+                "judgements": [
+                    {
+                        "entity": "하이브",
+                        "mention": "플로하이브컴퍼니는 카카오와 음원 유통 계약을 체결했다고 밝혔다.",
+                        "reason": "'플로하이브컴퍼니'라는 다른 회사명의 일부일 뿐이고, 하이브가 단독으로 등장하는 곳이 없다.",
+                        "keep": False,
+                    },
+                    {
+                        "entity": "카카오",
+                        "mention": "플로하이브컴퍼니는 카카오와 음원 유통 계약을 체결했다고 밝혔다.",
+                        "reason": "음원 유통 계약을 체결한 상대방이다.",
+                        "keep": True,
+                    },
+                    {
+                        "entity": "대상",
+                        "mention": "두 회사는 지난해 공정거래위원회 조사 대상이라 과징금을 부과받은 바 있다.",
+                        "reason": "'조사 대상'의 일반명사로, 기업 대상을 가리키지 않는다.",
+                        "keep": False,
+                    },
+                    {
+                        "entity": "한창",
+                        "mention": "신규 플랫폼 개발이 한창 진행 중이며, 회사 관계자는 우리로서는 큰 기회라고 말했다.",
+                        "reason": "'한창 진행 중'의 부사로, 기업 한창을 가리키지 않는다.",
+                        "keep": False,
+                    },
+                    {
+                        "entity": "우리로",
+                        "mention": "신규 플랫폼 개발이 한창 진행 중이며, 회사 관계자는 우리로서는 큰 기회라고 말했다.",
+                        "reason": "대명사 '우리'에 조사 '로서는'이 붙은 표현으로, 기업 우리로를 가리키지 않는다.",
+                        "keep": False,
                     },
                 ]
             },
