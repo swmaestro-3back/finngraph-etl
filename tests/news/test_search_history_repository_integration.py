@@ -14,6 +14,7 @@ from sqlalchemy import text
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.repositories.search_history import (
     fetch_due_company_queries,
+    fetch_due_krx300_queries,
     mark_companies_searched,
 )
 
@@ -96,6 +97,7 @@ def theme_with_stocks():
 
     yield {
         "theme_ids": [int(theme_a), int(theme_b)],
+        "common_stock_id": int(common_stock_id),
         "company_id": int(company_id),
         "common_name": f"통합테스트종목{tag}",
     }
@@ -182,3 +184,27 @@ def test_watermark_follows_last_searched_at(theme_with_stocks):
 
 def test_mark_with_empty_list_touches_nothing():
     assert mark_companies_searched([], _now()) == 0
+
+
+def test_krx300_fetch_reads_only_flagged_stocks_of_given_companies(theme_with_stocks):
+    company_id = theme_with_stocks["company_id"]
+
+    # 플래그 전에는 대상이 아니다
+    assert fetch_due_krx300_queries(2, _now(), [company_id]).queries == []
+
+    with session_scope() as session:
+        session.execute(
+            text("UPDATE stocks SET krx300 = true WHERE id = :id"),
+            {"id": theme_with_stocks["common_stock_id"]},
+        )
+
+    batch = fetch_due_krx300_queries(2, _now(), [company_id])
+    assert [(q.company_id, q.name) for q in batch.queries] == [
+        (company_id, theme_with_stocks["common_name"])
+    ]
+    # 전체 조회에도 들어 있다
+    assert _mine(fetch_due_krx300_queries(2, _now()), company_id)
+
+    # 간격 안에 검색했으면 빠진다
+    mark_companies_searched([company_id], _now())
+    assert fetch_due_krx300_queries(2, _now(), [company_id]).queries == []

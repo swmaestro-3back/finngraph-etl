@@ -1,8 +1,8 @@
 """search_history 테이블 읽기·쓰기.
 
-읽기: 인자로 받은 테마의 편입 종목을 기업 단위로 모으고, search_history 의 마지막 검색
-시각이 재검색 간격을 넘긴 기업만 CompanyQuery 로 만든다 — news_scheduled_pipeline 의 쿼리
-원천이다. 쓰기: 검색을 마친 기업의 last_searched_at 을 갱신한다.
+읽기: 인자로 받은 테마의 편입 종목(news_scheduled_pipeline) 또는 KRX300 종목(news_backfill_krx300)
+을 기업 단위로 모으고, search_history 의 마지막 검색 시각이 재검색 간격을 넘긴 기업만
+CompanyQuery 로 만든다. 쓰기: 검색을 마친 기업의 last_searched_at 을 갱신한다.
 """
 
 from __future__ import annotations
@@ -24,6 +24,20 @@ SELECT_THEME_COMPANIES_SQL = text(
       JOIN stocks s ON s.id = ts.stock_id AND s.is_active
       LEFT JOIN search_history sh ON sh.company_id = s.company_id
      WHERE ts.theme_id = ANY(:theme_ids)
+     ORDER BY s.company_id NULLS LAST, s.id;
+    """
+)
+
+# KRX300 편입 종목과 그 기업의 마지막 검색 시각. company_ids 가 NULL 이면 전체, 주면 그
+# 기업만 — 백필은 전체로 청크를 나누고, 청크 태스크가 자기 기업만 다시 읽는다.
+SELECT_KRX300_COMPANIES_SQL = text(
+    """
+    SELECT s.company_id, s.name, sh.last_searched_at
+      FROM stocks s
+      LEFT JOIN search_history sh ON sh.company_id = s.company_id
+     WHERE s.is_active
+       AND s.krx300
+       AND (CAST(:company_ids AS BIGINT[]) IS NULL OR s.company_id = ANY(:company_ids))
      ORDER BY s.company_id NULLS LAST, s.id;
     """
 )
@@ -113,6 +127,21 @@ def fetch_due_company_queries(
         rows = session.execute(SELECT_THEME_COMPANIES_SQL, {"theme_ids": unique_ids}).fetchall()
 
     return group_company_rows(unique_ids, [tuple(row) for row in rows], interval_hours, now)
+
+
+def fetch_due_krx300_queries(
+    interval_hours: int, now: datetime, company_ids: list[int] | None = None
+) -> CompanyQueryBatch:
+    """KRX300 편입 기업 중 재검색 시점이 된 기업 조회. company_ids 를 주면 그 기업으로 좁힌다."""
+
+    ids = (
+        sorted({int(company_id) for company_id in company_ids}) if company_ids is not None else None
+    )
+
+    with session_scope() as session:
+        rows = session.execute(SELECT_KRX300_COMPANIES_SQL, {"company_ids": ids}).fetchall()
+
+    return group_company_rows([], [tuple(row) for row in rows], interval_hours, now)
 
 
 def mark_companies_searched(company_ids: list[int], searched_at: datetime) -> int:

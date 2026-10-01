@@ -23,7 +23,9 @@ from pipelines.news.repositories.news_clusters import (
 )
 from pipelines.news.repositories.news_companies import link_saved_items
 from pipelines.news.repositories.search_history import (
+    CompanyQuery,
     fetch_due_company_queries,
+    fetch_due_krx300_queries,
     mark_companies_searched,
 )
 from pipelines.news.transformers.cluster_titler import title_clusters
@@ -32,7 +34,9 @@ from pipelines.news.transformers.clustering import (
     batch_documents,
     seed_window,
 )
-from pipelines.news.transformers.company_candidates import attach_candidate_companies
+from pipelines.news.transformers.filters.company_mention_filter import (
+    drop_query_company_unmentioned,
+)
 from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
 from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
 from pipelines.news.transformers.filters.relevance_filter import filter_relevant_news
@@ -60,15 +64,57 @@ def run(theme_ids: list[int]) -> dict[str, int]:
         sum(1 for q in batch.queries if q.watermark is None),
     )
 
-    if not batch.queries:
+    return collect(batch.queries, run_started_at)
+
+
+def run_krx300(
+    company_ids: list[int],
+    lookback_days: int | None = None,
+    max_pages: int | None = None,
+) -> dict[str, int]:
+    """KRX300 기업 중 company_ids 에 든, 재검색 시점이 된 기업의 뉴스 수집 (news_backfill_krx300).
+
+    lookback_days·max_pages 로 수집 창을 넓힌다. None 이면 스케줄 런과 같은 설정값이다.
+    """
+
+    validate_search_settings()
+    settings = get_news_settings()
+    run_started_at = datetime.now(SEOUL_TIMEZONE)
+
+    # 1. KRX300 기업 중 search_history 기준 재검색 시점이 된 기업 조회
+    batch = fetch_due_krx300_queries(settings.search_interval_hours, run_started_at, company_ids)
+    logger.info(
+        "[대상] KRX300 기업 %d개 → 검색 기업 %d개 (간격 미도래 %d, 첫 검색 %d)",
+        len(company_ids),
+        len(batch.queries),
+        batch.skipped_not_due,
+        sum(1 for q in batch.queries if q.watermark is None),
+    )
+
+    return collect(batch.queries, run_started_at, lookback_days, max_pages)
+
+
+def collect(
+    queries: list[CompanyQuery],
+    run_started_at: datetime,
+    lookback_days: int | None = None,
+    max_pages: int | None = None,
+) -> dict[str, int]:
+    """검색 대상 기업의 기사를 수집해 필터·클러스터·저장하고 search_history 를 마킹한다."""
+
+    settings = get_news_settings()
+
+    if not queries:
         return {"created": 0, "updated": 0, "failed": 0}
 
     # 2. 네이버 기사 수집
-    collected, failed_company_ids = collect_company_news(batch.queries, run_started_at)
+    collected, failed_company_ids = collect_company_news(
+        queries, run_started_at, lookback_days, max_pages
+    )
     logger.info(
         "[수집] 기사 %d건 (기업 %d개 중 실패 %d개%s)",
         len(collected),
-        len(batch.queries),
+        len(queries),
         len(failed_company_ids),
         f": {failed_company_ids}" if failed_company_ids else "",
     )
@@ -97,8 +143,13 @@ def run(theme_ids: list[int]) -> dict[str, int]:
         len(new_items),
     )
 
-    # 7. 후보 상장사 부착 (gazetteer 활용)
-    attach_candidate_companies(new_items)
+    # 7. 검색 대상 종목명이 제목·스니펫에 없는 기사 제거
+    new_items, unmentioned = drop_query_company_unmentioned(new_items)
+    logger.info(
+        "[종목명] 제목·스니펫에 검색 종목명 있음 %d / 없음 제거 %d",
+        len(new_items),
+        len(unmentioned),
+    )
 
     # 8. LLM 관련성 필터
     relevance = filter_relevant_news(new_items, max_concurrency=settings.news_llm_max_concurrency)
@@ -108,10 +159,9 @@ def run(theme_ids: list[int]) -> dict[str, int]:
         )
     passed = relevance.passed
     logger.info(
-        "[LLM] 통과 %d / 무효 %d / 무관 %d / 실패 %d",
+        "[LLM] 통과 %d / 무효 %d / 실패 %d",
         len(passed),
         len(relevance.invalid),
-        len(relevance.irrelevant),
         len(relevance.failed),
     )
 
@@ -181,20 +231,20 @@ def run(theme_ids: list[int]) -> dict[str, int]:
         len(untitled) - len(titles),
     )
 
-    # 14. 기업 연결 — 주체 종목명을 company_id 로 해석해 news_companies 에
+    # 14. 기업 연결 — 검색 대상 기업을 news_companies 에
     linked = link_saved_items(storable)
 
     # 15. 기업 최신 검색 기록 갱신
-    searched = [q.company_id for q in batch.queries if q.company_id not in failed_company_ids]
+    searched = [q.company_id for q in queries if q.company_id not in failed_company_ids]
     marked = mark_companies_searched(searched, run_started_at)
     logger.info(
-        "[기록] 클러스터 생성 %d / 갱신 %d / 실패 %d, 기업 연결 %d행 (해석 실패 %d), "
+        "[기록] 클러스터 생성 %d / 갱신 %d / 실패 %d, 기업 연결 %d행 (실패 %d), "
         "검색 기록 %d개 기업",
         cluster_result["created"],
         cluster_result["updated"],
         cluster_result["failed"],
         linked["rows"],
-        linked["unresolved_names"],
+        linked["failed"],
         marked,
     )
 
