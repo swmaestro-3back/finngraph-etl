@@ -19,13 +19,14 @@ from pipelines.stocks.loaders.candles import upsert_daily_candles
 from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import StockTicker
 from pipelines.stocks.types import DailyCandle
-from pipelines.themes.jobs.calculate_theme_candles import run_daily, run_period
+from pipelines.themes.jobs.calculate_theme_candles import run_change_rates, run_daily, run_period
 from pipelines.themes.loaders.candles import (
     fetch_anchors,
     fetch_constituent_candles,
     fetch_theme_ids,
     fetch_trading_calendar,
     rebuild_theme_period_candles,
+    refresh_theme_change_rates,
     upsert_theme_daily_candles,
 )
 from pipelines.themes.types import ThemeCandle
@@ -339,3 +340,98 @@ def test_run_daily_isolates_theme_failure_and_raises(monkeypatch: pytest.MonkeyP
 
     assert _theme_rows(t1) == [(D2, Decimal("1050.0000"))]
     assert _theme_rows(t2) == []
+
+
+def _change_rates(table: str, date_column: str, theme_id: int, period: str | None = None) -> list:
+    with session_scope() as session:
+        rows = session.execute(
+            text(
+                f"SELECT {date_column}, change_rate FROM {table}"
+                " WHERE theme_id = :t"
+                + (" AND period = :p" if period else "")
+                + f" ORDER BY {date_column}"
+            ),
+            {"t": theme_id, "p": period} if period else {"t": theme_id},
+        )
+        return [tuple(row) for row in rows]
+
+
+def test_theme_daily_change_rate_is_vs_previous_bar() -> None:
+    """지수 종가의 직전 봉 대비 %. 첫 봉은 NULL, 행이 빠진 날은 건너뛰고, 창을 나눠도 이어진다."""
+    theme_id, _ = _setup()
+    with session_scope() as session:
+        upsert_theme_daily_candles(
+            session,
+            [
+                _theme_candle(theme_id, D1, "1000", "1000", "1000", "1000"),
+                _theme_candle(theme_id, D2, "1000", "1050", "1000", "1050"),
+            ],
+        )
+        refresh_theme_change_rates(session, since=D1, theme_ids=[theme_id])
+    with session_scope() as session:
+        # D3 은 참여 종목이 없어 행이 없고, since 첫 행은 그 앞의 D2 와 비교한다.
+        upsert_theme_daily_candles(
+            session, [_theme_candle(theme_id, date(2026, 9, 4), "1050", "1050", "945", "945")]
+        )
+        refresh_theme_change_rates(session, since=date(2026, 9, 4), theme_ids=[theme_id])
+
+    assert _change_rates("theme_candles_daily", "trade_date", theme_id) == [
+        (D1, None),
+        (D2, Decimal("5.00")),
+        (date(2026, 9, 4), Decimal("-10.00")),
+    ]
+
+
+def test_run_daily_fills_change_rate_as_weighted_constituent_return() -> None:
+    """등락률은 구성 종목 등락률의 가중 평균이다. 동일 가중 2종목이 D3 에 0%·+20% → +10%."""
+    theme_id, _ = _setup()
+    _load_daily(
+        [
+            _daily(TICKERS[0], D1, "100"),
+            _daily(TICKERS[1], D1, "200"),
+            _daily(TICKERS[0], D2, "110"),
+            _daily(TICKERS[1], D2, "180"),
+            _daily(TICKERS[0], D3, "110"),
+            _daily(TICKERS[1], D3, "216"),
+        ]
+    )
+
+    run_daily(start=D1, end=D3, theme_ids=[theme_id])
+    changed = run_change_rates(since=D1, theme_ids=[theme_id])
+
+    assert changed == 1
+    assert _change_rates("theme_candles_daily", "trade_date", theme_id) == [
+        (D2, None),
+        (D3, Decimal("10.00")),
+    ]
+
+
+def test_theme_period_change_rate_is_vs_previous_period_bar() -> None:
+    """주봉은 직전 주봉, 월봉은 직전 월봉 종가 대비다. 재집계 구간의 첫 봉도 그 앞 봉과 비교한다."""
+    theme_id, _ = _setup()
+    with session_scope() as session:
+        upsert_theme_daily_candles(
+            session,
+            [
+                _theme_candle(theme_id, date(2026, 8, 31), "100", "100", "100", "100"),
+                _theme_candle(theme_id, date(2026, 9, 25), "90", "95", "85", "92"),
+                _theme_candle(theme_id, date(2026, 9, 29), "106", "120", "101", "115"),
+            ],
+        )
+        rebuild_theme_period_candles(session, since=date(2026, 8, 31), theme_ids=[theme_id])
+        refresh_theme_change_rates(session, since=date(2026, 8, 31), theme_ids=[theme_id])
+    with session_scope() as session:
+        # 이번 주만 다시 계산해도 직전 주·월 봉과 비교하고 값이 그대로다.
+        assert (
+            refresh_theme_change_rates(session, since=date(2026, 9, 29), theme_ids=[theme_id]) == 0
+        )
+
+    assert _change_rates("theme_candles_period", "base_date", theme_id, "W") == [
+        (date(2026, 8, 31), None),
+        (date(2026, 9, 21), Decimal("-8.00")),
+        (date(2026, 9, 28), Decimal("25.00")),
+    ]
+    assert _change_rates("theme_candles_period", "base_date", theme_id, "M") == [
+        (date(2026, 8, 1), None),
+        (date(2026, 9, 1), Decimal("15.00")),
+    ]
