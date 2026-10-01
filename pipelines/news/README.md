@@ -5,7 +5,7 @@
 ## 수집 원천
 
 `jobs/collect_articles.run(theme_ids)` 가 받은 테마의 편입 종목을 기업 단위로 모으고
-(`repositories/search_history.py`), 기업마다 `NEWS_SEARCH_QUERY_TEMPLATES`(기본 `특징주,{name}`·`{name}` 두 개)로
+(`repositories/search_history.py`), 기업마다 `NEWS_SEARCH_QUERY_TEMPLATES`(기본 `{name},공급`·`{name},계약`·`{name},수혜`·`{name},악재`·`{name},특징주` 다섯 개)로
 검색어를 만들어 서식마다 네이버 뉴스 검색 API 를 최신순으로 호출합니다
 (`extractors/search_collector.py`). 같은 기업이 여러 테마·여러 종목으로 나오면 한 번만
 검색하고, 종목명은 stock id 순 첫 종목의 것을 씁니다.
