@@ -161,6 +161,12 @@ class KisApiError(RuntimeError):
         self.msg = msg
 
 
+@dataclass(frozen=True)
+class KisPage:
+    data: dict[str, Any]
+    tr_cont: str
+
+
 class KisClient:
     """KIS Open API 호출 클라이언트.
 
@@ -205,14 +211,37 @@ class KisClient:
             requests.HTTPError: HTTP 상태가 실패인 경우.
         """
 
+        return self._send(path, tr_id, params, None, custtype, timeout).data
+
+    def request_page(
+        self,
+        path: str,
+        tr_id: str,
+        params: dict[str, str],
+        *,
+        tr_cont: str = "",
+        custtype: str = "P",
+        timeout: int = 30,
+    ) -> KisPage:
+        return self._send(path, tr_id, params, tr_cont, custtype, timeout)
+
+    def _send(
+        self,
+        path: str,
+        tr_id: str,
+        params: dict[str, str],
+        tr_cont: str | None,
+        custtype: str,
+        timeout: int,
+    ) -> KisPage:
         self.rate_limiter.wait()
-        data = self._get(path, tr_id, params, custtype, timeout)
+        data, response_tr_cont = self._get(path, tr_id, params, custtype, timeout, tr_cont)
 
         rt_cd = str(data.get("rt_cd", ""))
         if rt_cd != "0":
             raise KisApiError(rt_cd, str(data.get("msg_cd", "")), str(data.get("msg1", "")).strip())
 
-        return data
+        return KisPage(data=data, tr_cont=response_tr_cont)
 
     @retry_external_call()
     def _get(
@@ -222,22 +251,26 @@ class KisClient:
         params: dict[str, str],
         custtype: str,
         timeout: int,
-    ) -> dict[str, Any]:
+        tr_cont: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {self.access_token()}",
+            "appkey": self._settings.kis_app_key,
+            "appsecret": self._settings.kis_app_secret,
+            "tr_id": tr_id,
+            "custtype": custtype,
+        }
+        if tr_cont is not None:
+            headers["tr_cont"] = tr_cont
         response = self._session.get(
             f"{self._base_url}{path}",
-            headers={
-                "content-type": "application/json; charset=utf-8",
-                "authorization": f"Bearer {self.access_token()}",
-                "appkey": self._settings.kis_app_key,
-                "appsecret": self._settings.kis_app_secret,
-                "tr_id": tr_id,
-                "custtype": custtype,
-            },
+            headers=headers,
             params=params,
             timeout=timeout,
         )
         response.raise_for_status()
-        return response.json()
+        return response.json(), str(response.headers.get("tr_cont", "")).strip()
 
     # -- 토큰 -------------------------------------------------------------
 
