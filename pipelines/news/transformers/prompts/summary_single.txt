@@ -1,5 +1,8 @@
 [제목]
 $title
 
+[발행일]
+$published_date
+
 [본문]
 $source_text

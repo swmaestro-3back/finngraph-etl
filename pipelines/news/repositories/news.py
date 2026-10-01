@@ -64,7 +64,7 @@ SELECT_STORED_LINKS_SQL = text(
 # 요약 대상: 삼중항 추출을 마쳤고 요약이 아직 없는 기사
 SELECT_UNSUMMARIZED_NEWS_SQL = text(
     """
-    SELECT id, title, text
+    SELECT id, title, text, published_at
       FROM news
      WHERE triple_extracted = TRUE
        AND (summary IS NULL OR BTRIM(summary) = '')
@@ -360,13 +360,14 @@ def fetch_unsummarized_news_items(limit: int = 300) -> list[dict[str, Any]]:
         items = []
 
         for row in rows:
-            news_id, title, news_text = row
+            news_id, title, news_text, published_at = row
 
             items.append(
                 {
                     "_news_id": news_id,
                     "title": title or "",
                     "_text": news_text or "",
+                    "_published_at": published_at,
                 }
             )
 

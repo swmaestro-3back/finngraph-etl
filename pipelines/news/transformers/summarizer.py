@@ -10,6 +10,7 @@ from typing import Any
 
 from pipelines.common.clients.bedrock import extract_bedrock_text, get_bedrock_client
 from pipelines.common.config import get_settings
+from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
@@ -71,10 +72,20 @@ def build_summary_source_text(item: dict[str, Any], body_limit: int = DEFAULT_BO
     return text.strip()
 
 
+def format_published_date(published_at: Any) -> str:
+    """발행일을 서울 기준 'YYYY년 M월 D일'로. 상대 시점(이날·전날)을 날짜로 풀 기준점이다."""
+
+    if not published_at:
+        return "미상"
+    local = published_at.astimezone(SEOUL_TIMEZONE)
+    return f"{local.year}년 {local.month}월 {local.day}일"
+
+
 def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LIMIT) -> str:
     return render_summary_prompt(
         "summary_single.txt",
         title=get_printable_text(item.get("title", "")),
+        published_date=format_published_date(item.get("_published_at")),
         source_text=build_summary_source_text(item, body_limit),
     )
 
