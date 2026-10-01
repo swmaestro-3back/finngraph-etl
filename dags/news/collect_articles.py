@@ -1,8 +1,8 @@
-"""테마 편입 기업 뉴스 수집 (06~18시 매 정각).
+"""핫테마 편입 기업 뉴스 수집 (핫테마 발행 직후 + 장외 시간 cron).
 
 수집·군집화까지만 한다. 삼중항 추출과 요약은 이 DAG 이 발행하는 `etl://news/clusters` Asset 을
 따라 `triples_extract_triples` → `news_summarize_articles` 가 이어서 돈다 — LLM 처리가 길어져도
-다음 정시 수집을 막지 않고, 백필(`news_backfill_krx300`)과 하류를 공유하기 위해서다.
+다음 수집을 막지 않고, 백필(`news_backfill_krx300`)과 하류를 공유하기 위해서다.
 """
 
 from __future__ import annotations
@@ -11,11 +11,13 @@ from datetime import datetime, timedelta
 from typing import Any
 
 try:
-    from airflow.sdk import Asset, dag, task
+    from airflow.sdk import Asset, AssetOrTimeSchedule, MultipleCronTriggerTimetable, dag, task
     from airflow.sdk.exceptions import AirflowSkipException
 except ImportError:
     AirflowSkipException = None
     Asset = None
+    AssetOrTimeSchedule = None
+    MultipleCronTriggerTimetable = None
     dag = None
     task = None
 
@@ -26,8 +28,17 @@ if dag and task:
     @dag(
         dag_id="news_collect_articles",
         start_date=datetime(2026, 1, 1),
-        # 06~18시 매 정각, KST 기준.
-        schedule="0 6-18 * * *",
+        # 평일 장중은 핫테마 발행 직후에만 돈다 — 검색 종목이 그때 바뀐다. 발행이 없는 시간은
+        # cron 이 메운다: 평일 장 시작 전(밤사이 기사)·마감 후(시황·공시 기사), 주말.
+        schedule=AssetOrTimeSchedule(
+            timetable=MultipleCronTriggerTimetable(
+                "30 7 * * 1-5",
+                "0 18,21 * * 1-5",
+                "0 9,15,21 * * 0,6",
+                timezone="Asia/Seoul",
+            ),
+            assets=Asset("etl://themes/hot"),
+        ),
         catchup=False,
         max_active_runs=1,
         tags=["news"],
@@ -38,16 +49,17 @@ if dag and task:
     )
     def news_collect_articles():
         @task(retries=1, retry_delay=timedelta(minutes=5))
-        def select_themes(params: dict[str, Any] | None = None) -> list[int]:
+        def select_themes(params: dict[str, Any] | None = None) -> dict[str, list]:
             from pipelines.news.jobs.select_themes import run
 
-            return run([int(theme_id) for theme_id in (params or {}).get("theme_ids") or []])
+            selection = run([int(theme_id) for theme_id in (params or {}).get("theme_ids") or []])
+            return {"theme_ids": selection.theme_ids, "tickers": selection.tickers}
 
         @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
-        def collect_articles(theme_ids: list[int]) -> dict[str, Any]:
+        def collect_articles(selection: dict[str, list]) -> dict[str, Any]:
             from pipelines.news.jobs.collect_articles import run
 
-            result = run(theme_ids=theme_ids)
+            result = run(theme_ids=selection["theme_ids"], tickers=selection["tickers"])
             if result["created"] + result["updated"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "할 일이 없었다"다.
                 # 새 기사도 갱신할 카운터도 없는 시간이라 하류(삼중항 추출·Event 승격)를 깨울

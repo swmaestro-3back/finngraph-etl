@@ -30,11 +30,11 @@ dags/
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/collect_articles.py` | `news_collect_articles` | `news` | `0 6-18 * * *` (06~18시 매 정각) |
+| news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
 | news | `news/summarize_articles.py` | `news_summarize_articles` | `news` | Asset ← `etl://triples/extracted` |
 | news | `news/backfill_krx300.py` | `news_backfill_krx300` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
-| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각) |
+| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각), `etl://themes/hot` 발행 |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
@@ -91,8 +91,11 @@ RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 �
 임베딩이 없는 노드·간선만 대상이라 재시도는 남은 분량부터 이어서 채운다.
 
 ```
+stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles
+  (평일 09~17시 매 정각)                                  (또는 cron: 평일 07:30·18·21시, 주말 09·15·21시)
+
 news_collect_articles ──┐                           ┌──► events_promote_clusters
-  (06~18시 매 정각)       ├──► etl://news/clusters ───┤      (sync_events ∥ generate_events)
+  (위 Asset 또는 cron)    ├──► etl://news/clusters ───┤      (sync_events ∥ generate_events)
 news_backfill_krx300 ───┘   (collect_articles)      └──► triples_extract_triples
   (수동, 청크마다 발행)                                       │
                                                              ▼
@@ -121,7 +124,9 @@ news_backfill_krx300 ───┘   (collect_articles)      └──► triples
 > 시간에는 재시도도 없다. 급하면 `triples_extract_triples`를 수동 트리거한다.
 
 `select_themes`가 백엔드가 Redis(`etl:hot-themes`, `HOT_THEMES_REDIS_URL`)에 발행한 핫테마를
-읽고 — 조회 실패·키 없음·기준일 불일치면 폴백 없이 태스크가 실패한다 — `collect_articles`가 그 테마의 편입 기업을 검색한다(`NEWS_SEARCH_QUERY_TEMPLATES` 기본 `{종목명},공급`·`계약`·`수혜`·`호재`·`악재`·`특징주` 여섯 번, 최신순, 기업별
+읽고 — 조회 실패·키 없음이거나 기준일이 DB 거래일 범위(밸류에이션까지 있는 마감일 ~ 일봉만 있는
+최신일) 밖이면 폴백 없이 태스크가 실패한다 — `collect_articles`가 페이로드에 담긴 종목(없으면 그
+테마의 편입 기업 전체)을 검색한다(`NEWS_SEARCH_QUERY_TEMPLATES` 기본 `{종목명},공급`·`계약`·`수혜`·`호재`·`악재`·`특징주` 여섯 번, 최신순, 기업별
 `search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
 `theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
 

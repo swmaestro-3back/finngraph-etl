@@ -26,6 +26,7 @@ from pipelines.news.repositories.search_history import (
     CompanyQuery,
     fetch_due_company_queries,
     fetch_due_krx300_queries,
+    fetch_due_ticker_queries,
     mark_companies_searched,
 )
 from pipelines.news.transformers.cluster_titler import title_clusters
@@ -46,7 +47,7 @@ from pipelines.news.utils.text_utils import remove_leading_title_brackets
 logger = get_logger(__name__)
 
 
-def run(theme_ids: list[int]) -> dict[str, int]:
+def run(theme_ids: list[int], tickers: list[str] | None = None) -> dict[str, int]:
     """theme_ids 의 편입 기업 중 재검색 시점이 된 기업의 뉴스 수집"""
 
     validate_search_settings()
@@ -54,11 +55,17 @@ def run(theme_ids: list[int]) -> dict[str, int]:
     run_started_at = datetime.now(SEOUL_TIMEZONE)
 
     # 1. 테마 편입 기업 중 search_history 기준 재검색 시점이 된 기업 조회
-    batch = fetch_due_company_queries(theme_ids, settings.search_interval_hours, run_started_at)
+    if tickers:
+        batch = fetch_due_ticker_queries(
+            theme_ids, tickers, settings.search_interval_hours, run_started_at
+        )
+    else:
+        batch = fetch_due_company_queries(theme_ids, settings.search_interval_hours, run_started_at)
     logger.info(
-        "[collect_articles] 대상: 테마 %d개 → 검색 기업 %d개 "
+        "[collect_articles] 대상: 테마 %d개(%s) → 검색 기업 %d개 "
         "(간격 미도래 %d, company_id 없음 %d, 첫 검색 %d)",
         len(batch.theme_ids),
+        f"핫테마 종목 {len(tickers)}개" if tickers else "편입 종목 전체",
         len(batch.queries),
         batch.skipped_not_due,
         batch.skipped_no_company,
