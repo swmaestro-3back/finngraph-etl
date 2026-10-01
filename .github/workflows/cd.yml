@@ -67,7 +67,7 @@ jobs:
       - name: AWS 자격증명 (OIDC — 장기 키 없음)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/finngraph-github-ci
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/finngraph-dev-github-cd-etl
           aws-region: ${{ env.AWS_REGION }}
 
       - name: ECR 로그인
