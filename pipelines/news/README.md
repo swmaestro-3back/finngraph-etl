@@ -60,15 +60,19 @@
 
 ## 하류 처리량
 
+삼중항 추출과 요약은 수집 DAG 의 task 가 아니라 Asset 으로 이어지는 별도 DAG 입니다:
+`collect_articles` ─► `etl://news/clusters` ─► `triples_extract_triples` ─► `etl://triples/extracted`
+─► `news_summarize_articles` (이유는 `dags/README.md` 의 "Asset 의존" 참고).
+
 `extract_triples`·`summarize_articles` 는 런 시작 시점의 미처리 기사를 상한 없이 전량 처리합니다.
-실패한 기사는 미처리로 남아 다음 런에 다시 시도합니다 — 런 안에서 0건이 될 때까지 반복하지
+실패한 기사는 미처리로 남아 다음 런(다음에 새 기사가 수집된 시점)에 다시 시도합니다 — 런 안에서 0건이 될 때까지 반복하지
 않는 이유입니다(실패가 이어지면 끝나지 않습니다).
 
 ## KRX300 백필 (dags/news/backfill_krx300.py)
 
 `news_backfill_krx300` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx300` 활성 종목의 기업
-(`fetch_due_krx300_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx300` 을 돌리고,
-이어서 삼중항 추출·요약을 한 번 돌립니다. 대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은
+(`fetch_due_krx300_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx300` 을 돌립니다.
+청크가 끝날 때마다 `etl://news/clusters` 를 발행해 삼중항 추출·요약이 수집과 나란히 진행됩니다. 대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은
 `collect()` 를 씁니다. 검색어도 스케줄 런과 같은 `NEWS_SEARCH_QUERY_TEMPLATES` 입니다.
 
 - 수집 창은 트리거 params 로 넓힙니다: `lookback_days`(기본 180, 최대 180), `max_pages`(기본 8,

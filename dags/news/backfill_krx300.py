@@ -1,7 +1,9 @@
 """KRX300 기업 뉴스 백필 (수동 실행).
 
 초기 데이터가 없을 때 KRX300 편입 기업의 과거 뉴스를 미리 채운다. 수집 이후 단계(필터·클러스터·
-저장 → 삼중항 추출 → 요약)는 news_scheduled_pipeline 과 같다.
+저장)는 news_collect_articles 와 같고, 삼중항 추출·요약은 청크가 끝날 때마다 발행하는
+etl://news/clusters Asset 을 따라 triples_extract_triples → news_summarize_articles 가 수집과
+나란히 처리한다.
 
 **대상.** stocks.krx300 활성 종목의 기업 중 search_history 기준 재검색 시점이 된 기업만 —
 스케줄 런과 같은 워터마크 규칙이라, 중간에 실패해도 다시 트리거하면 끝난 청크는 건너뛰고
@@ -43,7 +45,7 @@ if dag and task:
         schedule=None,
         catchup=False,
         max_active_runs=1,
-        tags=["news", "triples", "backfill", "manual"],
+        tags=["news", "backfill", "manual"],
         doc_md=__doc__,
         params={
             "lookback_days": Param(
@@ -93,24 +95,6 @@ if dag and task:
                 raise AirflowSkipException("클러스터 생성·갱신 0건 — 하류를 깨우지 않는다")
             return result
 
-        # 청크 일부가 실패·스킵돼도 저장된 기사는 처리한다 (news_scheduled_pipeline 과 같은 이유)
-        @task(retries=1, retry_delay=timedelta(minutes=10), trigger_rule="all_done")
-        def extract_triples() -> dict[str, int]:
-            from pipelines.triples.jobs.extract_triples import run
-
-            return run()
-
-        @task(retries=1, retry_delay=timedelta(minutes=10))
-        def summarize_articles() -> dict[str, Any]:
-            from pipelines.news.jobs.summarize_articles import run
-
-            result = run()
-            return {"fetched": result["fetched"], "saved": result["saved"]}
-
-        (
-            collect_articles.expand(company_ids=select_companies())
-            >> extract_triples()
-            >> summarize_articles()
-        )
+        collect_articles.expand(company_ids=select_companies())
 
     news_backfill_krx300()

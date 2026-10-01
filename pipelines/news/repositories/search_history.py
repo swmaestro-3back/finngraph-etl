@@ -1,6 +1,6 @@
 """search_history 테이블 읽기·쓰기.
 
-읽기: 인자로 받은 테마의 편입 종목(news_scheduled_pipeline) 또는 KRX300 종목(news_backfill_krx300)
+읽기: 인자로 받은 테마의 편입 종목(news_collect_articles) 또는 KRX300 종목(news_backfill_krx300)
 을 기업 단위로 모으고, search_history 의 마지막 검색 시각이 재검색 간격을 넘긴 기업만
 CompanyQuery 로 만든다. 쓰기: 검색을 마친 기업의 last_searched_at 을 갱신한다.
 """

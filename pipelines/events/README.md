@@ -10,13 +10,13 @@ RETURN e ORDER BY e.last_published_at DESC LIMIT 20
 
 ## 기동 (`dags/events/promote_clusters.py`, `events_promote_clusters`)
 
-시각이 아니라 Asset 을 구독합니다. `news_scheduled_pipeline.collect_articles` 가 클러스터를 하나라도
+시각이 아니라 Asset 을 구독합니다. `news_collect_articles.collect_articles` 가 클러스터를 하나라도
 생성·갱신한 런에서만 `etl://news/clusters` 를 발행하고, 그 신호로 이 DAG 이 깨어납니다.
 클러스터 변경이 0건인 시간에는 `collect_articles` 가 skip 돼 발행이 없고, 이 DAG 도 돌지
 않습니다.
 
 ```
-news_scheduled_pipeline.collect_articles ──► etl://news/clusters ──► events_promote_clusters
+news_collect_articles.collect_articles ──► etl://news/clusters ──► events_promote_clusters
 ```
 
 ## 흐름
@@ -58,7 +58,7 @@ Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 
    시드합니다 — 마이그레이션에 들어 있지 않으므로 `docker compose down -v` 뒤에는
    `companies_crawl_us` 를 한 번 수동 실행해야 합니다(뒤이어 `companies_load_us` 가 Asset 으로
    자동으로 따라붙어 US 기업 간선이 붙습니다).
-4. `dags/news/scheduled_pipeline.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은
+4. `dags/news/collect_articles.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은
    없습니다. 구독 DAG 만 있으면 Asset 이 발행될 때까지 기다리고, outlet 만 있으면 소비자
    없는 Asset 이벤트가 기록될 뿐입니다.
 
