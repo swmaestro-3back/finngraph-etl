@@ -33,6 +33,23 @@ def test_parse_returns_ids_in_payload_order():
     assert parsed is not None
     assert parsed.trade_date == date(2026, 7, 31)
     assert parsed.theme_ids == [12, 34]
+    assert parsed.tickers == ["005490"]
+
+
+def test_parse_collects_tickers_once_in_payload_order():
+    parsed = repo.parse_hot_themes(
+        payload(
+            themes=[
+                {"id": 1, "stocks": [{"ticker": "000660"}, {"ticker": "005930"}]},
+                {"id": 2, "stocks": [{"ticker": "005930"}, {"ticker": "042700"}]},
+                {"id": 3},
+            ]
+        )
+    )
+
+    assert parsed is not None
+    assert parsed.theme_ids == [1, 2, 3]
+    assert parsed.tickers == ["000660", "005930", "042700"]
 
 
 def test_parse_rejects_contract_violations():
@@ -41,6 +58,8 @@ def test_parse_rejects_contract_violations():
     assert repo.parse_hot_themes(json.dumps({"tradeDate": "2026-07-31"})) is None
     assert repo.parse_hot_themes(payload(themes=[])) is None
     assert repo.parse_hot_themes(payload(themes=[{"name": "id 없음"}])) is None
+    assert repo.parse_hot_themes(payload(themes=[{"id": 1, "stocks": "oops"}])) is None
+    assert repo.parse_hot_themes(payload(themes=[{"id": 1, "stocks": [{"name": "x"}]}])) is None
 
 
 def test_parse_allows_null_trade_date():

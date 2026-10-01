@@ -174,6 +174,25 @@ def test_run_filters_then_clusters_then_links_and_marks_only_searched(wired):
     assert calls["seed_window"] == [(published - timedelta(days=7), published)]
 
 
+def test_run_with_tickers_searches_backend_hot_theme_stocks(wired, monkeypatch):
+    job, calls = wired
+    seen: list[tuple] = []
+
+    def fake_ticker_queries(ids, tickers, hours, now):
+        seen.append((ids, tickers, hours))
+        return CompanyQueryBatch(theme_ids=ids, queries=[], skipped_no_company=0, skipped_not_due=0)
+
+    monkeypatch.setattr(job, "fetch_due_ticker_queries", fake_ticker_queries)
+    monkeypatch.setattr(
+        job,
+        "fetch_due_company_queries",
+        lambda ids, hours, now: (_ for _ in ()).throw(AssertionError("편입 종목 전체를 조회함")),
+    )
+
+    assert job.run(theme_ids=[10], tickers=["066970"]) == {"created": 0, "updated": 0, "failed": 0}
+    assert seen == [([10], ["066970"], 2)]
+
+
 def test_run_with_no_due_companies_marks_nothing_and_skips(wired, monkeypatch):
     job, calls = wired
     monkeypatch.setattr(

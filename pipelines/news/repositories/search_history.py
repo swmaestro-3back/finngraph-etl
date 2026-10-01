@@ -28,6 +28,17 @@ SELECT_THEME_COMPANIES_SQL = text(
     """
 )
 
+SELECT_TICKER_COMPANIES_SQL = text(
+    """
+    SELECT s.company_id, s.name, sh.last_searched_at
+      FROM stocks s
+      LEFT JOIN search_history sh ON sh.company_id = s.company_id
+     WHERE s.ticker = ANY(:tickers)
+       AND s.is_active
+     ORDER BY s.company_id NULLS LAST, s.id;
+    """
+)
+
 # 검색을 마친 기업의 마지막 검색 시각 upsert
 UPSERT_SEARCH_HISTORY_SQL = text(
     """
@@ -111,6 +122,20 @@ def fetch_due_company_queries(
 
     with session_scope() as session:
         rows = session.execute(SELECT_THEME_COMPANIES_SQL, {"theme_ids": unique_ids}).fetchall()
+
+    return group_company_rows(unique_ids, [tuple(row) for row in rows], interval_hours, now)
+
+
+def fetch_due_ticker_queries(
+    theme_ids: list[int], tickers: list[str], interval_hours: int, now: datetime
+) -> CompanyQueryBatch:
+    unique_ids = sorted({int(theme_id) for theme_id in theme_ids})
+    unique_tickers = sorted({str(ticker) for ticker in tickers})
+    if not unique_tickers:
+        return group_company_rows(unique_ids, [], interval_hours, now)
+
+    with session_scope() as session:
+        rows = session.execute(SELECT_TICKER_COMPANIES_SQL, {"tickers": unique_tickers}).fetchall()
 
     return group_company_rows(unique_ids, [tuple(row) for row in rows], interval_hours, now)
 

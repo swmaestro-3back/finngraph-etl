@@ -16,15 +16,16 @@ from pipelines.common.clients.postgres import session_scope
 
 MIN_STOCKS = 3
 
-# 백엔드와 같은 정의다 — 캔들과 밸류에이션이 둘 다 있는 최신 날짜. 일봉만 먼저 들어온
-# 날(정규 적재 직후, 장중 백필)을 최신으로 잡으면 백엔드 핫테마 페이로드와 기준일이 어긋나
-# 자체 선정으로 폴백해 버린다.
-SELECT_LATEST_TRADE_DATE_SQL = text(
+SELECT_TRADE_DATES_SQL = text(
     """
-    SELECT LEAST(
-             (SELECT MAX(trade_date) FROM stock_candles_daily     WHERE trade_date <= :as_of),
-             (SELECT MAX(trade_date) FROM stock_valuations_daily  WHERE trade_date <= :as_of)
-           );
+    SELECT LEAST(c.trade_date, v.trade_date) AS settled,
+           c.trade_date                     AS latest
+      FROM (SELECT MAX(trade_date) AS trade_date
+              FROM stock_candles_daily
+             WHERE trade_date <= :as_of) c,
+           (SELECT MAX(trade_date) AS trade_date
+              FROM stock_valuations_daily
+             WHERE trade_date <= :as_of) v;
     """
 )
 
@@ -77,11 +78,22 @@ class ThemeChange:
     stock_count: int
 
 
-def fetch_latest_trade_date(as_of: date) -> date | None:
-    with session_scope() as session:
-        row = session.execute(SELECT_LATEST_TRADE_DATE_SQL, {"as_of": as_of}).scalar()
+@dataclass(frozen=True)
+class TradeDates:
+    settled: date | None
+    latest: date | None
 
-    return row
+    def covers(self, trade_date: date | None) -> bool:
+        if trade_date is None or self.settled is None or self.latest is None:
+            return False
+        return self.settled <= trade_date <= self.latest
+
+
+def fetch_trade_dates(as_of: date) -> TradeDates:
+    with session_scope() as session:
+        settled, latest = session.execute(SELECT_TRADE_DATES_SQL, {"as_of": as_of}).one()
+
+    return TradeDates(settled=settled, latest=latest)
 
 
 def fetch_theme_changes(as_of: date, min_stocks: int = MIN_STOCKS) -> list[ThemeChange]:

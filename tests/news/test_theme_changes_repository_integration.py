@@ -12,13 +12,18 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.repositories.theme_changes import fetch_theme_changes
+from pipelines.news.repositories.theme_changes import (
+    TradeDates,
+    fetch_theme_changes,
+    fetch_trade_dates,
+)
 
 pytestmark = pytest.mark.integration
 
 # 실제 데이터와 겹치지 않도록 먼 미래 날짜를 쓴다
 D0 = date(2099, 1, 5)  # 직전 거래일
 D1 = date(2099, 1, 7)  # 기준일 (1/6 은 휴장으로 봉 없음)
+INTRADAY = date(2099, 1, 8)
 
 
 @pytest.fixture
@@ -56,13 +61,34 @@ def theme_rows():
                     ),
                     {"s": stock_id, "d": trade_date, "c": close},
                 )
+            for trade_date in (D0, D1):
+                session.execute(
+                    text(
+                        "INSERT INTO stock_valuations_daily (listing_id, trade_date, market_cap) "
+                        "VALUES (:s, :d, 1);"
+                    ),
+                    {"s": stock_id, "d": trade_date},
+                )
 
-    yield {"theme_id": int(theme_id)}
+    yield {"theme_id": int(theme_id), "stock_ids": stock_ids}
 
     with session_scope() as session:
         session.execute(text("DELETE FROM themes WHERE id = :t"), {"t": theme_id})
         # stocks 삭제가 stock_candles_daily 를 CASCADE 로 지운다
         session.execute(text("DELETE FROM stocks WHERE id = ANY(:ids)"), {"ids": stock_ids})
+
+
+@pytest.fixture
+def intraday_candle(theme_rows):
+    with session_scope() as session:
+        session.execute(
+            text(
+                "INSERT INTO stock_candles_daily "
+                "(stock_id, trade_date, open, high, low, close, volume, source) "
+                "VALUES (:s, :d, 120, 120, 120, 120, 1, 'TEST');"
+            ),
+            {"s": theme_rows["stock_ids"][0], "d": INTRADAY},
+        )
 
 
 def _mine(rows, theme_id):
@@ -85,3 +111,17 @@ def test_as_of_picks_latest_trading_day_on_or_before(theme_rows):
 def test_min_stocks_excludes_thin_themes(theme_rows):
     assert _mine(fetch_theme_changes(as_of=D1, min_stocks=4), theme_rows["theme_id"]) == []
     assert _mine(fetch_theme_changes(as_of=D1, min_stocks=3), theme_rows["theme_id"])
+
+
+def test_trade_dates_converge_once_valuations_are_loaded(theme_rows):
+    assert fetch_trade_dates(as_of=D1) == TradeDates(settled=D1, latest=D1)
+
+
+def test_intraday_candles_advance_latest_but_not_settled(intraday_candle):
+    assert fetch_trade_dates(as_of=INTRADAY) == TradeDates(settled=D1, latest=INTRADAY)
+
+
+def test_momentum_fallback_stays_on_settled_date_during_intraday(theme_rows, intraday_candle):
+    [row] = _mine(fetch_theme_changes(as_of=INTRADAY), theme_rows["theme_id"])
+
+    assert row.trade_date == D1

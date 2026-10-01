@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 import redis
@@ -18,6 +18,7 @@ _SOCKET_TIMEOUT_SECONDS = 2.0
 class HotThemes:
     trade_date: date | None
     theme_ids: list[int]
+    tickers: list[str] = field(default_factory=list)
 
 
 def fetch_hot_themes() -> HotThemes | None:
@@ -51,10 +52,15 @@ def parse_hot_themes(raw: str) -> HotThemes | None:
         payload = json.loads(raw)
         trade_date = date.fromisoformat(payload["tradeDate"]) if payload.get("tradeDate") else None
         theme_ids = [int(theme["id"]) for theme in payload["themes"]]
-    except (ValueError, KeyError, TypeError):
+        tickers = [
+            str(stock["ticker"]) for theme in payload["themes"] for stock in theme.get("stocks", [])
+        ]
+    except (ValueError, KeyError, TypeError, AttributeError):
         return None
 
     if not theme_ids:
         return None
 
-    return HotThemes(trade_date=trade_date, theme_ids=theme_ids)
+    return HotThemes(
+        trade_date=trade_date, theme_ids=theme_ids, tickers=list(dict.fromkeys(tickers))
+    )
