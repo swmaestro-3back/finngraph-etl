@@ -47,6 +47,38 @@ class Entity(BaseModel):
     text: str = Field(description="기업 표면형 (gazetteer canonical)")
 
 
+class RawEntityJudgement(BaseModel):
+    # The field declaration is intended, like RawRelation model
+    # first quotes the mention, then reasons, finally decides keep
+    entity: str = Field(description="Copy the candidate entity back EXACTLY as given.")
+    mention: str = Field(
+        description=(
+            "The sentence from the article where this surface form appears, copied verbatim. "
+            "Pick the occurrence that best shows how the article uses the entity."
+        )
+    )
+    reason: str = Field(
+        description=(
+            "One short sentence: does the surface form refer to the company here, and does the "
+            "company take part in a concrete business action or fact in the article?"
+        )
+    )
+    keep: bool = Field(
+        description=(
+            "True if the surface form refers to the company AND the company is a participant "
+            "in a concrete business action or fact. When unsure, true."
+        )
+    )
+
+
+class RawEntityJudgementList(BaseModel):
+    # List of RawEntityJudgements above
+    # Just for `structured_output` since it requires pydantic BaseModel type
+    judgements: list[RawEntityJudgement] = Field(
+        description="One judgement per candidate entity, in the same order as the input list."
+    )
+
+
 # ==============================================================================
 # RelationExtractor
 # ==============================================================================
