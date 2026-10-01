@@ -14,6 +14,7 @@ from sqlalchemy import text
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.repositories.search_history import (
     fetch_due_company_queries,
+    fetch_due_ticker_queries,
     mark_companies_searched,
 )
 
@@ -98,6 +99,7 @@ def theme_with_stocks():
         "theme_ids": [int(theme_a), int(theme_b)],
         "company_id": int(company_id),
         "common_name": f"통합테스트종목{tag}",
+        "tickers": {"common": f"T{tag[:5]}", "preferred": f"P{tag[:5]}", "orphan": f"U{tag[:5]}"},
     }
 
     with session_scope() as session:
@@ -182,3 +184,39 @@ def test_watermark_follows_last_searched_at(theme_with_stocks):
 
 def test_mark_with_empty_list_touches_nothing():
     assert mark_companies_searched([], _now()) == 0
+
+
+def test_fetch_by_tickers_searches_only_the_given_stocks(theme_with_stocks):
+    tickers = theme_with_stocks["tickers"]
+    company_id = theme_with_stocks["company_id"]
+
+    only_preferred = fetch_due_ticker_queries([1], [tickers["preferred"]], 2, _now())
+    assert [q.name for q in _mine(only_preferred, company_id)] == [
+        f"{theme_with_stocks['common_name']}우"
+    ]
+    assert only_preferred.theme_ids == [1]
+
+    batch = fetch_due_ticker_queries(
+        [1], [tickers["preferred"], tickers["common"], tickers["orphan"], "NOPE00"], 2, _now()
+    )
+    mine = _mine(batch, company_id)
+    assert len(mine) == 1
+    assert mine[0].name == theme_with_stocks["common_name"]
+    assert batch.skipped_no_company == 1
+
+
+def test_fetch_by_tickers_respects_search_interval(theme_with_stocks):
+    tickers = [theme_with_stocks["tickers"]["common"]]
+    company_id = theme_with_stocks["company_id"]
+
+    mark_companies_searched([company_id], _now())
+
+    assert _mine(fetch_due_ticker_queries([1], tickers, 2, _now()), company_id) == []
+    assert _mine(fetch_due_ticker_queries([1], tickers, 0, _now()), company_id)
+
+
+def test_fetch_by_empty_tickers_hits_nothing():
+    batch = fetch_due_ticker_queries([1], [], 2, _now())
+
+    assert batch.theme_ids == [1]
+    assert batch.queries == []

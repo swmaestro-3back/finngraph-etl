@@ -4,11 +4,13 @@ from datetime import datetime, timedelta
 from typing import Any
 
 try:
-    from airflow.sdk import Asset, dag, task
+    from airflow.sdk import Asset, AssetOrTimeSchedule, MultipleCronTriggerTimetable, dag, task
     from airflow.sdk.exceptions import AirflowSkipException
 except ImportError:
     AirflowSkipException = None
     Asset = None
+    AssetOrTimeSchedule = None
+    MultipleCronTriggerTimetable = None
     dag = None
     task = None
 
@@ -19,8 +21,17 @@ if dag and task:
     @dag(
         dag_id="news_scheduled_pipeline",
         start_date=datetime(2026, 1, 1),
-        # 06~18시 매 정각, KST 기준.
-        schedule="0 6-18 * * *",
+        # 평일 장중은 핫테마 발행 직후에만 돈다 — 검색 종목이 그때 바뀐다. 발행이 없는 시간은
+        # cron 이 메운다: 평일 장 시작 전(밤사이 기사)·마감 후(시황·공시 기사), 주말.
+        schedule=AssetOrTimeSchedule(
+            timetable=MultipleCronTriggerTimetable(
+                "30 7 * * 1-5",
+                "0 18,21 * * 1-5",
+                "0 9,15,21 * * 0,6",
+                timezone="Asia/Seoul",
+            ),
+            assets=Asset("etl://themes/hot"),
+        ),
         catchup=False,
         max_active_runs=1,
         tags=["news", "triples"],
@@ -30,19 +41,19 @@ if dag and task:
     )
     def news_scheduled_pipeline():
         @task(retries=1, retry_delay=timedelta(minutes=5))
-        def select_themes(params: dict[str, Any] | None = None) -> list[int]:
+        def select_themes(params: dict[str, Any] | None = None) -> dict[str, list]:
             from pipelines.news.jobs.select_themes import run
 
-            theme_ids = run([int(theme_id) for theme_id in (params or {}).get("theme_ids") or []])
-            if not theme_ids:
+            selection = run([int(theme_id) for theme_id in (params or {}).get("theme_ids") or []])
+            if not selection.theme_ids:
                 raise AirflowSkipException("선정된 테마가 없다 — 일봉이 아직 없거나 전부 보합")
-            return theme_ids
+            return {"theme_ids": selection.theme_ids, "tickers": selection.tickers}
 
         @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
-        def collect_articles(theme_ids: list[int]) -> dict[str, Any]:
+        def collect_articles(selection: dict[str, list]) -> dict[str, Any]:
             from pipelines.news.jobs.collect_articles import run
 
-            result = run(theme_ids=theme_ids)
+            result = run(theme_ids=selection["theme_ids"], tickers=selection["tickers"])
             if result["created"] + result["updated"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "할 일이 없었다"다.
                 # 갱신할 카운터도 없는 시간이라 events_promote_clusters 를 깨울 이유가 없다.
