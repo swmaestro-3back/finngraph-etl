@@ -19,6 +19,11 @@ from pipelines.news.transformers.clustering.incremental import (
     sum_terms,
     top_keywords,
 )
+from pipelines.news.transformers.clustering.judgments import (
+    ClusterJudgment,
+    build_cluster_judgments,
+    is_stored_member,
+)
 from pipelines.news.transformers.clustering.preprocess import document_terms
 from pipelines.news.transformers.clustering.vectorize import TfidfMatrix, build_tfidf
 
@@ -26,14 +31,17 @@ __all__ = [
     "DEFAULT_THRESHOLD",
     "Cluster",
     "ClusterAssignment",
+    "ClusterJudgment",
     "ClusterSeed",
     "Terms",
     "TfidfMatrix",
     "assign_batch",
     "batch_documents",
+    "build_cluster_judgments",
     "build_clusters",
     "build_tfidf",
     "document_terms",
+    "is_stored_member",
     "medoid_and_cohesion",
     "merge_term_weights",
     "pick_representative",

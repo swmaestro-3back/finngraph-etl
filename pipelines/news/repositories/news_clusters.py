@@ -16,6 +16,7 @@ from pipelines.news.transformers.clustering.incremental import (
     sum_terms,
     top_keywords,
 )
+from pipelines.news.transformers.clustering.judgments import is_stored_member
 
 # first_published_at 이 [start, end] 안인 클러스터와 그 프로필. last_stored_date 는 저장된
 # 멤버의 최신 발행일(KST)
@@ -96,12 +97,38 @@ SELECT_CLUSTER_ARTICLES_SQL = text(
     """
 )
 
-UPDATE_CLUSTER_TITLE_SQL = text(
+UPDATE_CLUSTER_LABEL_SQL = text(
     """
     UPDATE news_clusters
        SET title = :title,
+           summary = :summary,
            updated_at = now()
      WHERE id = :cluster_id;
+    """
+)
+
+# 이름은 있는데 요약이 없는 클러스터 (요약 백필 대상). 오래된 것부터
+SELECT_UNSUMMARIZED_CLUSTERS_SQL = text(
+    """
+    SELECT id, title
+      FROM news_clusters
+     WHERE title IS NOT NULL
+       AND summary IS NULL
+       AND member_count >= 1
+       AND first_published_at >= :since
+     ORDER BY first_published_at ASC, id ASC
+     LIMIT :limit;
+    """
+)
+
+# 요약만 채운다. updated_at 은 건드리지 않는다 — events 승격 스캔이 updated_at 창으로 후보를
+# 고르므로, 백필이 옛 클러스터를 다시 깨우지 않게 한다.
+UPDATE_CLUSTER_SUMMARY_SQL = text(
+    """
+    UPDATE news_clusters
+       SET summary = :summary
+     WHERE id = :cluster_id
+       AND summary IS NULL;
     """
 )
 
@@ -161,9 +188,36 @@ def fetch_cluster_articles(cluster_ids: list[int]) -> dict[int, list[ClusterArti
     return articles
 
 
-def update_cluster_title(cluster_id: int, title: str) -> None:
+def update_cluster_label(cluster_id: int, title: str, summary: str | None) -> None:
+    """이름과 요약을 함께 쓴다. 요약이 검증을 못 넘겼으면 NULL 로 둔다."""
+
     with session_scope() as session:
-        session.execute(UPDATE_CLUSTER_TITLE_SQL, {"cluster_id": cluster_id, "title": title})
+        session.execute(
+            UPDATE_CLUSTER_LABEL_SQL,
+            {"cluster_id": cluster_id, "title": title, "summary": summary},
+        )
+
+
+def fetch_unsummarized_clusters(since: datetime, limit: int) -> list[tuple[int, str]]:
+    """이름은 있고 요약이 없는 클러스터의 (id, title). since 이후 시작한 것, 오래된 순"""
+
+    with session_scope() as session:
+        rows = session.execute(
+            SELECT_UNSUMMARIZED_CLUSTERS_SQL, {"since": since, "limit": limit}
+        ).fetchall()
+
+    return [(int(row.id), row.title) for row in rows]
+
+
+def update_cluster_summary(cluster_id: int, summary: str) -> bool:
+    """요약이 비어 있을 때만 채운다. 이름과 updated_at 은 그대로 둔다. 채웠으면 True."""
+
+    with session_scope() as session:
+        updated = session.execute(
+            UPDATE_CLUSTER_SUMMARY_SQL, {"cluster_id": cluster_id, "summary": summary}
+        ).rowcount
+
+    return updated > 0
 
 
 def fetch_active_cluster_seeds(window_start: datetime, window_end: datetime) -> list[ClusterSeed]:
@@ -358,7 +412,7 @@ def record_cluster_assignments(
     items: list[dict[str, Any]],
     documents: list[Terms],
     keyword_count: int,
-) -> dict[str, int]:
+) -> tuple[dict[str, int], list[int | None]]:
     """저장이 끝난 뒤 판정 결과를 news_clusters 와 news.cluster_id 에 기록한다.
 
     저장에 성공한 기사(_news_id 가 있고 기존 행 스킵이 아닌 것)만 멤버가 된다. 새 클러스터는
@@ -367,30 +421,32 @@ def record_cluster_assignments(
 
     클러스터 하나가 트랜잭션 하나다. 실패한 클러스터는 건너뛰고 세어 돌려주며, 그 기사들은
     news 에 cluster_id 없이 남는다(news 저장은 이미 커밋됐다).
+
+    (생성·갱신·실패 수, assignments 와 같은 순서의 기록된 클러스터 id)를 돌려준다. id 는 새
+    클러스터를 만들지 않았거나 기록에 실패했으면 None 이다 — 판정 기록이 기사별 클러스터와 멤버
+    여부를 정하는 데 쓴다.
     """
 
     created = 0
     updated = 0
     failed = 0
+    cluster_ids: list[int | None] = []
 
     for assignment in assignments:
-        survivors = [
-            index
-            for index in assignment.kept
-            if items[index].get("_news_id")
-            and items[index].get("_save_action") != "skipped_existing"
-        ]
+        survivors = [index for index in assignment.kept if is_stored_member(items[index])]
         members = [
             (int(items[index]["_news_id"]), sum_terms(documents[index])) for index in survivors
         ]
 
         if assignment.seed is None and not members:
+            cluster_ids.append(None)
             continue
 
+        cluster_id: int | None = None
         try:
             if assignment.seed is None:
                 # kept 는 메도이드가 첫 번째이므로, 저장에 성공한 첫 기사가 대표다.
-                create_news_cluster(
+                cluster_id = create_news_cluster(
                     representative_news_id=members[0][0],
                     cohesion=assignment.cohesion,
                     term_weights=assignment.term_weights,
@@ -405,6 +461,7 @@ def record_cluster_assignments(
                 _record_seed_update(
                     assignment, members, [documents[index] for index in survivors], keyword_count
                 )
+                cluster_id = assignment.seed.cluster_id
                 updated += 1
         except Exception as e:
             failed += 1
@@ -413,5 +470,6 @@ def record_cluster_assignments(
                 f"cluster_id={assignment.seed.cluster_id if assignment.seed else None}, "
                 f"news_ids={[news_id for news_id, _ in members]}, error={type(e).__name__}: {e}"
             )
+        cluster_ids.append(cluster_id)
 
-    return {"created": created, "updated": updated, "failed": failed}
+    return {"created": created, "updated": updated, "failed": failed}, cluster_ids

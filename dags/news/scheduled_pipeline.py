@@ -76,6 +76,17 @@ if dag and task:
             result = run()
             return {"fetched": result["fetched"], "saved": result["saved"]}
 
-        collect_articles(select_themes()) >> extract_triples() >> summarize_articles()
+        # 이슈 타임라인 연결. all_done 인 이유는 extract_triples 와 같다 — collect_articles 가
+        # 스킵돼도 이전 런에 못 이은 클러스터가 남아 있을 수 있다. 삼중항·요약 체인과는 서로
+        # 기다릴 이유가 없어 나란히 돈다.
+        @task(retries=1, retry_delay=timedelta(minutes=10), trigger_rule="all_done")
+        def link_issues() -> dict[str, int]:
+            from pipelines.news.jobs.link_issues import run
+
+            return run()
+
+        collected = collect_articles(select_themes())
+        collected >> extract_triples() >> summarize_articles()
+        collected >> link_issues()
 
     news_scheduled_pipeline()

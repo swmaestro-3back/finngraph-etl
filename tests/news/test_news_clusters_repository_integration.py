@@ -20,7 +20,7 @@ from pipelines.news.repositories.news_clusters import (
     fetch_cluster_articles,
     fetch_cluster_member_terms,
     fetch_untitled_cluster_ids,
-    update_cluster_title,
+    update_cluster_label,
     update_news_cluster,
 )
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
@@ -76,7 +76,8 @@ def _cluster_row(cluster_id: int) -> dict:
             text(
                 """
                 SELECT representative_news_id, keywords, term_weights, cohesion,
-                       original_size, member_count, first_published_at, last_published_at, title
+                       original_size, member_count, first_published_at, last_published_at, title,
+                       summary
                 FROM news_clusters
                 WHERE id = :id;
                 """
@@ -231,8 +232,9 @@ def test_untitled_clusters_are_fetched_by_size_and_titled_once(news_rows):
     assert all(a.title.startswith("클러스터 ") for a in articles)
     assert articles[0].published_at == PUBLISHED  # 보도 시각 순
 
-    update_cluster_title(cluster_id, "유상증자 결정")
+    update_cluster_label(cluster_id, "유상증자 결정", "회사가 유상증자를 결정했어요.")
 
     assert _cluster_row(cluster_id)["title"] == "유상증자 결정"
+    assert _cluster_row(cluster_id)["summary"] == "회사가 유상증자를 결정했어요."
     # 이름이 생기면 다시 대상이 되지 않는다
     assert cluster_id not in fetch_untitled_cluster_ids(min_size=5, since=since)

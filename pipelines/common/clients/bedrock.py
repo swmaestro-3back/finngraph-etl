@@ -49,20 +49,22 @@ def get_bedrock_client(region: str, timeout: int) -> Any:
 EMBED_MAX_WORKERS = 8
 
 
-def embed_texts(texts: list[str], dim: int) -> list[list[float]]:
+def embed_texts(texts: list[str], dim: int, model: str | None = None) -> list[list[float]]:
     """Titan Embed v2 로 텍스트 목록을 임베딩한다. 순서는 입력 순서와 같다.
 
-    normalize=True 지만 조회가 코사인(<=>)이라 결과에는 영향이 없다.
+    normalize=True 지만 조회가 코사인(<=>)이라 결과에는 영향이 없다. model 을 안 주면
+    BEDROCK_EMBEDDING_MODEL(테마 임베딩, 질의 측과 묶임)을 쓴다.
     """
     import json
     from concurrent.futures import ThreadPoolExecutor
 
     settings = get_settings()
     client = get_bedrock_client(settings.bedrock_region, settings.bedrock_request_timeout)
+    model_id = model or settings.bedrock_embedding_model
 
     def embed_one(text: str) -> list[float]:
         response = client.invoke_model(
-            modelId=settings.bedrock_embedding_model,
+            modelId=model_id,
             body=json.dumps({"inputText": text, "dimensions": dim, "normalize": True}),
         )
         return json.loads(response["body"].read())["embedding"]

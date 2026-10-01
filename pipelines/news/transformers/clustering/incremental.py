@@ -20,7 +20,7 @@ first_published_at 이후 window_days 안에 발행된 것만 합류하고, 배�
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from pipelines.news.transformers.clustering.cluster import (
@@ -63,6 +63,8 @@ class ClusterAssignment:
     first_published_at: datetime
     last_published_at: datetime
     cohesion: float | None  # 새 클러스터의 배치 내 응집도. 시드 합류는 저장 후 다시 계산
+    # 시드 합류일 때 문서 인덱스 → 시드 프로필과의 유사도(cap 선별에 쓴 값). 새 클러스터는 비어 있다
+    seed_similarities: dict[int, float] = field(default_factory=dict)
 
 
 def sum_terms(*term_lists: Iterable[tuple[str, float]]) -> dict[str, float]:
@@ -194,6 +196,7 @@ def assign_batch(
 
         indices = [row - n_seeds for row in doc_rows]
         cohesion: float | None = None
+        seed_similarities: dict[int, float] = {}
 
         if seed_rows:
             # 시드끼리는 합쳐지지 않으므로 시드 행은 정확히 하나다.
@@ -210,6 +213,7 @@ def assign_batch(
             kept, dropped = select_within_cap(
                 candidates, seed.member_count, seed.last_stored_date, cap
             )
+            seed_similarities = {index: score for index, _, score in candidates}
         else:
             seed = None
             representative, cohesion = medoid_and_cohesion(similarity, doc_rows)
@@ -229,6 +233,7 @@ def assign_batch(
                 first_published_at=min(published),
                 last_published_at=max(published),
                 cohesion=cohesion,
+                seed_similarities=seed_similarities,
             )
         )
 

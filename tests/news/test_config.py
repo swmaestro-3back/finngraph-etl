@@ -30,3 +30,18 @@ def test_search_settings_read_env(monkeypatch):
     assert settings.search_max_pages == 5
     assert settings.search_lookback_days == 30
     assert settings.search_interval_hours == 1
+
+
+def test_issue_timeline_defaults():
+    from pipelines.news.config import NewsSettings
+
+    settings = NewsSettings(_env_file=None)
+
+    assert settings.cluster_summary_max_chars == 150
+    # 백필 전에 스케줄 연결이 돌지 않도록 기본은 꺼져 있다
+    assert settings.issue_link_enabled is False
+    assert settings.issue_link_threshold == 0.6
+    assert settings.issue_link_no_company_threshold == 0.75
+    assert settings.issue_link_lookback_days == 90
+    assert settings.issue_link_max_per_run == 200
+    assert settings.issue_embedding_model == "amazon.titan-embed-text-v2:0"

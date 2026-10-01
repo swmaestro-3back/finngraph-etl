@@ -56,6 +56,30 @@ class NewsSettings(BaseSettings):
     cluster_title_max_chars: int = Field(
         default=25, validation_alias="NEWS_CLUSTER_TITLE_MAX_CHARS"
     )
+    # 제목과 같은 호출에서 만드는 1~2문장 요약의 길이 상한. 넘치면 요약만 버리고 제목은 저장한다.
+    cluster_summary_max_chars: int = Field(
+        default=150, validation_alias="NEWS_CLUSTER_SUMMARY_MAX_CHARS"
+    )
+
+    # 이슈 타임라인 연결(jobs/link_issues.py). 임계값은 초기값이라 라벨 평가셋으로 다시 맞춘다.
+    # 스케줄 연결 스위치. 기존 클러스터의 요약·연결 백필이 끝난 뒤에 켠다 — 먼저 돌면 요약 없는
+    # 임베딩이 굳고, 백필 전의 옛 클러스터를 부모로 못 봐 루트로 굳는다. 백필 스크립트는 무시한다.
+    issue_link_enabled: bool = Field(default=False, validation_alias="NEWS_ISSUE_LINK_ENABLED")
+    # 기업이 겹치는 앞선 클러스터와의 코사인 하한
+    issue_link_threshold: float = Field(default=0.6, validation_alias="NEWS_ISSUE_LINK_THRESHOLD")
+    # 기업이 없는 클러스터끼리는 기업 겹침이라는 안전판이 없어 더 엄격하게 본다.
+    issue_link_no_company_threshold: float = Field(
+        default=0.75, validation_alias="NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD"
+    )
+    # 부모 후보는 대상의 first_published_at 이전 이 일수 안, 연결 대상은 지금부터 이 일수 안
+    issue_link_lookback_days: int = Field(
+        default=90, validation_alias="NEWS_ISSUE_LINK_LOOKBACK_DAYS"
+    )
+    issue_link_max_per_run: int = Field(default=200, validation_alias="NEWS_ISSUE_LINK_MAX_PER_RUN")
+    # 테마용 BEDROCK_EMBEDDING_MODEL 과 따로 둔다 — 그쪽은 질의 측(ai-server)과 묶여 있다.
+    issue_embedding_model: str = Field(
+        default="amazon.titan-embed-text-v2:0", validation_alias="NEWS_ISSUE_EMBEDDING_MODEL"
+    )
 
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
 

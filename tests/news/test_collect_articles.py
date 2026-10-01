@@ -8,6 +8,7 @@ import pytest
 
 from pipelines.news.repositories import news_companies
 from pipelines.news.repositories.search_history import CompanyQuery, CompanyQueryBatch
+from pipelines.news.transformers.cluster_titler import ClusterLabel
 from pipelines.news.transformers.filters import relevance_filter
 from pipelines.news.transformers.filters.relevance_filter import ArticleVerdict, BatchVerdict
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
@@ -47,6 +48,7 @@ def wired(monkeypatch):
         "seed_window": [],
         "resolved_names": [],
         "titles": [],
+        "judgments": [],
     }
 
     batch = CompanyQueryBatch(
@@ -98,24 +100,38 @@ def wired(monkeypatch):
         }
 
     monkeypatch.setattr(job, "save_news_items", fake_save)
+    # 판정마다 새 클러스터 501, 502, ... 가 만들어진 것으로 본다
     monkeypatch.setattr(
         job,
         "record_cluster_assignments",
-        lambda assignments, items, documents, keyword_count: {
-            "created": 1,
-            "updated": 0,
-            "failed": 0,
-        },
+        lambda assignments, items, documents, keyword_count: (
+            {"created": 1, "updated": 0, "failed": 0},
+            [501 + i for i in range(len(assignments))],
+        ),
+    )
+    monkeypatch.setattr(
+        job,
+        "insert_cluster_judgments",
+        lambda judgments: calls["judgments"].extend(judgments) or len(judgments),
     )
 
-    # 이번 런에 기준을 넘은 클러스터 77 에 이름을 짓는다
-    monkeypatch.setattr(job, "fetch_untitled_cluster_ids", lambda min_size, since: [77])
-    monkeypatch.setattr(job, "fetch_cluster_articles", lambda ids: {77: ["article"]})
+    # 이번 런에 기준을 넘은 클러스터 77 에 이름·요약을, 78 에는 이름만(요약 버림) 짓는다
+    monkeypatch.setattr(job, "fetch_untitled_cluster_ids", lambda min_size, since: [77, 78])
     monkeypatch.setattr(
-        job, "title_clusters", lambda clusters, max_concurrency, max_chars: {77: "양극재 공급계약"}
+        job, "fetch_cluster_articles", lambda ids: {77: ["article"], 78: ["article"]}
     )
     monkeypatch.setattr(
-        job, "update_cluster_title", lambda cid, title: calls["titles"].append((cid, title))
+        job,
+        "title_clusters",
+        lambda clusters, max_concurrency, max_chars, summary_max_chars: {
+            77: ClusterLabel("양극재 공급계약", "엘앤에프가 삼성SDI에 양극재를 공급해요."),
+            78: ClusterLabel("2분기 실적", None),
+        },
+    )
+    monkeypatch.setattr(
+        job,
+        "update_cluster_label",
+        lambda cid, title, summary: calls["titles"].append((cid, title, summary)),
     )
 
     def fake_resolve(names):
@@ -165,13 +181,69 @@ def test_run_filters_then_clusters_then_links_and_marks_only_searched(wired):
     # gazetteer 가 찾은 삼성SDI 와 출처 종목 엘앤에프가 모두 연결된다 (엘앤에프는 해석 실패 → 출처 fallback)
     assert calls["resolved_names"] == [["삼성SDI", "엘앤에프"]]
     assert calls["news_companies"] == [(900, [100, 300])]
-    # 기준을 넘은 클러스터에 이름이 붙는다
-    assert calls["titles"] == [(77, "양극재 공급계약")]
+    # 기준을 넘은 클러스터에 이름이 붙는다. 요약이 버려진 클러스터는 요약 NULL 로 이름만 저장
+    assert calls["titles"] == [
+        (77, "양극재 공급계약", "엘앤에프가 삼성SDI에 양극재를 공급해요."),
+        (78, "2분기 실적", None),
+    ]
     # 검색에 성공한 기업만 search_history 에 기록된다 — 실패한 200 은 다음 런에 다시 읽는다
     assert calls["marked"] == [[100]]
     # 시드 창은 배치 기사 발행일 기준이다: [가장 이른 발행 − 7일, 가장 늦은 발행]
     published = datetime(2026, 9, 9, 10, tzinfo=SEOUL_TIMEZONE)
     assert calls["seed_window"] == [(published - timedelta(days=7), published)]
+    # 판정된 기사(LLM 통과분)마다 판정 기록이 한 행 남는다
+    [judgment] = calls["judgments"]
+    assert (judgment.link, judgment.title, judgment.description) == (
+        "https://a/1",
+        "엘앤에프, 삼성SDI에 양극재 공급 계약",
+        "LFP 양극재",
+    )
+    assert judgment.published_at == published
+    assert (judgment.cluster_id, judgment.is_new_cluster, judgment.kept) == (501, True, True)
+    assert judgment.seed_similarity is None
+    assert judgment.run_at.tzinfo is not None
+
+
+def test_run_records_body_failed_article_as_non_member(wired, monkeypatch):
+    job, calls = wired
+    # 본문 크롤링이 실패해 저장되지 않으면 새 클러스터도 만들어지지 않는다
+    monkeypatch.setattr(job, "fetch_article_body", lambda items: items)
+    monkeypatch.setattr(
+        job,
+        "record_cluster_assignments",
+        lambda assignments, items, documents, keyword_count: (
+            {"created": 0, "updated": 0, "failed": 0},
+            [None] * len(assignments),
+        ),
+    )
+
+    job.run(theme_ids=[10, 11])
+
+    [judgment] = calls["judgments"]
+    assert (judgment.link, judgment.cluster_id, judgment.is_new_cluster, judgment.kept) == (
+        "https://a/1",
+        None,
+        True,
+        False,
+    )
+
+
+def test_run_continues_when_judgment_logging_fails(wired, monkeypatch, caplog):
+    job, calls = wired
+
+    def failing_insert(judgments):
+        raise RuntimeError("relation news_cluster_judgments does not exist")
+
+    monkeypatch.setattr(job, "insert_cluster_judgments", failing_insert)
+
+    result = job.run(theme_ids=[10, 11])
+
+    # 판정 기록은 평가용이라 실패해도 이름 짓기·기업 연결·검색 기록까지 끝까지 간다
+    assert result == {"created": 1, "updated": 0, "failed": 0}
+    assert [cid for cid, _, _ in calls["titles"]] == [77, 78]
+    assert calls["news_companies"] == [(900, [100, 300])]
+    assert calls["marked"] == [[100]]
+    assert "[판정 기록] 실패(건너뜀) 기사 1건 / 클러스터 1개: RuntimeError" in caplog.text
 
 
 def test_run_with_tickers_searches_backend_hot_theme_stocks(wired, monkeypatch):

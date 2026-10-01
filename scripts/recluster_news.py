@@ -2,8 +2,11 @@
 
 1. Neo4j Event 노드·HAS_EVENT 간선 삭제, news_clusters 전부 삭제, news.cluster_id 초기화
 2. news 를 발행일(KST) 순으로 하루씩 묶어 운영과 같은 규칙(창·cap·시드 합류)으로 다시 판정
-3. original_size 가 기준을 넘은 클러스터에 LLM 으로 이름 생성
+3. original_size 가 기준을 넘은 클러스터에 LLM 으로 이름·요약 생성
 4. events.generate_events 로 Neo4j Event 승격 (상한 단위로 반복)
+
+이슈 타임라인 연결은 클러스터와 함께 지워진다. 끝난 뒤 backfill_issue_timeline.py --links 로
+다시 잇는다.
 
 실행: .venv/bin/python scripts/recluster_news.py
 """
@@ -25,7 +28,7 @@ from pipelines.news.repositories.news_clusters import (
     fetch_cluster_articles,
     fetch_untitled_cluster_ids,
     record_cluster_assignments,
-    update_cluster_title,
+    update_cluster_label,
 )
 from pipelines.news.transformers.cluster_titler import title_clusters
 from pipelines.news.transformers.clustering import assign_batch, document_terms, seed_window
@@ -102,7 +105,7 @@ def recluster() -> dict[str, int]:
             cap=settings.cluster_max_articles,
             window_days=settings.cluster_window_days,
         )
-        result = record_cluster_assignments(
+        result, _ = record_cluster_assignments(
             assignments, items, documents, settings.cluster_keyword_count
         )
 
@@ -127,20 +130,22 @@ def recluster() -> dict[str, int]:
 def title_all(since: datetime) -> tuple[int, int]:
     settings = get_news_settings()
     untitled = fetch_untitled_cluster_ids(settings.cluster_title_min_size, since)
-    titles = title_clusters(
+    labels = title_clusters(
         fetch_cluster_articles(untitled),
         max_concurrency=settings.news_llm_max_concurrency,
         max_chars=settings.cluster_title_max_chars,
+        summary_max_chars=settings.cluster_summary_max_chars,
     )
-    for cluster_id, title in titles.items():
-        update_cluster_title(cluster_id, title)
+    for cluster_id, label in labels.items():
+        update_cluster_label(cluster_id, label.title, label.summary)
     log.info(
-        "[제목] 대상 %d → 생성 %d / 실패 %d",
+        "[제목] 대상 %d → 생성 %d (요약 %d) / 실패 %d",
         len(untitled),
-        len(titles),
-        len(untitled) - len(titles),
+        len(labels),
+        sum(1 for label in labels.values() if label.summary),
+        len(untitled) - len(labels),
     )
-    return len(untitled), len(titles)
+    return len(untitled), len(labels)
 
 
 def promote() -> dict[str, int]:

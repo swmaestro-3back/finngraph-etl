@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
@@ -14,12 +15,13 @@ from pipelines.news.repositories.news import (
     remove_stored_by_url,
     save_news_items,
 )
+from pipelines.news.repositories.news_cluster_judgments import insert_cluster_judgments
 from pipelines.news.repositories.news_clusters import (
     fetch_active_cluster_seeds,
     fetch_cluster_articles,
     fetch_untitled_cluster_ids,
     record_cluster_assignments,
-    update_cluster_title,
+    update_cluster_label,
 )
 from pipelines.news.repositories.news_companies import link_saved_items
 from pipelines.news.repositories.search_history import (
@@ -29,8 +31,10 @@ from pipelines.news.repositories.search_history import (
 )
 from pipelines.news.transformers.cluster_titler import title_clusters
 from pipelines.news.transformers.clustering import (
+    ClusterAssignment,
     assign_batch,
     batch_documents,
+    build_cluster_judgments,
     seed_window,
 )
 from pipelines.news.transformers.company_candidates import attach_candidate_companies
@@ -41,6 +45,39 @@ from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
 logger = get_logger(__name__)
+
+
+def _record_judgments(
+    items: list[dict[str, Any]],
+    assignments: list[ClusterAssignment],
+    published_ats: list[datetime],
+    cluster_ids: list[int | None],
+    run_at: datetime,
+) -> None:
+    """판정을 기사 단위로 news_cluster_judgments 에 남긴다. cap 탈락·본문 실패 기사도 포함.
+
+    평가용 기록이라 실패해도 런은 계속한다 — 경고만 남기고 건너뛴다.
+    """
+
+    try:
+        judgments = build_cluster_judgments(items, assignments, published_ats, cluster_ids, run_at)
+        inserted = insert_cluster_judgments(judgments)
+    except Exception as e:
+        logger.warning(
+            "[판정 기록] 실패(건너뜀) 기사 %d건 / 클러스터 %d개: %s: %s",
+            len(items),
+            len(assignments),
+            type(e).__name__,
+            e,
+        )
+        return
+
+    logger.info(
+        "[판정 기록] %d건 (멤버 %d / 비멤버 %d)",
+        inserted,
+        sum(1 for j in judgments if j.kept),
+        sum(1 for j in judgments if not j.kept),
+    )
 
 
 def run(theme_ids: list[int], tickers: list[str] | None = None) -> dict[str, int]:
@@ -167,25 +204,30 @@ def run(theme_ids: list[int], tickers: list[str] | None = None) -> dict[str, int
         save_result["failed_count"],
     )
 
-    # 12. 클러스터 기록: 본문 실패로 저장 안 된 기사는 멤버에서 빠진다
-    cluster_result = record_cluster_assignments(
+    # 12. 클러스터 기록: 본문 실패로 저장 안 된 기사는 멤버에서 빠진다. 클러스터 id 가 정해진
+    # 뒤라 판정 기록(멤버·cap 탈락·본문 실패 전부)도 여기서 남긴다
+    cluster_result, cluster_ids = record_cluster_assignments(
         assignments, passed, documents, settings.cluster_keyword_count
     )
+    _record_judgments(passed, assignments, published_ats, cluster_ids, run_started_at)
 
-    # 13. 클러스터 이름 — 이번 런에 판정 기사 수가 기준을 넘었는데 이름이 없는 클러스터만
+    # 13. 클러스터 이름·요약 — 이번 런에 판정 기사 수가 기준을 넘었는데 이름이 없는 클러스터만.
+    # 요약은 같은 호출에서 받고, 검증을 못 넘기면 요약만 NULL 로 둔다
     untitled = fetch_untitled_cluster_ids(settings.cluster_title_min_size, run_started_at)
-    titles = title_clusters(
+    labels = title_clusters(
         fetch_cluster_articles(untitled),
         max_concurrency=settings.news_llm_max_concurrency,
         max_chars=settings.cluster_title_max_chars,
+        summary_max_chars=settings.cluster_summary_max_chars,
     )
-    for cluster_id, title in titles.items():
-        update_cluster_title(cluster_id, title)
+    for cluster_id, label in labels.items():
+        update_cluster_label(cluster_id, label.title, label.summary)
     logger.info(
-        "[제목] 대상 %d → 생성 %d / 실패 %d",
+        "[제목] 대상 %d → 생성 %d (요약 %d) / 실패 %d",
         len(untitled),
-        len(titles),
-        len(untitled) - len(titles),
+        len(labels),
+        sum(1 for label in labels.values() if label.summary),
+        len(untitled) - len(labels),
     )
 
     # 14. 기업 연결 — 주체 종목명을 company_id 로 해석해 news_companies 에
