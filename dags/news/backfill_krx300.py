@@ -29,7 +29,8 @@ except ImportError:
     dag = None
     task = None
 
-# 청크 하나 = 기업 20개 × 검색어 5개 × 최대 8페이지 = 네이버 API 최대 800회
+# 청크 하나 = 기업 20개 × 검색어 6개(NEWS_SEARCH_QUERY_TEMPLATES) × 최대 8페이지
+# = 네이버 API 최대 960회
 CHUNK_SIZE = 20
 
 

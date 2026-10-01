@@ -109,7 +109,7 @@ def test_batch_exception_falls_back_to_individual_calls():
 
 
 def test_items_are_split_into_batches_of_batch_size(caplog):
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.DEBUG)
     items = [_item(f"기사 {i}", "엘앤에프") for i in range(25)]
     sizes: list[int] = []
 

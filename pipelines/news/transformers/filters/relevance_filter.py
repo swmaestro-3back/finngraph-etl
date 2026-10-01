@@ -190,7 +190,7 @@ async def judge_items(
         # 묶음은 동시에 돌아 완료 순서가 섞이므로 완료 수만 센다
         progress["batches"] += 1
         progress["articles"] += len(articles)
-        logging.info(
+        logging.debug(
             "[LLM] 판정 %d/%d 묶음 (기사 %d/%d건)",
             progress["batches"],
             len(batches),

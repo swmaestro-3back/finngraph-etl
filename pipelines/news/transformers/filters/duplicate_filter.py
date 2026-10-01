@@ -62,6 +62,6 @@ def remove_duplicate_by_url(
         for url_key in url_keys:
             seen_url_map[url_key] = item
 
-    logging.info(f"총 {len(items)}개 중 {len(removed_items)}개 URL 중복으로 인한 드랍")
+    logging.debug(f"총 {len(items)}개 중 {len(removed_items)}개 URL 중복으로 인한 드랍")
 
     return unique_items, removed_items

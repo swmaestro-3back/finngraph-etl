@@ -9,6 +9,7 @@ from pipelines.news.repositories.trade_dates import fetch_latest_trade_date
 
 def run(theme_ids: list[int] | None = None) -> list[int]:
     if theme_ids:
+        logging.info("[select_themes] 수동 지정 테마 %d개 사용", len(theme_ids))
         return [int(theme_id) for theme_id in theme_ids]
 
     hot = fetch_hot_themes()
@@ -19,9 +20,8 @@ def run(theme_ids: list[int] | None = None) -> list[int]:
         )
 
     logging.info(
-        "백엔드 핫테마 %d개 사용 (기준일 %s): %s",
+        "[select_themes] 핫테마 %d개 사용 (기준일 %s)",
         len(hot.theme_ids),
         hot.trade_date,
-        hot.theme_ids,
     )
     return hot.theme_ids

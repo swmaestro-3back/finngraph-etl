@@ -264,7 +264,7 @@ def collect_company_news(
             collected.extend(collect_stock_news(query, run_started_at, lookback_days, max_pages))
         except NewsSearchError as e:
             failed_company_ids.append(query.company_id)
-            logging.warning(
+            logging.debug(
                 "종목 수집 실패(건너뜀): %s (company_id=%s): %s", query.name, query.company_id, e
             )
 

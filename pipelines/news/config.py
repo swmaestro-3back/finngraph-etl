@@ -23,13 +23,14 @@ class NewsSettings(BaseSettings):
     # 최신순. 테마 last_searched_at 을 워터마크로 삼아 페이지를 멈추려면 날짜 순이어야 한다.
     search_sort: str = Field(default="date", validation_alias="SEARCH_SORT")
     # 종목명으로 실제 검색어를 만드는 서식 목록. 기업마다 서식 수만큼 검색한다.
-    # 공급·계약 기사와 종목에 영향을 주는 수혜·악재·특징주 기사를 고른다.
+    # 공급·계약 기사와 종목에 영향을 주는 수혜·호재·악재·특징주 기사를 고른다.
     # env 는 JSON 배열로 준다 (예: ["{name},공급","{name},특징주"]).
     search_query_templates: list[str] = Field(
         default=[
             "{name},공급",
             "{name},계약",
             "{name},수혜",
+            "{name},호재",
             "{name},악재",
             "{name},특징주",
         ],

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from pipelines.common.logging import get_logger
 from pipelines.news.repositories.news import (
     fetch_unsummarized_news_items,
     save_news_summaries,
 )
 from pipelines.news.transformers.summarizer import summarize_news_items
+
+logger = get_logger(__name__)
 
 
 def summarize_unsummarized_news(
@@ -59,16 +62,13 @@ def run(
         summary["applied"] = True
         summary["saved"] = save_result["saved_count"]
 
-    print("\n" + "=" * 70)
-    print("뉴스 요약 결과" + ("" if apply else " (dry-run)"))
-    print("=" * 70)
-    print(f"조회(미요약) 수: {summary['fetched']}")
-    print(f"요약 생성 수: {summary['summarized']}")
-    if summary["applied"]:
-        print(f"저장됨: {summary['saved']}개")
-    else:
-        print("dry-run: DB 변경 없음")
-    print("=" * 70)
+    logger.info(
+        "[summarize_articles] 완료: 미요약 %d → 요약 %d / 저장 %d%s",
+        summary["fetched"],
+        summary["summarized"],
+        summary["saved"],
+        "" if apply else " (dry-run)",
+    )
 
     return summary
 

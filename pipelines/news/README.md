@@ -5,7 +5,7 @@
 ## 수집 원천
 
 `jobs/collect_articles.run(theme_ids)` 가 받은 테마의 편입 종목을 기업 단위로 모으고
-(`repositories/search_history.py`), 기업마다 `NEWS_SEARCH_QUERY_TEMPLATES`(기본 `{name},공급`·`{name},계약`·`{name},수혜`·`{name},악재`·`{name},특징주` 다섯 개)로
+(`repositories/search_history.py`), 기업마다 `NEWS_SEARCH_QUERY_TEMPLATES`(기본 `{name},공급`·`{name},계약`·`{name},수혜`·`{name},호재`·`{name},악재`·`{name},특징주` 여섯 개)로
 검색어를 만들어 서식마다 네이버 뉴스 검색 API 를 최신순으로 호출합니다
 (`extractors/search_collector.py`). 같은 기업이 여러 테마·여러 종목으로 나오면 한 번만
 검색하고, 종목명은 stock id 순 첫 종목의 것을 씁니다.
@@ -69,7 +69,7 @@
 `news_backfill_krx300` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx300` 활성 종목의 기업
 (`fetch_due_krx300_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx300` 을 돌리고,
 이어서 삼중항 추출·요약을 한 번 돌립니다. 대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은
-`collect()` 를 씁니다.
+`collect()` 를 씁니다. 검색어도 스케줄 런과 같은 `NEWS_SEARCH_QUERY_TEMPLATES` 입니다.
 
 - 수집 창은 트리거 params 로 넓힙니다: `lookback_days`(기본 180, 최대 180), `max_pages`(기본 8,
   최대 10). 스케줄 런은 `NEWS_SEARCH_LOOKBACK_DAYS`·`NEWS_SEARCH_MAX_PAGES` 를 그대로 씁니다.

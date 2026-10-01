@@ -13,6 +13,7 @@ def test_search_defaults():
         "{name},공급",
         "{name},계약",
         "{name},수혜",
+        "{name},호재",
         "{name},악재",
         "{name},특징주",
     ]

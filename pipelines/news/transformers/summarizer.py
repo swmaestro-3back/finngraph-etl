@@ -162,9 +162,8 @@ async def build_summary_for_item_async(
         async with semaphore:
             summary = await summarize_with_bedrock_async(item=item, config=config)
     except Exception as e:
-        title = get_printable_text(item.get("title", ""))
         logging.warning(
-            f"Bedrock 비동기 실패: news_id={news_id}, title={title}, error={type(e).__name__}: {e}"
+            f"[summarize_articles] 요약 실패: news_id={news_id}, error={type(e).__name__}: {e}"
         )
         return None
 
