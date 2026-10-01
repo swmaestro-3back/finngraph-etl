@@ -98,9 +98,13 @@ news_scheduled_pipeline ──(collect_articles)──► etl://news/clusters �
 밀린 기사를 처리한다.
 
 `select_themes`가 백엔드가 Redis(`etl:hot-themes`, `HOT_THEMES_REDIS_URL`)에 발행한 핫테마를
-읽고 — 조회 실패·키 없음·기준일 불일치면 폴백 없이 태스크가 실패한다 — `collect_articles`가 그 테마의 편입 기업을 검색한다(`특징주,{종목명}`·`{종목명}` 두 번, 최신순, 기업별
+읽고 — 조회 실패·키 없음·기준일 불일치면 폴백 없이 태스크가 실패한다 — `collect_articles`가 그 테마의 편입 기업을 검색한다(`NEWS_SEARCH_QUERY_TEMPLATES` 기본 `{종목명},공급`·`계약`·`수혜`·`호재`·`악재`·`특징주` 여섯 번, 최신순, 기업별
 `search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
 `theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
+
+초기 뉴스 백필(`news_backfill_krx300`)은 대상만 `stocks.krx300` 활성 종목의 기업으로 바뀌고,
+검색어(같은 `NEWS_SEARCH_QUERY_TEMPLATES` 여섯 개)와 워터마크 규칙은 위와 같다. 수집 창만 트리거
+params(`lookback_days`·`max_pages`)로 넓힌다.
 
 ## 독립실행 Crons
 
