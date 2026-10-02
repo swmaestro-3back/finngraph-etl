@@ -35,9 +35,7 @@ from pipelines.news.transformers.clustering import (
     batch_documents,
     seed_window,
 )
-from pipelines.news.transformers.filters.company_mention_filter import (
-    drop_query_company_unmentioned,
-)
+from pipelines.news.transformers.company_matches import match_title_companies
 from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
 from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
 from pipelines.news.transformers.filters.relevance_filter import filter_relevant_news
@@ -132,31 +130,36 @@ def collect(
             failed_company_ids,
         )
 
-    # 3. 배치 내 URL 중복 제거
-    unique_items, _ = remove_duplicate_by_url(collected)
+    # 3. 제목 기업 매치 — 제목에 검색 종목(별칭 포함)이 없는 기사 제거, 제목의 상장사는 판정
+    # 대상으로 붙인다. URL 중복 제거보다 먼저다 — 같은 기사가 여러 종목 검색에 걸리면 중복 제거는
+    # 먼저 걸린 사본만 남기는데, 그 검색 종목이 제목에 없으면 제목의 주인공 기업 사본까지 함께
+    # 사라진다. 매치가 먼저 거르면 살아남는 사본은 검색 종목이 제목에 있는 것뿐이다.
+    matched = match_title_companies(collected)
 
-    # 4. 기사 유형 필터로 제거
+    # 4. 배치 내 URL 중복 제거
+    unique_items, _ = remove_duplicate_by_url(matched.kept)
+
+    # 5. 기사 유형 필터로 제거. 선두 브라켓([포토]·[…특징주])으로 거르므로 폴리싱보다 먼저다
     typed_items, _ = filter_official_source_news(
         unique_items,
         pipeline_input={},
         official_source_threshold=settings.official_source_threshold,
     )
 
-    # 5. 제목 폴리싱 (선두 브라켓 제거)
+    # 6. 제목 폴리싱 (선두 브라켓 제거)
     for item in typed_items:
         item["title"] = remove_leading_title_brackets(item.get("title", ""))
 
-    # 6. 이미 저장된 URL 제거
-    unstored_items = remove_stored_by_url(typed_items)
-
-    # 7. 검색 대상 종목명이 제목·스니펫에 없는 기사 제거
-    new_items, _ = drop_query_company_unmentioned(unstored_items)
+    # 7. 이미 저장된 URL 제거 — DB 조회라 메모리 필터를 다 거친 뒤 한 번만 한다
+    new_items = remove_stored_by_url(typed_items)
     logger.info(
-        "[collect_articles] 필터: URL 중복 제거 %d → 유형 필터 %d → DB 기존 제거 %d "
-        "→ 종목명 있음 %d",
+        "[collect_articles] 필터: 제목에 검색 종목 %d (판정 기업 %d개, 기사당 최대 %d) "
+        "→ URL 중복 제거 %d → 유형 필터 %d → DB 기존 제거 %d",
+        len(matched.kept),
+        matched.companies,
+        matched.max_companies,
         len(unique_items),
         len(typed_items),
-        len(unstored_items),
         len(new_items),
     )
 
@@ -168,8 +171,9 @@ def collect(
         )
     passed = relevance.passed
     logger.info(
-        "[collect_articles] 관련성: 통과 %d / 무효 %d / 실패 %d",
+        "[collect_articles] 관련성: 통과 %d (연결 기업 %d개) / 무효 %d / 실패 %d",
         len(passed),
+        sum(len(item.get("_linked_companies") or []) for item in passed),
         len(relevance.invalid),
         len(relevance.failed),
     )
@@ -247,7 +251,7 @@ def collect(
             untitled_failed,
         )
 
-    # 14. 기업 연결 — 검색 대상 기업을 news_companies 에
+    # 14. 기업 연결 — 제목에 나와 판정을 통과한 기업 전부를 news_companies 에
     linked = link_saved_items(storable)
 
     # 15. 기업 최신 검색 기록 갱신

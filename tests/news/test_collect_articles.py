@@ -6,11 +6,29 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from pipelines.common.gazetteer import CompanyMatcher, GazetteerEntry
 from pipelines.news.repositories import news_companies
 from pipelines.news.repositories.search_history import CompanyQuery, CompanyQueryBatch
+from pipelines.news.transformers import company_matches
 from pipelines.news.transformers.filters import relevance_filter
-from pipelines.news.transformers.filters.relevance_filter import ArticleVerdict, BatchVerdict
+from pipelines.news.transformers.filters.relevance_filter import (
+    ArticleVerdict,
+    BatchVerdict,
+    CompanyVerdict,
+)
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
+
+# 개체 사전 대역: 검색 종목 엘앤에프(100)와 제목에 함께 나오는 삼성SDI(300)
+MATCHER = CompanyMatcher(
+    {
+        "엘앤에프": GazetteerEntry(
+            company_id=100, stock_id=1100, ticker="066970", canonical="엘앤에프"
+        ),
+        "삼성SDI": GazetteerEntry(
+            company_id=300, stock_id=1300, ticker="006400", canonical="삼성SDI"
+        ),
+    }
+)
 
 
 def _item(title: str, link: str, description: str = "") -> dict:
@@ -26,7 +44,7 @@ def _item(title: str, link: str, description: str = "") -> dict:
 
 @pytest.fixture
 def wired(monkeypatch):
-    """run() 의 I/O 를 전부 갈아끼우고 호출 기록을 남긴다. gazetteer 후보 추출은 실제 코드다."""
+    """run() 의 I/O 를 전부 갈아끼우고 호출 기록을 남긴다. 개체 사전은 인라인 매처다."""
     from pipelines.news import config
     from pipelines.news.jobs import collect_articles as job
 
@@ -58,6 +76,7 @@ def wired(monkeypatch):
     market = _item("코스피 7000선 사수", "https://a/2")
     existing = _item("엘앤에프 2분기 흑자 전환", "https://a/old")
 
+    monkeypatch.setattr(company_matches, "get_company_matcher", lambda: MATCHER)
     monkeypatch.setattr(job, "validate_search_settings", lambda: None)
     monkeypatch.setattr(job, "fetch_due_company_queries", lambda ids, hours, now: batch)
     # 200 번 기업의 검색은 실패한 것으로 본다
@@ -132,9 +151,16 @@ def wired(monkeypatch):
     )
 
     async def judge(articles):
+        # 시황 기사는 무효, 나머지는 판정 기업 모두 통과로 본다
         return BatchVerdict(
             verdicts=[
-                ArticleVerdict(id=article.id, valid=not article.title.startswith("코스피"))
+                ArticleVerdict(
+                    id=article.id,
+                    companies=[
+                        CompanyVerdict(name=name, valid=not article.title.startswith("코스피"))
+                        for name in article.companies
+                    ],
+                )
                 for article in articles
             ]
         )
@@ -152,9 +178,9 @@ def test_run_filters_then_clusters_then_links_and_marks_only_searched(wired):
     result = job.run(theme_ids=[10, 11])
 
     assert result == {"created": 1, "updated": 0, "failed": 0}
-    # 시장 일반 기사는 검색 종목명이 없어서, 기존 기사는 DB 대조로 버려져 fresh 하나만 저장·연결된다.
-    # 검색 대상 기업 엘앤에프에만 연결된다 (본문에 나온 삼성SDI 는 삼중항 추출이 연결한다)
-    assert calls["news_companies"] == [(900, [100])]
+    # 시장 일반 기사는 제목에 검색 종목이 없어서, 기존 기사는 DB 대조로 버려져 fresh 하나만
+    # 저장·연결된다. 제목에 함께 나와 판정을 통과한 삼성SDI 도 같이 연결된다.
+    assert calls["news_companies"] == [(900, [100, 300])]
     # 기준을 넘은 클러스터에 이름이 붙는다
     assert calls["titles"] == [(77, "양극재 공급계약")]
     # 검색에 성공한 기업만 search_history 에 기록된다 — 실패한 200 은 다음 런에 다시 읽는다
@@ -232,3 +258,102 @@ def test_run_uses_settings_collection_window(wired):
     job.run(theme_ids=[10, 11])
 
     assert calls["collect_window"] == [(None, None)]
+
+
+def test_run_sends_title_companies_and_links_only_valid_ones(wired, monkeypatch):
+    job, calls = wired
+    sent: list[tuple[str, ...]] = []
+
+    async def judge(articles):
+        sent.extend(article.companies for article in articles)
+        return BatchVerdict(
+            verdicts=[
+                ArticleVerdict(
+                    id=article.id,
+                    companies=[
+                        CompanyVerdict(name="엘앤에프", valid=True),
+                        CompanyVerdict(name="삼성SDI", valid=False),
+                    ],
+                )
+                for article in articles
+            ]
+        )
+
+    monkeypatch.setattr(relevance_filter, "get_relevance_judge", lambda: judge)
+
+    job.run(theme_ids=[10, 11])
+
+    # 검색 종목이 첫 번째, 제목 표기 그대로
+    assert sent == [("엘앤에프", "삼성SDI")]
+    assert calls["news_companies"] == [(900, [100])]
+
+
+def test_run_matches_titles_first_and_queries_stored_urls_last(wired, monkeypatch):
+    job, calls = wired
+    order: list[tuple[str, list[str]]] = []
+
+    def fake_type(items, pipeline_input, official_source_threshold):
+        order.append(("type", [item["link"] for item in items]))
+        return items, []
+
+    def fake_stored(items):
+        order.append(("stored", [item["link"] for item in items]))
+        return [item for item in items if item["link"] != "https://a/old"]
+
+    monkeypatch.setattr(job, "filter_official_source_news", fake_type)
+    monkeypatch.setattr(job, "remove_stored_by_url", fake_stored)
+
+    job.run(theme_ids=[10, 11])
+
+    # 제목 매치가 시황 기사(https://a/2)를 먼저 버리고, DB 대조는 메모리 필터를 다 통과한 기사에만
+    # 맨 마지막에 돈다
+    assert order == [
+        ("type", ["https://a/1", "https://a/old"]),
+        ("stored", ["https://a/1", "https://a/old"]),
+    ]
+
+
+def test_run_keeps_the_copy_whose_query_company_is_in_the_title(wired, monkeypatch):
+    job, calls = wired
+    # 같은 기사가 에코프로 검색에 먼저 걸렸다. 제목에 에코프로가 없으므로 그 사본은 버리고, 제목의
+    # 주인공 엘앤에프로 검색한 사본이 중복 제거에서 살아남아야 한다.
+    fresh = _item("엘앤에프, 삼성SDI에 양극재 공급 계약", "https://a/1", "LFP 양극재")
+    first_copy = dict(fresh, _query_company={"company_id": 200, "name": "에코프로"})
+    monkeypatch.setattr(
+        job, "collect_company_news", lambda queries, now, lookback, pages: ([first_copy, fresh], [])
+    )
+
+    job.run(theme_ids=[10, 11])
+
+    assert calls["news_companies"] == [(900, [100, 300])]
+
+
+def test_run_stores_article_when_another_fetching_search_company_is_valid(wired, monkeypatch):
+    job, calls = wired
+    # 같은 기사가 엘앤에프(100)·삼성SDI(300) 두 검색에 걸렸다. 중복 제거는 먼저 걸린 엘앤에프 사본을
+    # 남기지만, 엘앤에프가 invalid 여도 함께 가져온 삼성SDI 가 valid 면 저장·연결돼야 한다.
+    fresh = _item("엘앤에프, 삼성SDI에 양극재 공급 계약", "https://a/1", "LFP 양극재")
+    sdi_copy = dict(fresh, _query_company={"company_id": 300, "name": "삼성SDI"})
+    monkeypatch.setattr(
+        job, "collect_company_news", lambda queries, now, lookback, pages: ([fresh, sdi_copy], [])
+    )
+
+    async def judge(articles):
+        return BatchVerdict(
+            verdicts=[
+                ArticleVerdict(
+                    id=article.id,
+                    companies=[
+                        CompanyVerdict(name="엘앤에프", valid=False),
+                        CompanyVerdict(name="삼성SDI", valid=True),
+                    ],
+                )
+                for article in articles
+            ]
+        )
+
+    monkeypatch.setattr(relevance_filter, "get_relevance_judge", lambda: judge)
+
+    job.run(theme_ids=[10, 11])
+
+    assert calls["news_companies"] == [(900, [300])]
