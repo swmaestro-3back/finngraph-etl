@@ -1,4 +1,4 @@
-"""트리플 파이프라인의 RDB 적재 (relation_sources · news_companies · news.triple_extracted).
+"""트리플 파이프라인의 RDB 적재 (relation_sources · news.triple_extracted).
 
 relation_sources는 뉴스·공시 근거를 함께 담는 원장이고, 이 모듈은 그중 뉴스
 (source_type='news') 행을 쓴다. 공시 행은 disclosures/loaders/postgres.py가 쓴다.
@@ -57,33 +57,6 @@ def insert_relation_sources(news_id: int, mentioned_at: date, rows: list[dict]) 
             result = session.execute(
                 INSERT_RELATION_SOURCE_SQL,
                 {"news_id": news_id, "mentioned_at": mentioned_at, **row},
-            )
-            inserted_count += result.rowcount or 0
-
-    return inserted_count
-
-
-def insert_news_companies(news_id: int, company_ids: list[int]) -> int:
-    """뉴스-기업 매핑을 news_companies에 멱등 적재한다. 신규 행 수를 반환한다."""
-
-    unique_ids = sorted({int(company_id) for company_id in company_ids if company_id})
-
-    if not unique_ids:
-        return 0
-
-    inserted_count = 0
-
-    with session_scope() as session:
-        for company_id in unique_ids:
-            result = session.execute(
-                text(
-                    """
-                    INSERT INTO news_companies (news_id, company_id)
-                    VALUES (:news_id, :company_id)
-                    ON CONFLICT (news_id, company_id) DO NOTHING;
-                    """
-                ),
-                {"news_id": news_id, "company_id": company_id},
             )
             inserted_count += result.rowcount or 0
 

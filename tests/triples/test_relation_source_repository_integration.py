@@ -1,4 +1,4 @@
-"""relation_sources / news_companies 적재 통합 테스트.
+"""relation_sources 적재 통합 테스트.
 
 로컬 DB 필요: docker compose up -d db 후 0000 베이스라인 적용 상태.
 """
@@ -12,10 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.triples.loaders.postgres import (
-    insert_news_companies,
-    insert_relation_sources,
-)
+from pipelines.triples.loaders.postgres import insert_relation_sources
 from pipelines.triples.references.rdb import fetch_edge_summaries
 
 pytestmark = pytest.mark.integration
@@ -115,10 +112,3 @@ def test_fetch_edge_summaries_aggregates_ledger(news_and_company):
 
     # 원장에 근거가 없는 키는 결과에 없다
     assert fetch_edge_summaries([(f"없음{marker}", "SUPPLIES_TO", obj)]) == []
-
-
-def test_insert_news_companies_is_idempotent(news_and_company):
-    news_id, company_id, _ = news_and_company
-
-    assert insert_news_companies(news_id, [company_id]) == 1
-    assert insert_news_companies(news_id, [company_id]) == 0

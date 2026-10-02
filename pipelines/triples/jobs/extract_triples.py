@@ -9,12 +9,10 @@ from pipelines.triples.edges import source_row_of
 from pipelines.triples.loaders.neo4j import sync_edge_summaries
 from pipelines.triples.loaders.postgres import (
     fetch_unprocessed_triple_news_items,
-    insert_news_companies,
     insert_relation_sources,
     mark_triple_extraction_result,
 )
 from pipelines.triples.references.rdb import fetch_edge_summaries
-from pipelines.triples.transformers.company_links import collect_company_ids
 from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)
@@ -23,9 +21,11 @@ logger = get_logger(__name__)
 async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
     """
     1. LangGraph Runner 실행
-    2. relation_sources(근거 원장)에 뉴스 근거 적재 + news_companies(기업 매핑) 적재
+    2. relation_sources(근거 원장)에 뉴스 근거 적재
     3. entities_relations 뷰 기준으로 Neo4j 간선 요약 동기화
     4. News 테이블에 triple_extracted 마킹
+
+    news_companies 는 쓰지 않는다 — 수집 단계가 저장과 함께 연결한다.
     """
     news_id = item["news_id"]
 
@@ -52,9 +52,6 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
             insert_relation_sources(news_id, item["mentioned_at"], source_rows)
             summaries = fetch_edge_summaries(sorted(seen_keys))
             await sync_edge_summaries(summaries)
-
-            # 삼중항에 등장한 상장사를 news_companies에 연결
-            insert_news_companies(news_id, collect_company_ids(triplets))
 
         has_triplets = bool(triplets)
         mark_triple_extraction_result(
