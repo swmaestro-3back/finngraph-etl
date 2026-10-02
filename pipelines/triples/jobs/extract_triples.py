@@ -13,12 +13,8 @@ from pipelines.triples.loaders.postgres import (
     insert_relation_sources,
     mark_triple_extraction_result,
 )
-from pipelines.triples.references.graph import fetch_company_tickers
 from pipelines.triples.references.rdb import fetch_edge_summaries
-from pipelines.triples.transformers.company_links import (
-    collect_company_names,
-    resolve_company_ids,
-)
+from pipelines.triples.transformers.company_links import collect_company_ids
 from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)
@@ -39,15 +35,11 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
         triplets = final_state.get("triplets") or []
 
         if triplets:
-            # 기업명→ticker 매핑은 원장 code 백필과 news_companies 해석에 공유한다.
-            names = collect_company_names(triplets)
-            name_to_ticker = await fetch_company_tickers(names)
-
             # 같은 뉴스 안에서 여러 문장이 같은 삼중항으로 수렴하면 첫 문장만 남긴다.
             source_rows: list[dict] = []
             seen_keys: set[tuple[str, str, str]] = set()
             for triplet in triplets:
-                row = source_row_of(triplet, name_to_ticker)
+                row = source_row_of(triplet)
                 if row is None:
                     continue
                 key = (row["subject_name"], row["relation"], row["object_name"])
@@ -62,7 +54,7 @@ async def _process_item(runner: GraphRunner, item: dict[str, Any]) -> str:
             await sync_edge_summaries(summaries)
 
             # 삼중항에 등장한 상장사를 news_companies에 연결
-            insert_news_companies(news_id, resolve_company_ids(name_to_ticker))
+            insert_news_companies(news_id, collect_company_ids(triplets))
 
         has_triplets = bool(triplets)
         mark_triple_extraction_result(

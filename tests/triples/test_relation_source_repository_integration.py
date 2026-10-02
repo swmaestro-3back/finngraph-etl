@@ -16,10 +16,7 @@ from pipelines.triples.loaders.postgres import (
     insert_news_companies,
     insert_relation_sources,
 )
-from pipelines.triples.references.rdb import (
-    fetch_company_ids_by_tickers,
-    fetch_edge_summaries,
-)
+from pipelines.triples.references.rdb import fetch_edge_summaries
 
 pytestmark = pytest.mark.integration
 
@@ -125,11 +122,3 @@ def test_insert_news_companies_is_idempotent(news_and_company):
 
     assert insert_news_companies(news_id, [company_id]) == 1
     assert insert_news_companies(news_id, [company_id]) == 0
-
-
-def test_fetch_company_ids_by_tickers(news_and_company):
-    _, company_id, ticker = news_and_company
-
-    mapping = fetch_company_ids_by_tickers([ticker, "존재하지않는티커"])
-
-    assert mapping == {ticker: company_id}

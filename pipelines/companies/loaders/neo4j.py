@@ -37,7 +37,7 @@ SET old.name = row.name
 # 예2) 속성 부여 — 뉴스에서 트리플이 이름만으로 만들어 둔 노드
 #   전  (:Company {name: "삼성전자"})-[:SUPPLIES]->(:Company {name: "애플"})
 #   후  (:Company {name: "삼성전자", ticker: "005930", ...})-[:SUPPLIES]->(:Company)
-#       이 단계가 없으면 트리플 code 조회(references/graph.py)가 계속 NULL로 남는다.
+#       트리플은 gazetteer 정식명(companies.name)으로 MERGE 하므로 같은 노드에 붙는다.
 #
 UPSERT_COMPANIES_CYPHER = """
 UNWIND $rows AS row
