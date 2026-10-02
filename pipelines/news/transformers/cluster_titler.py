@@ -13,15 +13,13 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from pipelines.news.repositories.news_clusters import ClusterArticle
+from pipelines.news.transformers.prompts import cluster_title as cluster_title_prompt
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import remove_leading_title_brackets
-
-PROMPT_PATH = Path(__file__).with_name("prompts") / "cluster_title_system.txt"
 
 LEAD_CHARS = 600
 DEFAULT_MAX_TOKENS = 128
@@ -40,7 +38,7 @@ def _collapse(text: str) -> str:
 
 
 def build_title_input(articles: list[ClusterArticle], lead_chars: int = LEAD_CHARS) -> str:
-    """`[기사 N] 날짜 | 제목` 과 본문 리드로 LLM 입력을 만든다."""
+    """기사마다 프롬프트 USER 블록(`[기사 N] 날짜 | 제목` + 본문 리드)을 빈 줄로 잇는다."""
 
     blocks: list[str] = []
     for index, article in enumerate(articles, start=1):
@@ -49,8 +47,13 @@ def build_title_input(articles: list[ClusterArticle], lead_chars: int = LEAD_CHA
             if article.published_at
             else "날짜 미상"
         )
-        lead = _collapse(article.text)[:lead_chars].rstrip()
-        blocks.append(f"[기사 {index}] {day} | {_collapse(article.title)}\n{lead}".rstrip())
+        block = cluster_title_prompt.USER.format(
+            index=index,
+            date=day,
+            title=_collapse(article.title),
+            lead=_collapse(article.text)[:lead_chars].rstrip(),
+        )
+        blocks.append(block.rstrip())
 
     return "\n\n".join(blocks)
 
@@ -75,15 +78,13 @@ def validate_cluster_title(title: str, max_chars: int) -> str:
 def build_shorten_input(articles_text: str, too_long: str, max_chars: int) -> str:
     """길이 초과 제목을 돌려주며 같은 사건을 더 짧게 짓도록 하는 재요청 입력."""
 
-    return (
-        f"{articles_text}\n\n[재요청] 앞서 만든 제목 '{too_long}'은 {len(too_long)}자로 "
-        f"{max_chars}자를 넘는다. 같은 사건을 {max_chars}자 이내로 다시 짓는다. "
-        "고유명사는 남기고 꼬리 명사·수식어부터 뺀다."
+    return cluster_title_prompt.RETRY.format(
+        articles=articles_text, title=too_long, length=len(too_long), max_chars=max_chars
     )
 
 
 def load_system_prompt(max_chars: int) -> str:
-    return PROMPT_PATH.read_text(encoding="utf-8").replace("{max_chars}", str(max_chars))
+    return cluster_title_prompt.SYSTEM.format(max_chars=max_chars)
 
 
 class ClusterTitler:

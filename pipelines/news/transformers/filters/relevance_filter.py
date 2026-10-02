@@ -10,15 +10,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-PROMPT_DIRECTORY = Path(__file__).resolve().parents[1] / "prompts"
+from pipelines.news.transformers.prompts import relevance as relevance_prompt
 
 DEFAULT_MAX_TOKENS = 1024
-DEFAULT_BATCH_SIZE = 10
 RETRY_ATTEMPTS = 2
 
 
@@ -72,19 +70,22 @@ class RelevanceResult:
     failed: list[dict[str, Any]] = field(default_factory=list)
 
 
-@lru_cache
 def load_system_prompt() -> str:
-    return (PROMPT_DIRECTORY / "relevance_single_system.txt").read_text(encoding="utf-8").strip()
+    return relevance_prompt.SYSTEM
 
 
 def build_relevance_input(articles: list[ArticleInput]) -> str:
-    blocks: list[str] = []
-    for article in articles:
-        blocks.append(
-            f"[기사 {article.id}]\n제목: {article.title}\n요약: {article.description}\n"
-            f"판정 기업: {', '.join(article.companies)}"
+    """기사마다 프롬프트 USER 블록을 채워 빈 줄로 잇는다."""
+
+    return "\n\n".join(
+        relevance_prompt.USER.format(
+            id=article.id,
+            title=article.title,
+            description=article.description,
+            companies=", ".join(article.companies),
         )
-    return "\n\n".join(blocks)
+        for article in articles
+    )
 
 
 def chunked(values: list, size: int) -> list[list]:
