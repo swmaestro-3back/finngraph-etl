@@ -7,7 +7,7 @@
 ```text
 finngraph-etl/
 ├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
-│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드
+│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드 · 개체 사전 생성
 │   ├── disclosures/      # DART 공시(단일판매ㆍ공급계약체결) 수집
 │   ├── health/           # 운영 헬스체크
 │   ├── news/             # 뉴스 수집 · 필터 · 요약
@@ -17,7 +17,8 @@ finngraph-etl/
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
 │   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
-│   │   └── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   │   ├── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   │   └── gazetteer.py  # 개체 사전 매처 — 본문 기업 표기 → company_id·stock_id·ticker
 │   ├── companies/        # 법인 ETL
 │   ├── disclosures/      # DART 공시 ETL
 │   ├── stocks/           # 주식 및 주가 ETL
