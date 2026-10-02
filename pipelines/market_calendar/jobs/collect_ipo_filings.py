@@ -49,12 +49,13 @@ from pipelines.market_calendar.transformers.offerings import (
 logger = get_logger(__name__)
 
 LOOKBACK_DAYS = 89
+DEFAULT_DESCRIPTION_LIMIT = 10
 
 
 def run(
     today: date | None = None,
     client: DartClient | None = None,
-    description_limit: int | None = None,
+    description_limit: int | None = DEFAULT_DESCRIPTION_LIMIT,
 ) -> int:
     today = today or now_kst().date()
     client = client or get_dart_client()
