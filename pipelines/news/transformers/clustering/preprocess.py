@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from functools import lru_cache
 
 from kiwipiepy import Kiwi
@@ -82,8 +83,13 @@ _WS_RE = re.compile(r"\s+")
 
 
 def strip_html(text: str) -> str:
-    """검색 API 응답에 섞여 오는 <b> 태그와 HTML 엔티티를 제거한다."""
-    return _WS_RE.sub(" ", html.unescape(_TAG_RE.sub("", text))).strip()
+    """검색 API 응답에 섞여 오는 <b> 태그와 HTML 엔티티를 제거한다.
+
+    NFKC 로 호환 문자를 펼친다 — 매체마다 "500㎿급"·"500MW급" 처럼 표기가 갈리면 같은 사건인데
+    토큰이 달라지고, Kiwi 는 "㎿" 를 명사로 보지 않아 토큰 자체가 사라진다.
+    """
+    unescaped = unicodedata.normalize("NFKC", html.unescape(_TAG_RE.sub("", text)))
+    return _WS_RE.sub(" ", unescaped).strip()
 
 
 @lru_cache(maxsize=1)

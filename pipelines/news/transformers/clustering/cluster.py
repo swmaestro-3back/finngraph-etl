@@ -1,8 +1,13 @@
 """
-코사인 유사도 기반 average-link 병합 클러스터링.
+코사인 유사도 기반 centroid-link 병합 클러스터링.
 
 계층 병합을 threshold 에서 잘라내는 방식이라 클러스터 개수를 미리 정할 필요가
 없다. 어떤 기사가 몇 개의 사건으로 묶일지 모르는 뉴스에 맞는 성질이다.
+
+두 군집의 유사도는 군집 중심(멤버 벡터의 크기 가중 합) 사이의 코사인이다. 멤버 전체와의
+평균 유사도(average-link)는 군집이 커질수록 표현이 다른 멤버가 늘어 평균이 내려가므로, 큰
+사건일수록 같은 제목의 기사조차 합류하지 못하고 여러 군집으로 갈라졌다. 중심은 멤버가
+늘어도 사건의 공통 토큰 쪽으로 모이므로 합류 문턱이 군집 크기에 따라 올라가지 않는다.
 
 배치를 넘는 클러스터링(incremental.py)은 기존 클러스터의 프로필을 시드 행으로 앞에
 심고 같은 병합을 돌린다. 시드끼리는 합치지 않으므로(seed_flags) 기존 클러스터는
@@ -27,17 +32,18 @@ class Cluster:
 
 
 def agglomerative(
-    similarity: np.ndarray,
+    vectors: np.ndarray,
     threshold: float = DEFAULT_THRESHOLD,
     initial_sizes: Sequence[float] | None = None,
     seed_flags: Sequence[bool] | None = None,
     spans: Sequence[tuple[float, float]] | None = None,
     max_span: float | None = None,
 ) -> list[list[int]]:
-    """평균 연결 유사도가 threshold 이상인 두 군집을 반복해서 합친다.
+    """중심 간 코사인 유사도가 threshold 이상인 두 군집을 반복해서 합친다.
 
-    initial_sizes: 행별 초기 크기. 시드 행은 기사 여러 건을 대표하므로 병합 시 크기 가중
-      평균에서 그만큼의 무게를 갖는다. None 이면 전부 1 이다.
+    vectors: 행별 L2 정규화된 문서 벡터(TF-IDF 행렬). 영벡터 행은 어떤 군집과도 유사도 0 이다.
+    initial_sizes: 행별 초기 크기. 시드 행은 기사 여러 건을 대표하므로 군집 중심을 그만큼
+      자기 쪽으로 끌어당긴다. None 이면 전부 1 이다.
     seed_flags: True 인 행은 기존 클러스터의 시드다. 시드끼리는 합치지 않으며, 시드를
       흡수한 군집도 계속 시드로 취급해 다른 시드와 합쳐지지 않는다.
     spans / max_span: 행별 (lo, hi) 범위(발행 시각)와 군집이 가질 수 있는 최대 폭. 합친 뒤
@@ -47,25 +53,26 @@ def agglomerative(
 
     "합칠 수 없는 쌍" 은 bool 행렬(block) 하나로 관리한다. 시드×시드 쌍으로 시작해, 두 군집이
     합쳐지면 제약도 합쳐진다 — 구성원 중 하나라도 k 와 막혀 있으면 새 군집도 k 와 막힌다.
-    병합할 때마다 군집 간 평균 유사도(linkage)와 제약을 합쳐진 행·열에만 다시 쓴다. 매 반복
-    n×n 마스크를 새로 만들지 않아 병합 한 번의 비용이 argmax 한 번으로 줄어든다.
+    병합할 때마다 합쳐진 군집의 중심과 나머지 중심의 코사인(행렬·벡터 곱 한 번)과 제약을
+    합쳐진 행·열에만 다시 쓴다. 매 반복 n×n 을 새로 만들지 않아 병합 한 번의 비용이 argmax
+    한 번과 곱 한 번으로 줄어든다.
     """
-    n = similarity.shape[0]
+    n = vectors.shape[0]
     if n == 0:
         return []
 
     if initial_sizes is not None and len(initial_sizes) != n:
-        raise ValueError("initial_sizes 길이가 similarity 크기와 다릅니다.")
+        raise ValueError("initial_sizes 길이가 vectors 행 수와 다릅니다.")
     if seed_flags is not None and len(seed_flags) != n:
-        raise ValueError("seed_flags 길이가 similarity 크기와 다릅니다.")
+        raise ValueError("seed_flags 길이가 vectors 행 수와 다릅니다.")
     if spans is not None and len(spans) != n:
-        raise ValueError("spans 길이가 similarity 크기와 다릅니다.")
+        raise ValueError("spans 길이가 vectors 행 수와 다릅니다.")
 
     groups: dict[int, list[int]] = {i: [i] for i in range(n)}
     sizes = (
         np.ones(n, dtype=np.float64)
         if initial_sizes is None
-        else np.array(initial_sizes, dtype=np.float64)  # 복사 — 호출자의 배열을 바꾸지 않는다
+        else np.asarray(initial_sizes, dtype=np.float64)
     )
 
     # 합칠 수 없는 쌍. 자기 자신, 시드끼리, 그리고 이미 흡수돼 사라진 행.
@@ -91,10 +98,24 @@ def agglomerative(
         seed_start = anchor[i] if anchor[i] is not None else anchor[j]
         return seed_start is None or merged_lo >= seed_start
 
-    # 군집 간 평균 유사도. 병합할 때마다 크기 가중 평균으로 갱신한다.
-    linkage = similarity.astype(np.float64).copy()
+    # 군집 중심 = 멤버 벡터의 크기 가중 합. 방향만 보므로 합을 평균으로 나눌 필요가 없다.
+    centroids = vectors.astype(np.float64) * sizes[:, None]  # 복사 — 호출자의 배열을 바꾸지 않는다
+    norms = np.linalg.norm(centroids, axis=1)
+
+    def cosine_to(i: int) -> np.ndarray:
+        denominator = norms * norms[i]
+        return np.divide(
+            centroids @ centroids[i],
+            denominator,
+            out=np.zeros(n, dtype=np.float64),
+            where=denominator > 0,
+        )
+
     # 막힌 쌍을 -1 로 가린 병합 후보 점수. 바뀐 행·열만 다시 쓴다.
-    scores = np.where(block, -1.0, linkage)
+    units = np.divide(
+        centroids, norms[:, None], out=np.zeros_like(centroids), where=norms[:, None] > 0
+    )
+    scores = np.where(block, -1.0, units @ units.T)
 
     while True:
         best = int(np.argmax(scores))
@@ -107,20 +128,15 @@ def agglomerative(
             scores[i, j] = scores[j, i] = -1.0
             continue
 
-        size_i, size_j = sizes[i], sizes[j]
-        merged = (linkage[i] * size_i + linkage[j] * size_j) / (size_i + size_j)
-
         groups[i] = groups[i] + groups[j]
         del groups[j]
-        sizes[i] = size_i + size_j
+        centroids[i] += centroids[j]
+        norms[i] = np.linalg.norm(centroids[i])
         if lo is not None:
             lo[i] = min(lo[i], lo[j])
             hi[i] = max(hi[i], hi[j])
             if anchor[i] is None:
                 anchor[i] = anchor[j]
-
-        linkage[i, :] = merged
-        linkage[:, i] = merged
 
         # 제약 전파: j 가 막혀 있던 상대는 합쳐진 군집 i 도 막힌다.
         block[i, :] |= block[j, :]
@@ -131,7 +147,7 @@ def agglomerative(
 
         scores[j, :] = -1.0
         scores[:, j] = -1.0
-        scores[i, :] = np.where(block[i], -1.0, linkage[i])
+        scores[i, :] = np.where(block[i], -1.0, cosine_to(i))
         scores[:, i] = scores[i, :]
 
     return [sorted(members) for members in groups.values()]
@@ -153,13 +169,17 @@ def medoid_and_cohesion(similarity: np.ndarray, members: Sequence[int]) -> tuple
 
 
 def build_clusters(
-    similarity: np.ndarray,
+    vectors: np.ndarray,
     threshold: float = DEFAULT_THRESHOLD,
 ) -> list[Cluster]:
-    """군집을 만들고, 각 군집의 대표 기사(메도이드)와 응집도를 계산한다."""
+    """군집을 만들고, 각 군집의 대표 기사(메도이드)와 응집도를 계산한다.
+
+    vectors 는 L2 정규화된 문서 벡터라 내적이 곧 코사인 유사도다.
+    """
+    similarity = np.clip(vectors @ vectors.T, 0.0, 1.0)
     clusters: list[Cluster] = []
 
-    for members in agglomerative(similarity, threshold):
+    for members in agglomerative(vectors, threshold):
         representative, cohesion = medoid_and_cohesion(similarity, members)
         clusters.append(Cluster(members=members, representative=representative, cohesion=cohesion))
 

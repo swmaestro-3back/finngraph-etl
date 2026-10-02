@@ -2,7 +2,7 @@
 배치를 넘는 클러스터 판정.
 
 이번 배치의 새 기사와 윈도우 안 기존 클러스터의 프로필을 한 코퍼스로 TF-IDF 를 만들고,
-기존 클러스터를 시드로 심어 같은 average-link 병합을 돌린다. 결과는 새 기사 그룹마다
+기존 클러스터를 시드로 심어 같은 centroid-link 병합을 돌린다. 결과는 새 기사 그룹마다
 "기존 클러스터에 합류 / 새 클러스터" 와, 그 안에서 "저장 / cap 에 걸려 버림" 이다.
 DB 를 모르는 순수 함수만 두어 로더 없이 테스트한다.
 
@@ -159,7 +159,7 @@ def assign_batch(
     """새 기사들을 기존 클러스터(seeds)에 합류시키거나 새 클러스터로 묶는다.
 
     시드 행을 코퍼스 앞에 두고 한 번의 병합을 돌리므로, 새 기사끼리의 묶음과 기존
-    클러스터 합류가 같은 threshold 로 한 번에 결정된다. 시드의 병합 가중치는 저장된
+    클러스터 합류가 같은 threshold 로 한 번에 결정된다. 시드가 군집 중심을 당기는 무게는 저장된
     멤버 수다 — 판정 누적 수(original_size)는 상한이 없어 큰 클러스터가 새 기사 신호를
     완전히 눌러 버린다. 새 기사가 하나도 안 붙은 시드는 결과에 없다.
 
@@ -172,12 +172,13 @@ def assign_batch(
 
     n_seeds = len(seeds)
     corpus = [profile_terms(seed) for seed in seeds] + documents
-    similarity = build_tfidf(corpus).cosine_similarity()
+    tfidf = build_tfidf(corpus)
+    similarity = tfidf.cosine_similarity()
 
     seed_epochs = [seed.first_published_at.timestamp() for seed in seeds]
     doc_epochs = [moment.timestamp() for moment in published_ats]
     groups = agglomerative(
-        similarity,
+        tfidf.matrix,
         threshold,
         initial_sizes=[float(max(seed.member_count, 1)) for seed in seeds] + [1.0] * len(documents),
         seed_flags=[True] * n_seeds + [False] * len(documents),
