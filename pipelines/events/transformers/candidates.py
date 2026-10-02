@@ -1,6 +1,6 @@
 """
 Cluster에서 간선으로 연결될 후보 기업 정규명 추출
-gazetteer를 기반으로 flashtext를 활용하여 추출
+개체 사전(entity_gazetteer)의 공통 매처(pipelines/common/gazetteer.py)로 추출
 """
 
 from __future__ import annotations

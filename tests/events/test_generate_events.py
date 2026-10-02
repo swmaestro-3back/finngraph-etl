@@ -7,24 +7,20 @@ from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from flashtext import KeywordProcessor
 
+from pipelines.common.gazetteer import CompanyMatcher, GazetteerEntry
 from pipelines.events.jobs import generate_events as job
 from pipelines.events.models import ClusterCandidate, EventDraft, MemberArticle
 
 T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)  # KST 9/1 09:00
 
 
-class FakeExtractor:
-    def __init__(self):
-        self._processor = KeywordProcessor(case_sensitive=True)
-        self._processor.add_keywords_from_dict({"삼성전자": ["삼성전자", "삼전"], "기아": ["기아"]})
+def _matcher() -> CompanyMatcher:
+    """DB 대신 인라인 사전으로 만든 공통 매처."""
 
-    def canonicalize(self, text: str) -> str:
-        return self._processor.replace_keywords(text)
-
-    def extract(self, text: str) -> list:
-        return [SimpleNamespace(canonical=n) for n in self._processor.extract_keywords(text)]
+    samsung = GazetteerEntry(company_id=1, stock_id=1, ticker="005930", canonical="삼성전자")
+    kia = GazetteerEntry(company_id=2, stock_id=2, ticker="000270", canonical="기아")
+    return CompanyMatcher({"삼성전자": samsung, "삼전": samsung, "기아": kia})
 
 
 class StubGenerator:
@@ -101,7 +97,7 @@ def _no_candidate_members() -> list[MemberArticle]:
 
 
 def test_build_create_input_dates_and_candidates():
-    dated_texts, candidates = job.build_create_input(_members(), FakeExtractor(), lead_chars=600)
+    dated_texts, candidates = job.build_create_input(_members(), _matcher(), lead_chars=600)
 
     assert dated_texts == [
         (date(2026, 9, 1), "삼성전자 유상증자 결정\n삼성전자이 결의했다."),
@@ -274,7 +270,7 @@ def test_run_creates_only_own_half(monkeypatch):
         },
     )
     monkeypatch.setattr(job, "create_event", fake_create_event)
-    extractor_factory = CountingFactory(FakeExtractor())
+    extractor_factory = CountingFactory(_matcher())
     generator_factory = CountingFactory(StubGenerator(EventDraft(companies=["삼성전자"])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
@@ -308,7 +304,7 @@ def test_run_over_limit_caps_generator_calls(monkeypatch):
     monkeypatch.setattr(job, "create_event", fake_create_event)
     generator = StubGenerator(EventDraft(companies=["삼성전자"]))
 
-    stats = asyncio.run(job._run(lambda: FakeExtractor(), lambda: generator))
+    stats = asyncio.run(job._run(lambda: _matcher(), lambda: generator))
 
     assert stats["skipped_over_limit"] == 2
     assert stats["created"] == 2
@@ -320,7 +316,7 @@ def test_run_empty_scan_returns_zero_stats_without_building_anything(monkeypatch
     """신규 몫이 없으면 extractor·generator 를 만들지 않고 all-zero 로 반환한다."""
 
     _patch_common(monkeypatch, to_create=[], to_refresh=[_cluster(1)], members_by_cluster={})
-    extractor_factory = CountingFactory(FakeExtractor())
+    extractor_factory = CountingFactory(_matcher())
     generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
@@ -338,7 +334,7 @@ def test_run_no_eligible_builds_extractor_but_not_generator(monkeypatch):
         to_refresh=[],
         members_by_cluster={3: _no_candidate_members()},
     )
-    extractor_factory = CountingFactory(FakeExtractor())
+    extractor_factory = CountingFactory(_matcher())
     generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
