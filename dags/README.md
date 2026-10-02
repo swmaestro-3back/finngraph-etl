@@ -7,7 +7,7 @@ dags/
 ├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
 ├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
 ├── events/       # 뉴스 클러스터 → Neo4j Event 승격 (news_collect_articles 의 Asset 으로 기동)
-├── market_calendar/  # 휴장일·예탁원 일정(배당·증자·주총)·공모주 수집
+├── market_calendar/  # 휴장일·예탁원 일정(배당·증자·주총)·공모주·DART 공모 신고서 수집
 ├── health/       # 운영 상 헬스체크용
 ├── news/         # 뉴스 수집·군집화 · 요약 (요약은 triples 의 Asset 으로 기동)
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당

@@ -61,6 +61,12 @@ if dag and task:
 
             return run()
 
+        @task(retries=1, trigger_rule="all_done")
+        def collect_ipo_filings() -> int:
+            from pipelines.market_calendar.jobs.collect_ipo_filings import run
+
+            return run()
+
         # 각 단계는 all_done으로 끝까지 돌리고, 하나라도 실패하면 여기서 DAG run을 실패로 남긴다.
         @task
         def finish() -> None:
@@ -73,6 +79,7 @@ if dag and task:
             collect_rights(),
             collect_agm(),
             collect_ipos(),
+            collect_ipo_filings(),
         ]
         for upstream, downstream in zip(steps, steps[1:], strict=False):
             upstream >> downstream
