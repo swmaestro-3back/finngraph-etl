@@ -106,7 +106,7 @@ def test_build_create_input_dates_and_candidates():
     assert candidates == ["삼성전자", "기아"]
 
 
-def test_select_for_llm_applies_limit_after_candidate_filter():
+def test_select_for_llm_drops_only_clusters_without_candidates():
     prepared = [
         (_cluster(1), _members(), [(None, "t\nb")], ["삼성전자"]),
         (_cluster(2), _members(), [(None, "t\nb")], []),  # 후보 0 → 제외
@@ -114,21 +114,19 @@ def test_select_for_llm_applies_limit_after_candidate_filter():
         (_cluster(4), _members(), [(None, "t\nb")], ["삼성전자"]),
     ]
 
-    eligible, skipped_no_candidates, skipped_over_limit = job.select_for_llm(prepared, limit=2)
+    eligible, skipped_no_candidates = job.select_for_llm(prepared)
 
-    assert [item[0].cluster_id for item in eligible] == [1, 3]
+    assert [item[0].cluster_id for item in eligible] == [1, 3, 4]
     assert skipped_no_candidates == 1
-    assert skipped_over_limit == 1
 
 
 def test_summarize_stats_invariant():
     stats = {
-        "scanned": 6,
+        "scanned": 5,
         "created": 2,
         "created_without_edges": 1,
         "skipped_no_title": 1,
         "skipped_no_candidates": 1,
-        "skipped_over_limit": 1,
         "failed": 1,
     }
     assert job.summarize_stats(dict(stats)) == stats
@@ -232,7 +230,6 @@ def _event_settings(**overrides) -> SimpleNamespace:
     base = dict(
         min_size=5,
         scan_days=15,
-        max_items_per_run=2,
         llm_max_concurrency=2,
         lead_chars=600,
     )
@@ -281,15 +278,14 @@ def test_run_creates_only_own_half(monkeypatch):
         "created_without_edges": 1,
         "skipped_no_title": 1,
         "skipped_no_candidates": 1,
-        "skipped_over_limit": 0,
         "failed": 0,
     }
     assert job.summarize_stats(stats) == stats
     assert (extractor_factory.calls, generator_factory.calls) == (1, 1)
 
 
-def test_run_over_limit_caps_generator_calls(monkeypatch):
-    """후보가 있는 신규 4개 중 상한 2개만 LLM 을 부른다."""
+def test_run_creates_every_eligible_cluster_in_one_run(monkeypatch):
+    """런당 상한이 없다 — 후보가 있는 신규 4개 모두 LLM 을 부른다."""
 
     async def fake_create_event(record):
         return 1
@@ -299,16 +295,15 @@ def test_run_over_limit_caps_generator_calls(monkeypatch):
         to_create=[_cluster(cid) for cid in (1, 2, 3, 4)],
         to_refresh=[],
         members_by_cluster={cid: _members() for cid in (1, 2, 3, 4)},
-        settings=_event_settings(max_items_per_run=2),
+        settings=_event_settings(),
     )
     monkeypatch.setattr(job, "create_event", fake_create_event)
     generator = StubGenerator(EventDraft(companies=["삼성전자"]))
 
     stats = asyncio.run(job._run(lambda: _matcher(), lambda: generator))
 
-    assert stats["skipped_over_limit"] == 2
-    assert stats["created"] == 2
-    assert generator.calls == 2
+    assert stats["created"] == 4
+    assert generator.calls == 4
     assert job.summarize_stats(stats) == stats
 
 

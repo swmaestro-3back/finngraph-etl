@@ -1,0 +1,41 @@
+Default to DROP. Judge only the Body's main news. keep=true only when all three gates pass.
+
+HARD RULE — CHECK FIRST:
+If the Body's main information is a price or numeric market move — a stock price, KOSPI/KOSDAQ or any index, FX rate, bond yield, trading volume, market cap, target price, 52-week high/low, upper/lower price limit, investor flows (기관/외국인 순매수), rankings, or technical charts — output {"relation": null, "keep": false, "has_relation": false, "is_material": false, "is_confirmed": false} immediately. This applies even when companies are named and a reason for the move is guessed (e.g. 특징주 articles). A price move is never evidence of a relation.
+
+TARGET ENTITY TYPES:
+- COMPANY: named company, subsidiary, financial institution, or state-owned enterprise.
+- GOVERNMENT: named government, ministry, regulator, court, or central bank.
+- COUNTRY: named sovereign state.
+- COMMODITY: named energy source, metal, agricultural commodity, or strategic raw material.
+- PRODUCT: named commercial/industrial product, service, drug, chip, vehicle, platform, or equipment.
+
+GATE 1 — CENTRAL RELATION (has_relation):
+- Identify one central directed relation SUBJECT --PREDICATE--> OBJECT where PREDICATE is a registered predicate and both endpoints are explicit named entities in the Body satisfying the predicate's type constraints.
+- Match by meaning against each predicate's description, not by verb form (인수·인수합병·자회사 편입 → ACQUIRES; 수주·공급계약·납품 → SUPPLIES_TO; importing is restated as EXPORTS_TO in the opposite direction).
+- If the main event maps to no registered predicate (e.g. a lawsuit, court ruling, product approval alone, corporate split/spin-off, or military action without an executed economic relation), set has_relation=false.
+- Never infer entities. DROP pronouns, generic industries or sectors, "관련주"/beneficiary groupings, unnamed parties, and passing mentions.
+
+GATE 2 — CONFIRMED EVENT (is_confirmed):
+- The central relation must be COMPLETED (signed, executed, finalized, officially decided, occurred) or ACTIVE (currently in effect or actually in progress — an ongoing development program or an active supply contract counts).
+- Predicate descriptions define relation TYPES only; confirmation is always decided by this gate. A planned acquisition is ACQUIRES by type but is_confirmed=false.
+- A finalized award, supplier/operator selection, order win, or allocated volume is COMPLETED even when delivery or operation comes later.
+- DROP plans, targets, intentions, expectations, forecasts, rumors, negotiations, pending or conditional deals, analyst claims, and non-binding MOUs.
+
+GATE 3 — MATERIAL ECONOMIC IMPACT (is_material):
+- The same relation must directly affect revenue, cost, profit, cash flow, assets, financing, ownership, production, supply, demand, capacity, operations, market access, regulation, trade, or macro conditions.
+- State-type relations (LOCATED_IN, COMPETES_WITH) alone are not material; they qualify only when the Body also confirms an event relation.
+- For SUPPLIES_TO / EXPORTS_TO, the supplied or exported item should be named in the Body; a supply claim with no identifiable item is weak evidence.
+- Stated contract value or quantity strengthens but is not required.
+
+ALWAYS DROP:
+- Everything under the HARD RULE.
+- Expectation pieces: future beneficiaries, demand or policy hopes, outlooks, surveys, explainers, trend commentary.
+- Earnings or company facts with no schema-valid relation.
+- Routine launches, promotions, events, conferences, awards, appointments, CSR, donations, endorsements.
+- Politics or diplomacy without an executed economic relation; lifestyle, crime, entertainment, sports, health, culture.
+- Mismatched, fragmentary, promotional, boilerplate-dominated, or photo/video-only bodies.
+
+EVIDENCE:
+- The Body is the only evidence. Title, Description, and general knowledge cannot supply a missing entity, relation, status, or impact.
+- Judge the main confirmed event; a later outlook paragraph does not invalidate a separately completed central event.

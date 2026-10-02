@@ -33,7 +33,6 @@ STAT_KEYS = (
     "created_without_edges",
     "skipped_no_title",
     "skipped_no_candidates",
-    "skipped_over_limit",
     "failed",
 )
 
@@ -55,14 +54,11 @@ def build_create_input(
     return dated_texts, candidates
 
 
-def select_for_llm(prepared: list[Prepared], limit: int) -> tuple[list[Prepared], int, int]:
-    """후보 0 을 빼고 앞에서 limit 개만 남긴다. (선택, 후보0 수, 상한초과 수)."""
+def select_for_llm(prepared: list[Prepared]) -> tuple[list[Prepared], int]:
+    """후보 0 을 뺀다 — 고를 기업이 없으면 LLM 을 부를 이유가 없다. (선택, 후보0 수)."""
 
-    with_candidates = [item for item in prepared if item[3]]
-    skipped_no_candidates = len(prepared) - len(with_candidates)
-    eligible = with_candidates[:limit]
-    skipped_over_limit = len(with_candidates) - len(eligible)
-    return eligible, skipped_no_candidates, skipped_over_limit
+    eligible = [item for item in prepared if item[3]]
+    return eligible, len(prepared) - len(eligible)
 
 
 async def create_one(
@@ -109,7 +105,7 @@ def summarize_stats(stats: dict[str, int]) -> dict[str, int]:
     return check_total(
         stats,
         "scanned",
-        ("created", "skipped_no_title", "skipped_no_candidates", "skipped_over_limit", "failed"),
+        ("created", "skipped_no_title", "skipped_no_candidates", "failed"),
     )
 
 
@@ -129,7 +125,7 @@ async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[s
         if not to_create:
             return stats
 
-        # 2. 멤버 텍스트 → 후보 추출 → 상한 (LLM 전에 걸러 슬롯을 낭비하지 않는다)
+        # 2. 멤버 텍스트 → 후보 추출 (후보 0 은 LLM 전에 거른다)
         extractor = extractor_factory()
         members_by_cluster = fetch_cluster_members([c.cluster_id for c in to_create])
         prepared: list[Prepared] = []
@@ -137,9 +133,7 @@ async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[s
             members = members_by_cluster.get(cluster.cluster_id, [])
             dated_texts, candidates = build_create_input(members, extractor, settings.lead_chars)
             prepared.append((cluster, members, dated_texts, candidates))
-        eligible, stats["skipped_no_candidates"], stats["skipped_over_limit"] = select_for_llm(
-            prepared, settings.max_items_per_run
-        )
+        eligible, stats["skipped_no_candidates"] = select_for_llm(prepared)
         if not eligible:
             return stats
 
@@ -187,8 +181,7 @@ def run() -> dict[str, int]:
     )
     print(
         f"- 건너뜀: 제목 없음 {stats['skipped_no_title']}개, "
-        f"후보 없음 {stats['skipped_no_candidates']}개, "
-        f"상한 초과 {stats['skipped_over_limit']}개"
+        f"후보 없음 {stats['skipped_no_candidates']}개"
     )
     print("=" * 70)
 

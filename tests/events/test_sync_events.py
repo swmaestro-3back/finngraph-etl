@@ -26,7 +26,6 @@ def _event_settings(**overrides) -> SimpleNamespace:
     base = dict(
         min_size=5,
         scan_days=15,
-        max_items_per_run=2,
         llm_max_concurrency=2,
         lead_chars=600,
     )

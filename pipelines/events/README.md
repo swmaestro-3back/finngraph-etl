@@ -33,8 +33,8 @@ Neo4j 존재 여부로 **자기 몫만** 고르므로, task 사이에 XCom 이 �
 - **`generate_events`** (`jobs/generate_events.py`) — Event 가 없는 클러스터를 **생성**합니다.
   멤버 기사(제목 + 요약 또는 리드)에서 gazetteer 로 후보 기업을 뽑고, LLM 이 후보 안에서
   당사자와 우산 제목을 고르고, 코드가 검증한 뒤 노드와 간선을 씁니다. 후보 0 이면 LLM 을
-  부르지 않고 노드도 만들지 않습니다. 런당 LLM 상한 `NEWS_EVENT_MAX_ITEMS_PER_RUN`. 클러스터
-  하나가 실패 단위이고, 실패한 클러스터는 노드가 없으니 다음 런에 다시 시도됩니다. 처리할
+  부르지 않고 노드도 만들지 않습니다. 런당 상한 없이 대상 전량을 처리하고, LLM 동시 호출만
+  `NEWS_EVENT_LLM_MAX_CONCURRENCY` 로 묶습니다. 클러스터 하나가 실패 단위이고, 실패한 클러스터는 노드가 없으니 다음 런에 다시 시도됩니다. 처리할
   클러스터가 없으면 gazetteer·Bedrock 클라이언트를 만들지 않습니다.
 
 두 task 가 겹쳐도 데이터는 깨지지 않습니다. 둘 다 `cluster_id` 로 MERGE 하고, `sync_events`

@@ -1,0 +1,1 @@
+Output only the requested JSON object: the central relation plus the four boolean gates. Apply every gate silently. No explanation, no markdown.
