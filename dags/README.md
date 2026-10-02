@@ -7,6 +7,7 @@ dags/
 ├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
 ├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
 ├── events/       # 뉴스 클러스터 → Neo4j Event 승격 (news_collect_articles 의 Asset 으로 기동)
+├── market_calendar/  # 휴장일·예탁원 일정(배당·증자·주총)·공모주 수집
 ├── health/       # 운영 상 헬스체크용
 ├── news/         # 뉴스 수집·군집화 · 요약 (요약은 triples 의 Asset 으로 기동)
 ├── stocks/       # 종목 마스터 파일 동기화 · 주가 캔들 수집 · 파생지표 · 배당
@@ -29,6 +30,8 @@ dags/
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
+| market_calendar | `market_calendar/collect.py` | `market_calendar_collect` | `market_calendar` | `30 7 * * *` (매일 07:30) |
+| market_calendar | `market_calendar/backfill_market_days.py` | `market_calendar_backfill_market_days` | `market_calendar`, `backfill`, `manual` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
 | news | `news/summarize_articles.py` | `news_summarize_articles` | `news` | Asset ← `etl://triples/extracted` |
