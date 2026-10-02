@@ -68,7 +68,7 @@ def wired(monkeypatch):
         return [fresh, market, existing], [200]
 
     monkeypatch.setattr(job, "collect_company_news", fake_collect)
-    monkeypatch.setattr(job, "fetch_due_krx300_queries", lambda hours, now, company_ids: batch)
+    monkeypatch.setattr(job, "fetch_due_krx100_queries", lambda hours, now, company_ids: batch)
     monkeypatch.setattr(
         job, "remove_stored_by_url", lambda items: [i for i in items if i is not existing]
     )
@@ -215,10 +215,10 @@ def test_run_raises_before_marking_when_all_relevance_judgments_fail(wired, monk
     assert calls["marked"] == []
 
 
-def test_run_krx300_passes_collection_window_and_marks_searched(wired):
+def test_run_krx100_passes_collection_window_and_marks_searched(wired):
     job, calls = wired
 
-    result = job.run_krx300([100, 200], lookback_days=180, max_pages=8)
+    result = job.run_krx100([100, 200], lookback_days=180, max_pages=8)
 
     assert result == {"created": 1, "updated": 0, "failed": 0}
     # 백필이 넓힌 수집 창이 수집기까지 내려간다 — 스케줄 런(run)은 None 으로 설정값을 쓴다

@@ -4,16 +4,16 @@ from datetime import datetime
 
 from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
-from pipelines.news.repositories.search_history import fetch_due_krx300_queries
+from pipelines.news.repositories.search_history import fetch_due_krx100_queries
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 logger = get_logger(__name__)
 
 
 def run(chunk_size: int) -> list[list[int]]:
-    """재검색 시점이 된 KRX300 기업을 chunk_size 개씩 나눈 company_id 청크 목록"""
+    """재검색 시점이 된 KRX100 기업을 chunk_size 개씩 나눈 company_id 청크 목록"""
 
-    batch = fetch_due_krx300_queries(
+    batch = fetch_due_krx100_queries(
         get_news_settings().search_interval_hours, datetime.now(SEOUL_TIMEZONE)
     )
     company_ids = [query.company_id for query in batch.queries]
@@ -22,7 +22,7 @@ def run(chunk_size: int) -> list[list[int]]:
     ]
 
     logger.info(
-        "[대상] KRX300 검색 기업 %d개 → 청크 %d개 (간격 미도래 %d, company_id 없음 %d, 첫 검색 %d)",
+        "[대상] KRX100 검색 기업 %d개 → 청크 %d개 (간격 미도래 %d, company_id 없음 %d, 첫 검색 %d)",
         len(company_ids),
         len(chunks),
         batch.skipped_not_due,

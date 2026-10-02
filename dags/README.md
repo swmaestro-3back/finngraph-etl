@@ -33,7 +33,7 @@ dags/
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
 | news | `news/summarize_articles.py` | `news_summarize_articles` | `news` | Asset ← `etl://triples/extracted` |
-| news | `news/backfill_krx300.py` | `news_backfill_krx300` | `news`, `backfill`, `manual` | 수동 |
+| news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각), `etl://themes/hot` 발행 |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
@@ -112,7 +112,7 @@ stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ─
 
 news_collect_articles ──┐                           ┌──► events_promote_clusters
   (위 Asset 또는 cron)    ├──► etl://news/clusters ───┤      (sync_events ∥ generate_events)
-news_backfill_krx300 ───┘   (collect_articles)      └──► triples_extract_triples
+news_backfill_krx100 ───┘   (collect_articles)      └──► triples_extract_triples
   (수동, 청크마다 발행)                                       │
                                                              ▼
                                    news_summarize_articles ◄── etl://triples/extracted
@@ -146,7 +146,7 @@ news_backfill_krx300 ───┘   (collect_articles)      └──► triples
 `search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
 `theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
 
-초기 뉴스 백필(`news_backfill_krx300`)은 대상만 `stocks.krx300` 활성 종목의 기업으로 바뀌고,
+초기 뉴스 백필(`news_backfill_krx100`)은 대상만 `stocks.krx100` 활성 종목의 기업으로 바뀌고,
 검색어(같은 `NEWS_SEARCH_QUERY_TEMPLATES` 여섯 개)와 워터마크 규칙은 위와 같다. 수집 창만 트리거
 params(`lookback_days`·`max_pages`)로 넓힌다.
 

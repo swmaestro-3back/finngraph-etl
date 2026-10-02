@@ -2,7 +2,7 @@
 
 수집·군집화까지만 한다. 삼중항 추출과 요약은 이 DAG 이 발행하는 `etl://news/clusters` Asset 을
 따라 `triples_extract_triples` → `news_summarize_articles` 가 이어서 돈다 — LLM 처리가 길어져도
-다음 수집을 막지 않고, 백필(`news_backfill_krx300`)과 하류를 공유하기 위해서다.
+다음 수집을 막지 않고, 백필(`news_backfill_krx100`)과 하류를 공유하기 위해서다.
 """
 
 from __future__ import annotations

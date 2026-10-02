@@ -68,10 +68,10 @@
 실패한 기사는 미처리로 남아 다음 런(다음에 새 기사가 수집된 시점)에 다시 시도합니다 — 런 안에서 0건이 될 때까지 반복하지
 않는 이유입니다(실패가 이어지면 끝나지 않습니다).
 
-## KRX300 백필 (dags/news/backfill_krx300.py)
+## KRX100 백필 (dags/news/backfill_krx100.py)
 
-`news_backfill_krx300` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx300` 활성 종목의 기업
-(`fetch_due_krx300_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx300` 을 돌립니다.
+`news_backfill_krx100` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx100` 활성 종목의 기업
+(`fetch_due_krx100_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx100` 을 돌립니다.
 청크가 끝날 때마다 `etl://news/clusters` 를 발행해 삼중항 추출·요약이 수집과 나란히 진행됩니다. 대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은
 `collect()` 를 씁니다. 검색어도 스케줄 런과 같은 `NEWS_SEARCH_QUERY_TEMPLATES` 입니다.
 

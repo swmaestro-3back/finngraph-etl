@@ -25,7 +25,7 @@ from pipelines.news.repositories.news_companies import link_saved_items
 from pipelines.news.repositories.search_history import (
     CompanyQuery,
     fetch_due_company_queries,
-    fetch_due_krx300_queries,
+    fetch_due_krx100_queries,
     fetch_due_ticker_queries,
     mark_companies_searched,
 )
@@ -75,12 +75,12 @@ def run(theme_ids: list[int], tickers: list[str] | None = None) -> dict[str, int
     return collect(batch.queries, run_started_at)
 
 
-def run_krx300(
+def run_krx100(
     company_ids: list[int],
     lookback_days: int | None = None,
     max_pages: int | None = None,
 ) -> dict[str, int]:
-    """KRX300 기업 중 company_ids 에 든, 재검색 시점이 된 기업의 뉴스 수집 (news_backfill_krx300).
+    """KRX100 기업 중 company_ids 에 든, 재검색 시점이 된 기업의 뉴스 수집 (news_backfill_krx100).
 
     lookback_days·max_pages 로 수집 창을 넓힌다. None 이면 스케줄 런과 같은 설정값이다.
     """
@@ -89,10 +89,10 @@ def run_krx300(
     settings = get_news_settings()
     run_started_at = datetime.now(SEOUL_TIMEZONE)
 
-    # 1. KRX300 기업 중 search_history 기준 재검색 시점이 된 기업 조회
-    batch = fetch_due_krx300_queries(settings.search_interval_hours, run_started_at, company_ids)
+    # 1. KRX100 기업 중 search_history 기준 재검색 시점이 된 기업 조회
+    batch = fetch_due_krx100_queries(settings.search_interval_hours, run_started_at, company_ids)
     logger.info(
-        "[collect_articles] 대상: KRX300 기업 %d개 → 검색 기업 %d개 (간격 미도래 %d, 첫 검색 %d)",
+        "[collect_articles] 대상: KRX100 기업 %d개 → 검색 기업 %d개 (간격 미도래 %d, 첫 검색 %d)",
         len(company_ids),
         len(batch.queries),
         batch.skipped_not_due,
