@@ -51,6 +51,11 @@ ROE·EPS·BPS가 분기별로 들어 있어 직접 계산할 필요도 없습니
   '줄무늬'로 매칭됩니다.
 - 미매칭 표기는 `unresolved_entities`에 빈도로 쌓입니다. 사전을 미리 완벽하게 만들 수는
   없으므로, 빈도순으로 보강하는 루프가 전제입니다.
+- **본문 매칭용 개체 사전은 `entity_gazetteer`입니다.** `companies_sync_gazetteer`가 활성 상장사의
+  정식명·종목명·`company_aliases`(KIS_MASTER·DART·CURATED)로 매번 전량 재생성하고, 별칭마다
+  `company_id`·`stock_id`·`ticker`를 붙입니다. 여러 기업에 걸리는 별칭은 CURATED > 정식명 순으로
+  가르고, 못 가르면 뺍니다. 기사 통용 표기(삼전·구글 등)는 `loaders/gazetteer.py`의
+  `CURATED_ALIASES_BY_TICKER`에 ticker로 추가합니다. 소비자는 `pipelines/common/gazetteer.py`를 씁니다.
 
 ### 수집 범위를 좁히는 곳
 

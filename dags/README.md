@@ -26,6 +26,7 @@ dags/
 | companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
 | companies | `companies/generate_descriptions.py` | `companies_generate_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
+| companies | `companies/sync_gazetteer.py` | `companies_sync_gazetteer` | `companies` | AssetAny ← `etl://companies/master_synced`, `etl://companies/us_loaded` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
@@ -89,6 +90,21 @@ companies_sync_master ───────────► etl://companies/linke
 RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 기다릴 이유가 없다. `embed_themes`는
 맨 마지막(`load_neo4j` 뒤)에 돌고, Asset 발행 이후라 실패해도 수집 대상 파생을 막지 않는다.
 임베딩이 없는 노드·간선만 대상이라 재시도는 남은 분량부터 이어서 채운다.
+
+```
+companies_sync_master ──(seed_graph, 매 회차)──► etl://companies/master_synced ──┐
+companies_load_us ──────(load_neo4j)──────────► etl://companies/us_loaded ──────┴──► companies_sync_gazetteer
+                                                              (AssetAny, entity_gazetteer 전량 재생성)
+```
+
+개체 사전(`entity_gazetteer`)은 상장 기업의 본문 표기 → `company_id`·`stock_id`·`ticker` 스냅샷이다.
+triples·events 가 `pipelines/common/gazetteer.py` 로 읽는다. `etl://companies/linked` 가 아니라
+`master_synced` 에 거는 이유는 사명 변경·상폐·별칭 추가가 종목 연결 수를 바꾸지 않기 때문이다 —
+`master_synced` 는 `trigger_rule="all_done"` 인 `seed_graph` 가 발행하므로 `sync_master` 가 스킵된
+날에도 나온다. 새 사전이 기존의 절반 미만이면 교체하지 않고 실패한다.
+
+> **배포 순서(개체 사전).** `V7__entity_gazetteer.sql` 을 적용하고 `companies_sync_gazetteer` 를
+> 한 번 수동 실행한 뒤 triples·events 코드를 배포한다. 사전이 비어 있으면 두 DAG 가 실패한다.
 
 ```
 stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles

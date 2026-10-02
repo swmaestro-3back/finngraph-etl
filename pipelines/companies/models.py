@@ -139,3 +139,28 @@ class UsSyncResult:
     company_count: int
     stock_count: int
     alias_count: int
+
+
+@dataclass(frozen=True)
+class GazetteerAlias:
+    """개체 사전의 별칭 한 줄 — 본문 표기 하나가 상장 기업 하나를 가리킨다.
+
+    추출 단계에서는 같은 alias 가 여러 기업에 걸린 후보가 섞여 있고, 변환 단계가
+    우선순위로 정리해 alias 당 한 줄만 남긴다.
+
+    Attributes:
+        alias (str): 본문에서 매칭할 표기. 앞뒤 공백을 뺀 값이다.
+        company_id (int): companies.id.
+        stock_id (int): 그 기업의 활성 종목 stocks.id. 국내는 보통주만 수집해 1:1 이다.
+        ticker (str): 종목 단축코드(국내 6자리) 또는 미국 티커.
+        canonical_name (str): companies.name — 그래프 노드명·원장 엔드포인트와 같은 값.
+        source (str): 별칭 출처.
+            NAME(companies.name) | STOCK_NAME(종목명 파생) | KIS_MASTER | DART | CURATED.
+    """
+
+    alias: str
+    company_id: int
+    stock_id: int
+    ticker: str
+    canonical_name: str
+    source: str
