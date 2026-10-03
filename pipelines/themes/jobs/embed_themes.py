@@ -15,7 +15,7 @@ from pipelines.common.clients.bedrock import embed_texts
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
-from pipelines.themes.loaders.neo4j import (
+from pipelines.themes.repositories.neo4j.themes import (
     fetch_reason_embedding_targets,
     fetch_theme_embedding_targets,
     update_reason_embeddings,

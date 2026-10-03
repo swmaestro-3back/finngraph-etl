@@ -20,7 +20,7 @@ from sqlalchemy import text
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.config import get_news_settings
-from pipelines.news.repositories.news_clusters import (
+from pipelines.news.repositories.postgres.news_clusters import (
     fetch_active_cluster_seeds,
     fetch_cluster_articles,
     fetch_untitled_cluster_ids,

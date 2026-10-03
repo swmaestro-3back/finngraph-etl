@@ -14,9 +14,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from functools import lru_cache
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from pipelines.news.repositories.news_clusters import ClusterArticle
+from pipelines.news.repositories.postgres.news_clusters import ClusterArticle
 from pipelines.news.transformers.prompts import cluster_title as cluster_title_prompt
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import remove_leading_title_brackets
@@ -27,7 +27,8 @@ RETRY_ATTEMPTS = 2
 
 
 class ClusterTitle(BaseModel):
-    title: str = Field(description="사건 이름. 한국어 명사구 한 줄")
+    # 형식 규칙은 시스템 프롬프트에만 둔다 — 스키마 설명의 한글은 호출마다 토큰이 비싸게 든다
+    title: str
 
 
 Titler = Callable[[str], Awaitable[ClusterTitle]]

@@ -12,10 +12,10 @@ from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.events.config import get_event_settings
-from pipelines.events.loaders.neo4j import refresh_events
 from pipelines.events.models import EventRefresh
-from pipelines.events.references.rdb import fetch_cluster_news_ids
-from pipelines.events.references.scan import scan_promotable
+from pipelines.events.repositories.neo4j.events import refresh_events
+from pipelines.events.repositories.postgres.news import fetch_cluster_news_ids
+from pipelines.events.scan import scan_promotable
 from pipelines.events.stats import check_total
 
 logger = get_logger(__name__)

@@ -14,12 +14,12 @@ from pipelines.common.clients.dart import DartApiError, get_dart_client, is_quot
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.companies.extractors.dart import fetch_company_profile
-from pipelines.companies.loaders.dart import (
+from pipelines.companies.repositories.postgres.companies import (
     fetch_profile_targets,
     fetch_unresolved_universe,
     update_company_profile,
 )
-from pipelines.companies.loaders.diagnostics import describe_universe
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 
 logger = get_logger(__name__)
 

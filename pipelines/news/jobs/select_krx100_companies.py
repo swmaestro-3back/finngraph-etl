@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
-from pipelines.news.repositories.search_history import fetch_due_krx100_queries
+from pipelines.news.repositories.postgres.search_history import fetch_due_krx100_queries
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 logger = get_logger(__name__)

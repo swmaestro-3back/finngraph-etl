@@ -1,4 +1,4 @@
-"""seed_graph_us_companies Neo4j 통합 테스트 — 라벨·멱등·사명 변경·KR 시드와의 격리.
+"""seed_graph_us_companies Neo4j 통합 테스트 — 라벨·멱등·사명 변경·sp500 재계산.
 
 로컬 Neo4j 필요: docker compose up -d neo4j neo4j-init 후 `pytest -m integration`.
 """
@@ -12,7 +12,7 @@ import pytest
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.config import get_settings
-from pipelines.companies.loaders.neo4j import seed_graph_companies, seed_graph_us_companies
+from pipelines.companies.repositories.neo4j.companies import seed_graph_us_companies
 
 pytestmark = [
     pytest.mark.integration,
@@ -128,33 +128,3 @@ def test_sp500_is_recomputed_every_run(marker: str) -> None:
     in_rec, out_rec = _run(_go)
     assert in_rec == {"sp500": True, "n": 1}
     assert out_rec == {"sp500": False, "n": 1}
-
-
-@pytest.mark.skip(reason="로컬 전용 — KR 노드 전량 삭제 위험; 빈 Neo4j에서만 수동 실행")
-def test_kr_seed_does_not_delete_us_nodes(marker: str) -> None:
-    """KR 시드의 DELETE_DELISTED_CYPHER를 실제로 실행한다.
-
-    로컬 Neo4j에 실데이터 KR 노드가 있으면 그 노드들이 $tickers=['999999']에 없어
-    삭제된다. 이 테스트는 비어 있는 로컬 Neo4j에서만 수동으로 스킵을 풀고 실행할 것.
-    """
-    us = _row(marker)
-    kr = {
-        "company_id": 999998,
-        "name": f"파이테스트US{marker}-KR",
-        "ticker": "999999",
-        "corp_code": None,
-        "is_listed": True,
-        "country": "KR",
-        "market": "KOSPI",
-        "krx100": False,
-        "krx300": False,
-        "kosdaq150": False,
-    }
-
-    async def _go():
-        await seed_graph_us_companies([us], set())
-        # KR 시드의 $tickers에 US 티커가 없어도 NYSE/NASDAQ 노드는 삭제 대상에서 빠져야 한다
-        await seed_graph_companies([kr])
-        return await _labels(us["name"])
-
-    assert _run(_go) == ["Company", "NASDAQ"]

@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.triples.loaders.postgres import (
+from pipelines.triples.repositories.postgres.news import (
     fetch_unprocessed_triple_news_items,
     mark_triple_extraction_result,
 )

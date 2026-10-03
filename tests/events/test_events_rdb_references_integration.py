@@ -13,11 +13,11 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.events.references.rdb import (
+from pipelines.events.repositories.postgres.news import (
     fetch_cluster_members,
     fetch_cluster_news_ids,
-    fetch_promotable_clusters,
 )
+from pipelines.events.repositories.postgres.news_clusters import fetch_promotable_clusters
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 pytestmark = pytest.mark.integration

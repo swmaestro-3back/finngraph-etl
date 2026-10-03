@@ -5,7 +5,7 @@
 ## 수집 원천
 
 `jobs/collect_articles.run(theme_ids)` 가 받은 테마의 편입 종목을 기업 단위로 모으고
-(`repositories/search_history.py`), 기업마다 `NEWS_SEARCH_QUERY_TEMPLATES`(기본 `{name},공급`·`{name},계약`·`{name},수혜`·`{name},호재`·`{name},악재`·`{name},특징주` 여섯 개)로
+(`repositories/postgres/search_history.py`), 기업마다 `NEWS_SEARCH_QUERY_TEMPLATES`(기본 `{name},공급`·`{name},계약`·`{name},수혜`·`{name},호재`·`{name},악재`·`{name},특징주` 여섯 개)로
 검색어를 만들어 서식마다 네이버 뉴스 검색 API 를 최신순으로 호출합니다
 (`extractors/search_collector.py`). 같은 기업이 여러 테마·여러 종목으로 나오면 한 번만
 검색하고, 종목명은 stock id 순 첫 종목의 것을 씁니다.
@@ -23,14 +23,14 @@
 ## 테마 선정 (jobs/select_themes.py)
 
 런마다 백엔드가 Redis 에 발행한 핫테마(`etl:hot-themes`, `HOT_THEMES_REDIS_URL`)를 읽어 그
-테마를 그대로 씁니다(`repositories/hot_themes.py`). 선정과 발행은 백엔드 몫이고
+테마를 그대로 씁니다(`repositories/redis/hot_themes.py`). 선정과 발행은 백엔드 몫이고
 (`stocks_compute_derived` 의 핫테마 발행 트리거), ETL 은 직접 계산하지 않습니다.
 
 폴백은 없습니다. 아래 경우 태스크가 실패합니다:
 
 - Redis 조회 실패, 키 없음, 페이로드 파싱 실패
 - 페이로드 `tradeDate` 가 null 이거나 DB 최신 거래일(캔들·밸류에이션이 둘 다 있는 최신 날짜,
-  `repositories/trade_dates.py`)과 다름
+  `stocks/repositories/postgres/stock_candles.py` 의 `fetch_trade_dates`)과 다름
 
 수동 트리거 conf 로 `theme_ids` 를 주면 Redis 조회 없이 그 테마만 검색합니다:
 
@@ -54,13 +54,13 @@ LLM 관련성 필터(제목·스니펫, 판정 기업마다, `transformers/filte
   버립니다. 언급은 문자열이 아니라 기업으로 확인합니다 — 개체 사전 매치 중 같은 `company_id` 가
   있어야 해서 약칭('LG엔솔')으로만 적힌 제목도 통과하고, 다른 상장사 이름의 일부('SK하이닉스' 안의
   'SK')는 언급으로 치지 않습니다. 매처는 대소문자를 구분합니다.
-- LLM 은 제목에 나온 상장사(`판정 기업`, 검색 종목 첫 번째)마다 같은 기준(GATE 1/2)으로 `valid` 를
+- LLM 은 제목에 나온 상장사(`판정 기업`, 검색 종목 첫 번째)마다 같은 기준(GATE 1~3)으로 `valid` 를
   냅니다. 저장 여부는 이 기사를 가져온 검색 종목 중 하나라도 통과했는지로 정합니다 — 같은 기사가
   여러 종목 검색에 걸리면 URL 중복 제거가 사본 하나로 합치며 걸린 검색 종목을 모두 기억합니다
   (`_query_companies`). 검색하지 않은 제목 기업만 통과하면 저장하지 않습니다. 호출은 `NEWS_LLM_BATCH_SIZE`(기본 10)건씩
   묶고, 응답은 기사 번호로 짝을 맞춥니다. 묶음이 실패하거나 번호·검색 종목 판정이 빠지면 그 기사만
   개별로 한 번 더 판정합니다.
-- `news_companies` 는 수집 단계만 씁니다(`repositories/news_companies.py`). 저장된 기사를 판정을
+- `news_companies` 는 수집 단계만 씁니다(`repositories/postgres/news_companies.py`). 저장된 기사를 판정을
   통과한 기업 전부에 연결합니다. 트리플 추출은 연결하지 않습니다. 스니펫·본문에만 나오는 기업은
   연결되지 않습니다.
 - 버린 기사는 따로 기록하지 않습니다. 워터마크가 다음 런의 창 밖으로 밀어냅니다. 그래서

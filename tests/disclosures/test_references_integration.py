@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.disclosures.references.companies import fetch_counterparty_aliases
+from pipelines.disclosures.repositories.postgres.company_aliases import fetch_counterparty_aliases
 
 pytestmark = pytest.mark.integration
 

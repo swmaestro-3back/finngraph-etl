@@ -21,7 +21,7 @@ news_collect_articles.collect_articles ──► etl://news/clusters ──► e
 
 ## 흐름
 
-두 task 가 병렬로 돕니다. 둘 다 `references/scan.py` 의 `scan_promotable` 로 후보 클러스터
+두 task 가 병렬로 돕니다. 둘 다 `scan.py` 의 `scan_promotable` 로 후보 클러스터
 (`original_size >= NEWS_EVENT_MIN_SIZE`, 최근 `NEWS_EVENT_SCAN_DAYS` 안에 변경)를 읽고
 Neo4j 존재 여부로 **자기 몫만** 고르므로, task 사이에 XCom 이 없습니다. 각 task 의
 `scanned` 는 후보 전체가 아니라 자기 몫의 수입니다.

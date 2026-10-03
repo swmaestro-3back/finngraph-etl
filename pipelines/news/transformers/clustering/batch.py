@@ -1,7 +1,7 @@
 """배치 클러스터링의 입력 변환 — 순수 함수만.
 
 기사 dict 목록을 클러스터링 문서·보도 시각으로 바꾸고, 시드 창의 시작을 계산한다. DB 를
-만지지 않으므로 transformer 다. 쓰기(클러스터 기록)는 repositories/news_clusters.py.
+만지지 않으므로 transformer 다. 쓰기(클러스터 기록)는 repositories/postgres/news_clusters.py.
 """
 
 from __future__ import annotations

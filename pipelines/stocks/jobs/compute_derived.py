@@ -14,7 +14,10 @@ from datetime import timedelta
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
-from pipelines.stocks.loaders.derived import compute_returns, compute_valuations
+from pipelines.stocks.repositories.postgres.stock_valuations import (
+    compute_returns,
+    compute_valuations,
+)
 
 logger = get_logger(__name__)
 

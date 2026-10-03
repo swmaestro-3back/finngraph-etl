@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from pipelines.events import scan
 from pipelines.events.models import ClusterCandidate
-from pipelines.events.references import scan
 
 T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
 

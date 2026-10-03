@@ -19,11 +19,11 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
-from pipelines.stocks.loaders.candles import (
+from pipelines.stocks.repositories.postgres.stock_candles import (
     refresh_daily_change_rates,
     refresh_period_change_rates,
 )
-from pipelines.stocks.loaders.tickers import fetch_stocks_by_tickers
+from pipelines.stocks.repositories.postgres.stocks import fetch_stocks_by_tickers
 
 logger = get_logger(__name__)
 

@@ -16,9 +16,9 @@ from pathlib import Path
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
-from pipelines.themes.loaders.neo4j import backfill_theme_ids, upsert_themes
 from pipelines.themes.models import Theme
-from pipelines.themes.references.postgres import fetch_theme_ids
+from pipelines.themes.repositories.neo4j.themes import backfill_theme_ids, upsert_themes
+from pipelines.themes.repositories.postgres.themes import fetch_theme_ids
 
 logger = get_logger(__name__)
 

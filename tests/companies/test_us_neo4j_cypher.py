@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pipelines.companies.loaders.neo4j import build_us_upsert_cypher
+from pipelines.companies.repositories.neo4j.companies import build_us_upsert_cypher
 
 
 def test_nasdaq_cypher_sets_nasdaq_and_removes_nyse() -> None:

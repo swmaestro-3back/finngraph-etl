@@ -26,8 +26,11 @@ from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.common.utils.time import now_kst
 from pipelines.stocks.extractors.kis import fetch_daily_candles
-from pipelines.stocks.loaders.candles import upsert_daily_candles
-from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks, fetch_stocks_by_tickers
+from pipelines.stocks.repositories.postgres.stock_candles import upsert_daily_candles
+from pipelines.stocks.repositories.postgres.stocks import (
+    fetch_serviceable_stocks,
+    fetch_stocks_by_tickers,
+)
 
 logger = get_logger(__name__)
 

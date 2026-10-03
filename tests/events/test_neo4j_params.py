@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from pipelines.events.loaders.neo4j import _bolt_datetime, _bolt_params
+from pipelines.events.repositories.neo4j.events import _bolt_datetime, _bolt_params
 
 SEOUL = ZoneInfo("Asia/Seoul")
 

@@ -31,15 +31,17 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.companies.loaders.dart import (
-    insert_dart_name_aliases,
+from pipelines.companies.models import CompanySyncResult, DartCorp
+from pipelines.companies.repositories.postgres.companies import (
     link_listed_corp_codes,
+    sync_listed_companies,
+)
+from pipelines.companies.repositories.postgres.company_aliases import (
+    insert_dart_name_aliases,
     seed_curated_aliases,
 )
-from pipelines.companies.loaders.postgres import sync_listed_companies
-from pipelines.companies.models import CompanySyncResult, DartCorp
-from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import SECURITY_GROUP_STOCK, StockTicker
+from pipelines.stocks.repositories.postgres.stocks import sync_tickers
 
 pytestmark = pytest.mark.integration
 

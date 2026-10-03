@@ -7,8 +7,8 @@ import redis
 
 from pipelines.news.jobs import select_themes as job
 from pipelines.news.jobs.select_themes import ThemeSelection
-from pipelines.news.repositories.hot_themes import HotThemes, HotThemesUnavailableError
-from pipelines.news.repositories.trade_dates import TradeDates
+from pipelines.news.repositories.redis.hot_themes import HotThemes, HotThemesUnavailableError
+from pipelines.stocks.types import TradeDates
 
 SETTLED = date(2026, 9, 10)
 INTRADAY = date(2026, 9, 11)
@@ -23,7 +23,7 @@ def _raise(exc: Exception):
 
 def _patch(monkeypatch, hot, dates):
     monkeypatch.setattr(job, "fetch_hot_themes", lambda: hot)
-    monkeypatch.setattr(job, "fetch_trade_dates", lambda as_of: dates)
+    monkeypatch.setattr(job, "fetch_trade_dates", lambda session, as_of: dates)
 
 
 def test_explicit_theme_ids_bypass_everything(monkeypatch):

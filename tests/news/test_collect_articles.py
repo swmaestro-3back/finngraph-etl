@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from pipelines.common.gazetteer import CompanyMatcher, GazetteerEntry
-from pipelines.news.repositories import news_companies
-from pipelines.news.repositories.search_history import CompanyQuery, CompanyQueryBatch
+from pipelines.news.repositories.postgres import news_companies
+from pipelines.news.repositories.postgres.search_history import CompanyQuery, CompanyQueryBatch
 from pipelines.news.transformers import company_matches
 from pipelines.news.transformers.filters import relevance_filter
 from pipelines.news.transformers.filters.relevance_filter import (

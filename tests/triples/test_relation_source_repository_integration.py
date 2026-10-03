@@ -12,8 +12,8 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.triples.loaders.postgres import insert_relation_sources
-from pipelines.triples.references.rdb import fetch_edge_summaries
+from pipelines.triples.repositories.postgres.entities_relations import fetch_edge_summaries
+from pipelines.triples.repositories.postgres.relation_sources import insert_relation_sources
 
 pytestmark = pytest.mark.integration
 

@@ -18,13 +18,12 @@ from pipelines.market_calendar.extractors.kis_ksd import (
     KsdEndpoint,
     fetch_ksd_rows,
 )
-from pipelines.market_calendar.loaders.store import (
+from pipelines.market_calendar.models import CalendarEvent, MarketDay
+from pipelines.market_calendar.repositories.postgres.market_days import select_market_days
+from pipelines.market_calendar.repositories.postgres.stock_calendar_events import (
     count_events,
     replace_events,
-    select_active_tickers,
-    select_market_days,
 )
-from pipelines.market_calendar.models import CalendarEvent, MarketDay
 from pipelines.market_calendar.transformers.events import (
     SOURCE_AGM,
     SOURCE_BONUS,
@@ -35,6 +34,7 @@ from pipelines.market_calendar.transformers.events import (
     to_dividend_events,
     to_rights_events,
 )
+from pipelines.stocks.repositories.postgres.stocks import select_active_tickers
 
 logger = get_logger(__name__)
 

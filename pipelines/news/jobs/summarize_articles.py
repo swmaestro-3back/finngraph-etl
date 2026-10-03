@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from pipelines.common.logging import get_logger
-from pipelines.news.repositories.news import (
+from pipelines.news.repositories.postgres.news import (
     fetch_unsummarized_news_items,
     save_news_summaries,
 )
