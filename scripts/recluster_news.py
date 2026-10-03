@@ -146,14 +146,7 @@ def title_all(since: datetime) -> tuple[int, int]:
 def promote() -> dict[str, int]:
     from pipelines.events.jobs import generate_events
 
-    totals: dict[str, int] = defaultdict(int)
-    for _ in range(50):  # max_items_per_run 단위로 반복
-        stats = generate_events.run()
-        for key, value in stats.items():
-            totals[key] += value
-        if stats["created"] + stats["failed"] == 0 or stats["skipped_over_limit"] == 0:
-            break
-    return dict(totals)
+    return generate_events.run()
 
 
 def main() -> None:

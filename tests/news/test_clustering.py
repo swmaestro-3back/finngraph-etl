@@ -15,6 +15,21 @@ from pipelines.news.transformers.clustering.vectorize import build_tfidf
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 
+def _unit(*components: float) -> list[float]:
+    vector = np.array(components, dtype=np.float64)
+    return list(vector / np.linalg.norm(vector))
+
+
+def _angle(degrees: float) -> list[float]:
+    """xy 평면에서 x 축과 degrees 를 이루는 단위 벡터. 두 벡터의 코사인 = cos(각도 차)."""
+    radians = np.radians(degrees)
+    return [float(np.cos(radians)), float(np.sin(radians)), 0.0]
+
+
+def _vectors(*rows: list[float]) -> np.ndarray:
+    return np.array(rows, dtype=np.float64)
+
+
 def test_select_top_members_caps_and_prefers_similar_to_representative():
     # 대표(0번)와의 유사도: 1번=0.9, 2번=0.5, 3번=0.8, 4번=0.3
     similarity = np.array(
@@ -50,7 +65,7 @@ def test_build_clusters_groups_similar_documents():
         [("현대차", 3.0), ("리콜", 1.0)],
     ]
     tfidf = build_tfidf(documents)
-    clusters = build_clusters(tfidf.cosine_similarity(), threshold=0.35)
+    clusters = build_clusters(tfidf.matrix, threshold=0.35)
 
     sizes = sorted(len(c.members) for c in clusters)
     assert sizes == [1, 2]
@@ -109,17 +124,11 @@ def test_document_terms_keeps_two_letter_abbreviations():
 def test_agglomerative_defaults_match_size_one_and_no_seeds():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    similarity = np.array(
-        [
-            [1.0, 0.9, 0.1],
-            [0.9, 1.0, 0.1],
-            [0.1, 0.1, 1.0],
-        ]
-    )
+    vectors = _vectors(_angle(0), _angle(20), _angle(90))
 
-    plain = agglomerative(similarity, threshold=0.35)
+    plain = agglomerative(vectors, threshold=0.35)
     explicit = agglomerative(
-        similarity, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[False, False, False]
+        vectors, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[False, False, False]
     )
 
     assert plain == explicit == [[0, 1], [2]]
@@ -128,17 +137,11 @@ def test_agglomerative_defaults_match_size_one_and_no_seeds():
 def test_agglomerative_never_merges_two_seeds():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    # 시드 0·1 은 서로 매우 비슷하지만 합쳐지면 안 된다. 새 문서 2 는 시드 0 에 붙는다.
-    similarity = np.array(
-        [
-            [1.0, 0.95, 0.8],
-            [0.95, 1.0, 0.3],
-            [0.8, 0.3, 1.0],
-        ]
-    )
+    # 시드 0·1 은 서로 매우 비슷하지만(0.95) 합쳐지면 안 된다. 새 문서 2 는 더 가까운 시드 0 에 붙는다.
+    vectors = _vectors(_unit(1, 0, 0), _unit(0.95, 0.31, 0), _unit(0.8, 0, 0.6))
 
     groups = agglomerative(
-        similarity, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[True, True, False]
+        vectors, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[True, True, False]
     )
 
     assert groups == [[0, 2], [1]]
@@ -147,47 +150,34 @@ def test_agglomerative_never_merges_two_seeds():
 def test_agglomerative_seed_absorbing_group_stays_blocked_from_other_seeds():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    # 새 문서 2 가 시드 0 에 붙은 뒤, 그 군집과 시드 1 의 평균 유사도가 threshold 를 넘어도
+    # 새 문서 2 가 시드 0 에 붙은 뒤, 그 군집과 시드 1 의 중심 유사도가 threshold 를 넘어도
     # 시드를 흡수한 군집은 계속 시드로 취급돼 시드 1 과 합쳐지지 않는다.
-    similarity = np.array(
-        [
-            [1.0, 0.5, 0.9],
-            [0.5, 1.0, 0.9],
-            [0.9, 0.9, 1.0],
-        ]
-    )
+    vectors = _vectors(_unit(1, 0, 0), _unit(0, 1, 0), _unit(1, 1, 0))
 
     groups = agglomerative(
-        similarity, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[True, True, False]
+        vectors, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[True, True, False]
     )
 
     assert sorted(groups) == [[0, 2], [1]] or sorted(groups) == [[0], [1, 2]]
     assert not any(0 in group and 1 in group for group in groups)
 
 
-def test_agglomerative_seed_size_weights_linkage_update():
+def test_agglomerative_seed_size_weights_centroid():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    # 시드 0(크기 3)에 문서 2 가 붙은 뒤 문서 3 과의 연결 유사도는 크기 가중 평균이다:
-    # (0.0 * 3 + 0.8 * 1) / 4 = 0.2 < threshold 이므로 문서 3 은 따로 남는다.
-    # 시드 크기가 1 이었다면 (0.0 + 0.8) / 2 = 0.4 로 합쳐졌을 것이다.
-    similarity = np.array(
-        [
-            [1.0, 0.0, 0.9, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.9, 0.0, 1.0, 0.8],
-            [0.0, 0.0, 0.8, 1.0],
-        ]
-    )
+    # 시드 0(0°)에 문서 2(30°)가 붙으면 중심은 크기 가중 평균 방향으로 움직인다.
+    # 시드 크기 3 이면 중심이 약 7.4° → 문서 3(80°)과 cos(72.6°)≈0.30 < threshold 라 따로 남는다.
+    # 시드 크기 1 이면 중심이 15° → cos(65°)≈0.42 로 합쳐진다. 시드 1 은 다른 축이라 무관하다.
+    vectors = _vectors(_angle(0), [0.0, 0.0, 1.0], _angle(30), _angle(80))
 
     weighted = agglomerative(
-        similarity,
+        vectors,
         threshold=0.35,
         initial_sizes=[3, 1, 1, 1],
         seed_flags=[True, True, False, False],
     )
     unweighted = agglomerative(
-        similarity,
+        vectors,
         threshold=0.35,
         initial_sizes=[1, 1, 1, 1],
         seed_flags=[True, True, False, False],
@@ -197,19 +187,26 @@ def test_agglomerative_seed_size_weights_linkage_update():
     assert unweighted == [[0, 2, 3], [1]]
 
 
+def test_agglomerative_large_group_still_absorbs_near_duplicate():
+    from pipelines.news.transformers.clustering.cluster import agglomerative
+
+    # 같은 사건을 다르게 쓴 기사 6건이 한 군집을 이룬다(서로 ±25° 안, 중심은 0°).
+    # 마지막 문서(35°)는 군집 멤버 하나(25°)와는 거의 같지만 반대쪽 멤버(-25°)와는 cos 60°=0.5.
+    # 군집 중심과는 cos 35°≈0.82 라 합류해야 한다 — 군집이 커져도 합류 문턱이 올라가지 않는다.
+    vectors = _vectors(
+        _angle(-25), _angle(-15), _angle(-5), _angle(5), _angle(15), _angle(25), _angle(35)
+    )
+
+    assert agglomerative(vectors, threshold=0.8) == [[0, 1, 2, 3, 4, 5, 6]]
+
+
 def test_medoid_and_cohesion_matches_build_clusters():
     from pipelines.news.transformers.clustering.cluster import build_clusters, medoid_and_cohesion
 
-    similarity = np.array(
-        [
-            [1.0, 0.9, 0.5, 0.0],
-            [0.9, 1.0, 0.7, 0.0],
-            [0.5, 0.7, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
+    vectors = _vectors(_angle(0), _angle(20), _angle(40), [0.0, 0.0, 1.0])
+    similarity = vectors @ vectors.T
 
-    [cluster, singleton] = build_clusters(similarity, threshold=0.35)
+    [cluster, singleton] = build_clusters(vectors, threshold=0.35)
     representative, cohesion = medoid_and_cohesion(similarity, [0, 1, 2])
 
     assert (cluster.representative, cluster.cohesion) == (representative, cohesion)
@@ -259,10 +256,10 @@ def test_seed_window_spans_batch_publish_range_minus_window():
 def test_agglomerative_never_merges_pairs_wider_than_max_span():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    similarity = np.array([[1.0, 0.9], [0.9, 1.0]])
+    vectors = _vectors(_angle(0), _angle(10))
 
-    within = agglomerative(similarity, 0.35, spans=[(0.0, 0.0), (5.0, 5.0)], max_span=7.0)
-    beyond = agglomerative(similarity, 0.35, spans=[(0.0, 0.0), (8.0, 8.0)], max_span=7.0)
+    within = agglomerative(vectors, 0.35, spans=[(0.0, 0.0), (5.0, 5.0)], max_span=7.0)
+    beyond = agglomerative(vectors, 0.35, spans=[(0.0, 0.0), (8.0, 8.0)], max_span=7.0)
 
     assert within == [[0, 1]]
     assert beyond == [[0], [1]]
@@ -273,16 +270,10 @@ def test_agglomerative_span_is_checked_on_the_merged_group():
 
     # 0-1 (0일·5일) 은 합쳐지지만, 그 군집에 2 (10일) 를 더하면 0~10일이라 막힌다.
     # 1-2 만 보면 5일 차라 허용이지만 군집 전체 범위로 판단해야 한다.
-    similarity = np.array(
-        [
-            [1.0, 0.9, 0.5],
-            [0.9, 1.0, 0.9],
-            [0.5, 0.9, 1.0],
-        ]
-    )
+    vectors = _vectors(_angle(0), _angle(15), _angle(35))
 
     groups = agglomerative(
-        similarity, 0.35, spans=[(0.0, 0.0), (5.0, 5.0), (10.0, 10.0)], max_span=7.0
+        vectors, 0.35, spans=[(0.0, 0.0), (5.0, 5.0), (10.0, 10.0)], max_span=7.0
     )
 
     assert groups == [[0, 1], [2]]
@@ -291,17 +282,11 @@ def test_agglomerative_span_is_checked_on_the_merged_group():
 def test_agglomerative_seed_anchor_rejects_articles_before_seed_start():
     from pipelines.news.transformers.clustering.cluster import agglomerative
 
-    # 시드(0) 는 5일에 시작. 기사 1 은 3일(이전), 기사 2 는 9일(창 안).
-    similarity = np.array(
-        [
-            [1.0, 0.9, 0.9],
-            [0.9, 1.0, 0.1],
-            [0.9, 0.1, 1.0],
-        ]
-    )
+    # 시드(0) 는 5일에 시작. 기사 1 은 3일(이전), 기사 2 는 9일(창 안). 둘 다 시드와 cos 45°.
+    vectors = _vectors(_angle(45), _angle(0), _angle(90))
 
     groups = agglomerative(
-        similarity,
+        vectors,
         0.35,
         seed_flags=[True, False, False],
         spans=[(5.0, 5.0), (3.0, 3.0), (9.0, 9.0)],
@@ -309,3 +294,10 @@ def test_agglomerative_seed_anchor_rejects_articles_before_seed_start():
     )
 
     assert groups == [[0, 2], [1]]
+
+
+def test_document_terms_normalizes_compatibility_characters():
+    from pipelines.news.transformers.clustering.preprocess import document_terms
+
+    # "㎿" 같은 호환 문자는 NFKC 로 "MW" 가 돼 같은 토큰으로 모인다
+    assert document_terms("500㎿급 해상변전소") == document_terms("500MW급 해상변전소")

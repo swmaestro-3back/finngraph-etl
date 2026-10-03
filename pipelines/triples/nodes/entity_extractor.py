@@ -1,17 +1,12 @@
-from flashtext import KeywordProcessor
+from dataclasses import asdict
+
 from langchain_aws import ChatBedrockConverse
 
 from pipelines.common.clients.bedrock import ensure_bedrock_token
 from pipelines.common.config import get_settings
+from pipelines.common.gazetteer import CompanyMatcher, get_company_matcher
 from pipelines.triples.models import Entity, RawEntityJudgement, RawEntityJudgementList
-from pipelines.triples.ontology.gazetteers import COMPANY_DICT
 from pipelines.triples.prompts.entity_verification import PROMPT
-
-# Pre-built knowledge base dict. Only companies are gazetteer-anchored; products stay as the
-# free text the LLM copied out of the article.
-GAZETTEERS: dict[str, dict[str, list[str]]] = {
-    "COMPANY": COMPANY_DICT,
-}
 
 
 def filter_verified(
@@ -38,16 +33,11 @@ def filter_verified(
 
 
 class EntityExtractor:
-    def __init__(self):
+    def __init__(self, matcher: CompanyMatcher | None = None):
 
-        self._canonicalizer = KeywordProcessor(case_sensitive=True)
-        self._processors: dict[str, KeywordProcessor] = {}
-
-        for label, gazetteer in GAZETTEERS.items():
-            processor = KeywordProcessor(case_sensitive=True)
-            processor.add_keywords_from_dict(gazetteer)
-            self._canonicalizer.add_keywords_from_dict(gazetteer)
-            self._processors[label] = processor
+        # Only companies are gazetteer-anchored; products stay as the free text the LLM copied
+        # out of the article. The gazetteer is the entity_gazetteer table (common/gazetteer.py).
+        self._matcher = matcher if matcher is not None else get_company_matcher()
 
         ensure_bedrock_token()
         settings = get_settings()
@@ -62,24 +52,13 @@ class EntityExtractor:
             method="json_schema",
         )
 
-    def canonicalize(self, text: str) -> str:
-        """
-        Replace gazetteer surface forms with their canonical names
-
-        Not used by the triples workflow, which keeps the article as written. The events
-        pipeline calls it (events/transformers/candidates.py).
-        """
-        return self._canonicalizer.replace_keywords(text)
-
     def extract(self, text: str) -> list[Entity]:
         """
-        Extract entities using gazetteer, each as the article spells it plus its canonical name
+        Extract entities using gazetteer, each as the article spells it plus the company it names
         """
-        entities: list[Entity] = []
-        for processor in self._processors.values():
-            for canonical, start, end in processor.extract_keywords(text, span_info=True):
-                entities.append(Entity(text=text[start:end], canonical=canonical))
-        return entities
+        return [
+            Entity(text=match.text, **asdict(match.entry)) for match in self._matcher.extract(text)
+        ]
 
     async def verify(self, text: str, entities: list[Entity]) -> list[Entity]:
         """

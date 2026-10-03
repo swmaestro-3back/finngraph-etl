@@ -1,10 +1,9 @@
 """RDB 참조 데이터 조회.
 
-news_companies 행을 만들 때 ticker를 companies.id로 해석하고, Neo4j 간선 요약을
-쓸 때 entities_relations 뷰(근거 원장 집계)를 읽는다. 읽기 전용 참조라 references/에
-둔다 (쓰기는 loaders/postgres.py). 공시 파이프라인(link_supply_contracts)도 간선
-요약 동기화에 fetch_edge_summaries를 같이 쓴다 — 그래프 간선 어휘의 소유자가
-triples 도메인이라 여기 둔다.
+Neo4j 간선 요약을 쓸 때 entities_relations 뷰(근거 원장 집계)를 읽는다. 읽기 전용
+참조라 references/에 둔다 (쓰기는 loaders/postgres.py). 공시 파이프라인
+(link_supply_contracts)도 간선 요약 동기화에 fetch_edge_summaries를 같이 쓴다 — 그래프
+간선 어휘의 소유자가 triples 도메인이라 여기 둔다.
 """
 
 from __future__ import annotations
@@ -71,27 +70,3 @@ def fetch_edge_summaries(keys: list[tuple[str, str, str]]) -> list[dict]:
         }
         for row in rows
     ]
-
-
-def fetch_company_ids_by_tickers(tickers: list[str]) -> dict[str, int]:
-    """ticker 목록을 활성(비상폐) companies.id로 매핑한다. 미상장/상폐는 결과에 없다."""
-
-    unique_tickers = sorted({ticker for ticker in tickers if ticker})
-
-    if not unique_tickers:
-        return {}
-
-    with session_scope() as session:
-        rows = session.execute(
-            text(
-                """
-                SELECT ticker, id
-                FROM companies
-                WHERE ticker = ANY(:tickers)
-                  AND delisted_at IS NULL;
-                """
-            ),
-            {"tickers": unique_tickers},
-        ).fetchall()
-
-    return {ticker: int(company_id) for ticker, company_id in rows}

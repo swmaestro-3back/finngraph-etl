@@ -27,6 +27,7 @@ dags/
 | companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
 | companies | `companies/generate_descriptions.py` | `companies_generate_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
+| companies | `companies/sync_gazetteer.py` | `companies_sync_gazetteer` | `companies` | AssetAny ← `etl://companies/master_synced`, `etl://companies/us_loaded` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
 | events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
@@ -35,7 +36,7 @@ dags/
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
 | news | `news/summarize_articles.py` | `news_summarize_articles` | `news` | Asset ← `etl://triples/extracted` |
-| news | `news/backfill_krx300.py` | `news_backfill_krx300` | `news`, `backfill`, `manual` | 수동 |
+| news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각), `etl://themes/hot` 발행 |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
@@ -94,12 +95,27 @@ RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 �
 임베딩이 없는 노드·간선만 대상이라 재시도는 남은 분량부터 이어서 채운다.
 
 ```
+companies_sync_master ──(seed_graph, 매 회차)──► etl://companies/master_synced ──┐
+companies_load_us ──────(load_neo4j)──────────► etl://companies/us_loaded ──────┴──► companies_sync_gazetteer
+                                                              (AssetAny, entity_gazetteer 전량 재생성)
+```
+
+개체 사전(`entity_gazetteer`)은 상장 기업의 본문 표기 → `company_id`·`stock_id`·`ticker` 스냅샷이다.
+triples·events 가 `pipelines/common/gazetteer.py` 로 읽는다. `etl://companies/linked` 가 아니라
+`master_synced` 에 거는 이유는 사명 변경·상폐·별칭 추가가 종목 연결 수를 바꾸지 않기 때문이다 —
+`master_synced` 는 `trigger_rule="all_done"` 인 `seed_graph` 가 발행하므로 `sync_master` 가 스킵된
+날에도 나온다. 새 사전이 기존의 절반 미만이면 교체하지 않고 실패한다.
+
+> **배포 순서(개체 사전).** `V9__entity_gazetteer.sql` 을 적용하고 `companies_sync_gazetteer` 를
+> 한 번 수동 실행한 뒤 triples·events 코드를 배포한다. 사전이 비어 있으면 두 DAG 가 실패한다.
+
+```
 stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles
   (평일 09~17시 매 정각)                                  (또는 cron: 평일 07:30·18·21시, 주말 09·15·21시)
 
 news_collect_articles ──┐                           ┌──► events_promote_clusters
   (위 Asset 또는 cron)    ├──► etl://news/clusters ───┤      (sync_events ∥ generate_events)
-news_backfill_krx300 ───┘   (collect_articles)      └──► triples_extract_triples
+news_backfill_krx100 ───┘   (collect_articles)      └──► triples_extract_triples
   (수동, 청크마다 발행)                                       │
                                                              ▼
                                    news_summarize_articles ◄── etl://triples/extracted
@@ -133,7 +149,7 @@ news_backfill_krx300 ───┘   (collect_articles)      └──► triples
 `search_history.last_searched_at`이 워터마크이자 2시간 간격 판정 기준). 수동 트리거 conf 의
 `theme_ids`가 있으면 선정을 건너뛰고 그 테마만 쓴다.
 
-초기 뉴스 백필(`news_backfill_krx300`)은 대상만 `stocks.krx300` 활성 종목의 기업으로 바뀌고,
+초기 뉴스 백필(`news_backfill_krx100`)은 대상만 `stocks.krx100` 활성 종목의 기업으로 바뀌고,
 검색어(같은 `NEWS_SEARCH_QUERY_TEMPLATES` 여섯 개)와 워터마크 규칙은 위와 같다. 수집 창만 트리거
 params(`lookback_days`·`max_pages`)로 넓힌다.
 

@@ -1,5 +1,6 @@
 """
-LLM 필터 - 기사가 검색 대상 종목 하나에 대한 유효한 기사인지 판정
+LLM 필터 - 기사 제목에 나온 기업마다 그 기업 페이지에 보여줄 기사인지(GATE 1/2) 판정한다.
+저장 여부는 검색 대상 종목의 판정으로 정하고, 통과한 기업은 모두 news_companies 에 연결된다.
 """
 
 from __future__ import annotations
@@ -9,31 +10,38 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-PROMPT_DIRECTORY = Path(__file__).resolve().parents[1] / "prompts"
+from pipelines.news.transformers.prompts import relevance as relevance_prompt
 
 DEFAULT_MAX_TOKENS = 1024
-DEFAULT_BATCH_SIZE = 10
 RETRY_ATTEMPTS = 2
 
 
-class ArticleVerdict(BaseModel):
-    """기사 하나의 판정. Field description 이 곧 프롬프트 규칙이다."""
+class CompanyVerdict(BaseModel):
+    """판정 기업 하나의 판정. Field description 이 곧 프롬프트 규칙이다."""
 
-    id: int = Field(description="입력의 [기사 N] 에서 N. 입력에 있는 번호만, 하나도 빠짐없이.")
+    name: str = Field(description="입력의 '판정 기업' 목록에 있는 표기 그대로.")
     valid: bool = Field(
         description=(
-            "대상 종목이 주어나 목적어인 등록 predicate 관계(수주·공급·인수·투자·계약 등)가 "
-            "제목·요약에 명시되어 있거나(GATE 1), 대상 종목 자체의 사건(실적·유상증자·인허가·"
+            "이 기업이 주어나 목적어인 등록 predicate 관계(수주·공급·인수·투자·계약 등)가 "
+            "제목·요약에 명시되어 있거나(GATE 1), 이 기업 자체의 사건(실적·유상증자·인허가·"
             "소송·공시·증설 등)이 매출·비용·생산·공급·규제 등에 직접 영향을 주면(GATE 2) true. "
-            "둘 중 하나만 통과해도 true. 대상 종목이 시세 변동만 서술되거나 지나가며 언급된 기사, "
+            "둘 중 하나만 통과해도 true. 이 기업이 시세 변동만 서술되거나 지나가며 언급된 기사, "
             "지수·타사·업황·거시 요인만으로 설명되는 시세 변동, 수혜주 전망, 여러 종목 나열, "
-            "광고·홍보면 false."
+            "광고·홍보, 더 긴 다른 이름의 일부로만 나온 경우면 false."
         )
+    )
+
+
+class ArticleVerdict(BaseModel):
+    """기사 하나의 판정."""
+
+    id: int = Field(description="입력의 [기사 N] 에서 N. 입력에 있는 번호만, 하나도 빠짐없이.")
+    companies: list[CompanyVerdict] = Field(
+        description="판정 기업마다 하나씩, 목록 순서대로, 하나도 빠짐없이."
     )
 
 
@@ -48,7 +56,8 @@ class ArticleInput:
     id: int
     title: str
     description: str
-    company: str
+    # 판정 기업의 제목 표기. 검색 종목이 첫 번째다.
+    companies: tuple[str, ...]
 
 
 Judge = Callable[[list[ArticleInput]], Awaitable[BatchVerdict]]
@@ -61,24 +70,106 @@ class RelevanceResult:
     failed: list[dict[str, Any]] = field(default_factory=list)
 
 
-@lru_cache
 def load_system_prompt() -> str:
-    return (PROMPT_DIRECTORY / "relevance_single_system.txt").read_text(encoding="utf-8").strip()
+    return relevance_prompt.SYSTEM
 
 
 def build_relevance_input(articles: list[ArticleInput]) -> str:
-    blocks: list[str] = []
-    for article in articles:
-        blocks.append(
-            f"[기사 {article.id}]\n제목: {article.title}\n요약: {article.description}\n"
-            f"대상 종목: {article.company}"
+    """기사마다 프롬프트 USER 블록을 채워 빈 줄로 잇는다."""
+
+    return "\n\n".join(
+        relevance_prompt.USER.format(
+            id=article.id,
+            title=article.title,
+            description=article.description,
+            companies=", ".join(article.companies),
         )
-    return "\n\n".join(blocks)
+        for article in articles
+    )
 
 
 def chunked(values: list, size: int) -> list[list]:
     size = max(1, size)
     return [values[start : start + size] for start in range(0, len(values), size)]
+
+
+def title_companies_of(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """판정할 기업 목록. 검색 종목이 첫 번째다.
+
+    제목 기업 매치(company_matches)를 거치지 않은 기사는 검색 종목 하나로 판정한다.
+    """
+
+    companies = item.get("_title_companies")
+    if companies:
+        return companies
+    company = item.get("_query_company")
+    if not company:
+        return []
+    return [
+        {
+            "company_id": int(company["company_id"]),
+            "name": company["name"],
+            "surface": company["name"],
+        }
+    ]
+
+
+def fetching_company_ids(item: dict[str, Any], companies: list[dict[str, Any]]) -> set[int]:
+    """이 기사를 가져온 검색 종목 중 판정 기업에 든 것. 이 중 하나라도 통과하면 기사를 저장한다.
+
+    같은 기사가 여러 종목 검색에 걸리면 URL 중복 제거가 사본 하나로 합치며 `_query_companies` 에
+    모두 기억한다. 그 정보가 없으면 판정 기업의 첫 번째(검색 종목) 하나다.
+    """
+
+    judged_ids = {company["company_id"] for company in companies}
+    fetched = {int(company["company_id"]) for company in item.get("_query_companies") or []}
+    return (fetched & judged_ids) or {companies[0]["company_id"]}
+
+
+def _name_key(name: str) -> str:
+    return "".join(name.split())
+
+
+def resolve_verdict(
+    companies: list[dict[str, Any]],
+    verdict: ArticleVerdict,
+    search_ids: set[int] | None = None,
+) -> tuple[bool | None, list[dict[str, Any]]]:
+    """판정을 기업으로 되돌린다. (기사 통과 여부, 통과한 기업) 을 돌려준다.
+
+    기사는 search_ids(이 기사를 가져온 검색 종목, 기본은 첫 번째 기업) 중 하나라도 통과하면 통과다.
+    통과한 검색 종목이 없는데 판정이 빠진 검색 종목이 있으면 통과 여부는 None — 그 종목이 통과일 수
+    있으니 호출자가 누락으로 보고 다시 판정한다.
+    목록에 없는 이름은 버린다(LLM 이 기업을 더하지 못한다). 표기 대신 정식명으로 답해도 받는다.
+    이름은 공백을 빼고 비교한다 — 'LG 엔솔' 을 'LG엔솔' 로 붙여 답해도 같은 기업이다.
+    같은 기업의 판정이 여러 번이면 첫 판정이 이긴다. 판정이 빠진 다른 기업은 연결하지 않는다.
+    """
+
+    lookup: dict[str, dict[str, Any]] = {}
+    for company in companies:
+        lookup.setdefault(_name_key(company["surface"]), company)
+        lookup.setdefault(_name_key(company["name"]), company)
+
+    judged: dict[int, bool] = {}
+    for company_verdict in verdict.companies:
+        company = lookup.get(_name_key(company_verdict.name))
+        if company is None or company["company_id"] in judged:
+            continue
+        judged[company["company_id"]] = company_verdict.valid
+
+    linked = [
+        {"company_id": company["company_id"], "name": company["name"]}
+        for company in companies
+        if judged.get(company["company_id"])
+    ]
+    if search_ids is None:
+        search_ids = {companies[0]["company_id"]}
+    search_verdicts = [judged.get(company_id) for company_id in search_ids]
+    if any(search_verdicts):
+        return True, linked
+    if any(valid is None for valid in search_verdicts):
+        return None, linked
+    return False, linked
 
 
 class RelevanceJudge:
@@ -98,10 +189,10 @@ class RelevanceJudge:
         # langchain_aws 가 호출마다 찍는 "Using Bedrock Converse API ..." INFO 를 끈다
         logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 
-        # 판정 하나가 20 토큰 안팎이라 묶음 크기에 비례해 잡는다. 모자라면 응답이 잘려 검증에
-        # 실패하고 묶음 전체가 개별 fallback 으로 떨어져 오히려 비싸진다.
+        # 기사 하나의 판정이 기업 수만큼 길어져 묶음 크기에 비례해 잡는다. 모자라면 응답이 잘려
+        # 검증에 실패하고 묶음 전체가 개별 fallback 으로 떨어져 오히려 비싸진다.
         if max_tokens is None:
-            max_tokens = max(DEFAULT_MAX_TOKENS, 64 * get_news_settings().news_llm_batch_size)
+            max_tokens = max(DEFAULT_MAX_TOKENS, 128 * get_news_settings().news_llm_batch_size)
 
         model = ChatBedrockConverse(
             model=settings.bedrock_chat_model,
@@ -131,19 +222,24 @@ async def judge_items(
     items: list[dict[str, Any]], judge: Judge, max_concurrency: int, batch_size: int
 ) -> RelevanceResult:
     buckets: dict[int, str] = {}
+    linked: dict[int, list[dict[str, Any]]] = {}
+    companies_by_index: dict[int, list[dict[str, Any]]] = {}
+    search_ids_by_index: dict[int, set[int]] = {}
     inputs: list[ArticleInput] = []
 
     for index, item in enumerate(items):
-        company = item.get("_query_company")
-        if not company:
+        companies = title_companies_of(item)
+        if not companies:
             buckets[index] = "invalid"
             continue
+        companies_by_index[index] = companies
+        search_ids_by_index[index] = fetching_company_ids(item, companies)
         inputs.append(
             ArticleInput(
                 id=index,
                 title=item.get("title", ""),
                 description=item.get("description", ""),
-                company=company["name"],
+                companies=tuple(company["surface"] for company in companies),
             )
         )
 
@@ -151,8 +247,11 @@ async def judge_items(
     batches = chunked(inputs, batch_size)
     progress = {"batches": 0, "articles": 0}
 
-    async def call(articles: list[ArticleInput]) -> dict[int, ArticleVerdict]:
-        """한 번 호출하고 번호로 짝을 맞춘다. 호출 예외는 빈 결과 — 호출자가 fallback 한다."""
+    async def call(articles: list[ArticleInput]) -> dict[int, tuple[bool, list[dict[str, Any]]]]:
+        """한 번 호출하고 번호로 짝을 맞춘다. 통과 여부를 정할 수 없는 기사는 결과에 넣지 않는다.
+
+        호출 예외는 빈 결과 — 호출자가 fallback 한다.
+        """
 
         async with semaphore:
             try:
@@ -164,28 +263,39 @@ async def judge_items(
                 return {}
 
         wanted = {article.id for article in articles}
-        matched: dict[int, ArticleVerdict] = {}
+        resolved: dict[int, tuple[bool, list[dict[str, Any]]]] = {}
+        seen: set[int] = set()
         for verdict in batch.verdicts:
-            if verdict.id in wanted and verdict.id not in matched:
-                matched[verdict.id] = verdict
-        return matched
+            if verdict.id not in wanted or verdict.id in seen:
+                continue
+            seen.add(verdict.id)
+            target_valid, companies = resolve_verdict(
+                companies_by_index[verdict.id], verdict, search_ids_by_index[verdict.id]
+            )
+            if target_valid is not None:
+                resolved[verdict.id] = (target_valid, companies)
+        return resolved
 
     async def judge_batch(articles: list[ArticleInput]) -> None:
-        matched = await call(articles)
+        resolved = await call(articles)
 
-        missing = [article for article in articles if article.id not in matched]
+        missing = [article for article in articles if article.id not in resolved]
         if missing and len(articles) > 1:
-            # 묶음에서 빠졌거나 묶음 자체가 실패한 기사는 개별로 한 번 더 판정한다.
+            # 묶음에서 빠졌거나 검색 종목 판정이 빠졌거나 묶음 자체가 실패한 기사는 개별로 한 번 더
+            # 판정한다.
             logging.warning("묶음 판정 누락 %d/%d건 — 개별 재판정", len(missing), len(articles))
             for article in missing:
-                matched.update(await call([article]))
+                resolved.update(await call([article]))
 
         for article in articles:
-            verdict = matched.get(article.id)
-            if verdict is None:
+            outcome = resolved.get(article.id)
+            if outcome is None:
                 buckets[article.id] = "failed"
                 continue
-            buckets[article.id] = "passed" if verdict.valid else "invalid"
+            target_valid, companies = outcome
+            buckets[article.id] = "passed" if target_valid else "invalid"
+            if target_valid:
+                linked[article.id] = companies
 
         # 묶음은 동시에 돌아 완료 순서가 섞이므로 완료 수만 센다
         progress["batches"] += 1
@@ -202,7 +312,11 @@ async def judge_items(
 
     result = RelevanceResult()
     for index, item in enumerate(items):
-        getattr(result, buckets[index]).append(item)
+        bucket = buckets[index]
+        if bucket == "passed":
+            # 가져온 검색 종목이 통과한 기사만 연결한다 — 버려지는 기사는 연결할 곳이 없다
+            item["_linked_companies"] = linked[index]
+        getattr(result, bucket).append(item)
     return result
 
 

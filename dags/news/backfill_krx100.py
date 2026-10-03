@@ -1,11 +1,11 @@
-"""KRX300 기업 뉴스 백필 (수동 실행).
+"""KRX100 기업 뉴스 백필 (수동 실행).
 
-초기 데이터가 없을 때 KRX300 편입 기업의 과거 뉴스를 미리 채운다. 수집 이후 단계(필터·클러스터·
+초기 데이터가 없을 때 KRX100 편입 기업의 과거 뉴스를 미리 채운다. 수집 이후 단계(필터·클러스터·
 저장)는 news_collect_articles 와 같고, 삼중항 추출·요약은 청크가 끝날 때마다 발행하는
 etl://news/clusters Asset 을 따라 triples_extract_triples → news_summarize_articles 가 수집과
 나란히 처리한다.
 
-**대상.** stocks.krx300 활성 종목의 기업 중 search_history 기준 재검색 시점이 된 기업만 —
+**대상.** stocks.krx100 활성 종목의 기업 중 search_history 기준 재검색 시점이 된 기업만 —
 스케줄 런과 같은 워터마크 규칙이라, 중간에 실패해도 다시 트리거하면 끝난 청크는 건너뛰고
 기록이 있는 기업은 그 이후만 읽는다.
 
@@ -40,7 +40,7 @@ if dag and task:
     news_clusters_updated = Asset("etl://news/clusters")
 
     @dag(
-        dag_id="news_backfill_krx300",
+        dag_id="news_backfill_krx100",
         start_date=datetime(2026, 1, 1),
         schedule=None,
         catchup=False,
@@ -66,14 +66,14 @@ if dag and task:
             ),
         },
     )
-    def news_backfill_krx300():
+    def news_backfill_krx100():
         @task(retries=1, retry_delay=timedelta(minutes=5))
         def select_companies() -> list[list[int]]:
-            from pipelines.news.jobs.select_krx300_companies import run
+            from pipelines.news.jobs.select_krx100_companies import run
 
             chunks = run(CHUNK_SIZE)
             if not chunks:
-                raise AirflowSkipException("재검색 시점이 된 KRX300 기업이 없다")
+                raise AirflowSkipException("재검색 시점이 된 KRX100 기업이 없다")
             return chunks
 
         # 청크를 동시에 돌리면 네이버 API 요청 간격(REQUEST_DELAY)이 깨진다
@@ -84,9 +84,9 @@ if dag and task:
             outlets=[news_clusters_updated],
         )
         def collect_articles(company_ids: list[int], params: dict | None = None) -> dict[str, Any]:
-            from pipelines.news.jobs.collect_articles import run_krx300
+            from pipelines.news.jobs.collect_articles import run_krx100
 
-            result = run_krx300(
+            result = run_krx100(
                 company_ids,
                 lookback_days=params["lookback_days"],
                 max_pages=params["max_pages"],
@@ -97,4 +97,4 @@ if dag and task:
 
         collect_articles.expand(company_ids=select_companies())
 
-    news_backfill_krx300()
+    news_backfill_krx100()

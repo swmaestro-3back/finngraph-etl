@@ -9,7 +9,7 @@ entities_relations 뷰(references/rdb.py의 fetch_edge_summaries)라, 간선 속
 뉴스(jobs/extract)와 공시(disclosures/jobs/link_supply_contracts) 파이프라인이
 같은 writer를 쓴다 — 간선 어휘(predicate 화이트리스트)의 소유자가 triples라 여기 둔다.
 
-읽기(ticker 참조 조회)는 `references/graph.py`, 엣지 변환 규칙은 `edges.py`에 있다.
+엣지 변환 규칙은 `edges.py`에 있다.
 """
 
 from __future__ import annotations

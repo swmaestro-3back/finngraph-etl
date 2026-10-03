@@ -76,6 +76,8 @@ known-first-party = ["pipelines", "tests", "dags"]
 "tests/**" = ["E501"]
 # KPF-BERT NER 라벨 목록 등 순수 데이터 파일도 줄길이 제한에서 제외한다.
 "pipelines/triples/utils/kpf.py" = ["E501"]
+# LLM 프롬프트 원문. 줄을 코드 폭에 맞춰 끊으면 모델이 받는 문장이 바뀐다.
+"pipelines/news/transformers/prompts/*.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

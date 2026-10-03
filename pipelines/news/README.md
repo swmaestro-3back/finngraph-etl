@@ -43,18 +43,26 @@
 
 ## 단계 (jobs/collect_articles.py)
 
-수집 → 배치 URL 중복 제거(먼저 걸린 종목만 남김) → 기사 유형 필터 → DB 저장된 URL 제거 →
-검색 종목명이 제목·스니펫에 없는 기사 제거(`transformers/filters/company_mention_filter.py`) → LLM 관련성
-필터(제목·스니펫, `transformers/filters/relevance_filter.py`) → 클러스터링·cap → 본문 크롤링 →
-저장 → 클러스터 기록 → `news_companies` 연결 → `search_history` 갱신.
+수집 → 제목 기업 매치(제목 × 기업 개체 사전, `transformers/company_matches.py`: 제목에 검색 종목이
+없는 기사 제거, 제목의 상장사는 판정 대상으로) → 배치 URL 중복 제거(먼저 걸린 종목만 남김 — 매치가
+먼저라 남는 사본은 검색 종목이 제목에 있는 것뿐) → 기사 유형 필터 → 제목 폴리싱 → DB 저장된 URL 제거(메모리 필터를 다 거친 뒤 DB 조회 1회) →
+LLM 관련성 필터(제목·스니펫, 판정 기업마다, `transformers/filters/relevance_filter.py`) →
+클러스터링·cap → 본문 크롤링 → 저장 → 클러스터 기록 → `news_companies` 연결 → `search_history` 갱신.
 
 - LLM 필터가 클러스터링 앞에 있어 무관·시황 기사가 시드와 프로필을 오염시키지 않습니다.
-- 기사 하나는 검색 대상 종목 하나에 속합니다(`_query_company`). LLM 은 그 종목 기준으로
-  `valid`(종목 페이지에 보여줄 가치)만 구조화 출력으로 냅니다.
-  호출은 `NEWS_LLM_BATCH_SIZE`(기본 10)건씩 묶고, 응답은 기사 번호로 짝을 맞춥니다. 묶음이
-  실패하거나 번호가 빠지면 그 기사만 개별로 한 번 더 판정합니다.
-- `news_companies` 는 검색 대상 기업에 바로 연결합니다(`repositories/news_companies.py`).
-  트리플 추출이 같은 기사에서 다른 상장사를 찾으면 그 행도 추가됩니다.
+- 기사 하나는 검색 대상 종목 하나에 속합니다(`_query_company`). **제목**에 검색 종목이 없으면
+  버립니다. 언급은 문자열이 아니라 기업으로 확인합니다 — 개체 사전 매치 중 같은 `company_id` 가
+  있어야 해서 약칭('LG엔솔')으로만 적힌 제목도 통과하고, 다른 상장사 이름의 일부('SK하이닉스' 안의
+  'SK')는 언급으로 치지 않습니다. 매처는 대소문자를 구분합니다.
+- LLM 은 제목에 나온 상장사(`판정 기업`, 검색 종목 첫 번째)마다 같은 기준(GATE 1/2)으로 `valid` 를
+  냅니다. 저장 여부는 이 기사를 가져온 검색 종목 중 하나라도 통과했는지로 정합니다 — 같은 기사가
+  여러 종목 검색에 걸리면 URL 중복 제거가 사본 하나로 합치며 걸린 검색 종목을 모두 기억합니다
+  (`_query_companies`). 검색하지 않은 제목 기업만 통과하면 저장하지 않습니다. 호출은 `NEWS_LLM_BATCH_SIZE`(기본 10)건씩
+  묶고, 응답은 기사 번호로 짝을 맞춥니다. 묶음이 실패하거나 번호·검색 종목 판정이 빠지면 그 기사만
+  개별로 한 번 더 판정합니다.
+- `news_companies` 는 수집 단계만 씁니다(`repositories/news_companies.py`). 저장된 기사를 판정을
+  통과한 기업 전부에 연결합니다. 트리플 추출은 연결하지 않습니다. 스니펫·본문에만 나오는 기업은
+  연결되지 않습니다.
 - 버린 기사는 따로 기록하지 않습니다. 워터마크가 다음 런의 창 밖으로 밀어냅니다. 그래서
   LLM 호출 실패·cap 탈락·본문 실패 기사는 다시 오지 않습니다(전건 실패만 task 실패로 재시도).
 
@@ -68,10 +76,10 @@
 실패한 기사는 미처리로 남아 다음 런(다음에 새 기사가 수집된 시점)에 다시 시도합니다 — 런 안에서 0건이 될 때까지 반복하지
 않는 이유입니다(실패가 이어지면 끝나지 않습니다).
 
-## KRX300 백필 (dags/news/backfill_krx300.py)
+## KRX100 백필 (dags/news/backfill_krx100.py)
 
-`news_backfill_krx300` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx300` 활성 종목의 기업
-(`fetch_due_krx300_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx300` 을 돌립니다.
+`news_backfill_krx100` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx100` 활성 종목의 기업
+(`fetch_due_krx100_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx100` 을 돌립니다.
 청크가 끝날 때마다 `etl://news/clusters` 를 발행해 삼중항 추출·요약이 수집과 나란히 진행됩니다. 대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은
 `collect()` 를 씁니다. 검색어도 스케줄 런과 같은 `NEWS_SEARCH_QUERY_TEMPLATES` 입니다.
 

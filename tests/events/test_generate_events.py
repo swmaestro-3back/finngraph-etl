@@ -7,24 +7,20 @@ from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from flashtext import KeywordProcessor
 
+from pipelines.common.gazetteer import CompanyMatcher, GazetteerEntry
 from pipelines.events.jobs import generate_events as job
 from pipelines.events.models import ClusterCandidate, EventDraft, MemberArticle
 
 T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)  # KST 9/1 09:00
 
 
-class FakeExtractor:
-    def __init__(self):
-        self._processor = KeywordProcessor(case_sensitive=True)
-        self._processor.add_keywords_from_dict({"삼성전자": ["삼성전자", "삼전"], "기아": ["기아"]})
+def _matcher() -> CompanyMatcher:
+    """DB 대신 인라인 사전으로 만든 공통 매처."""
 
-    def canonicalize(self, text: str) -> str:
-        return self._processor.replace_keywords(text)
-
-    def extract(self, text: str) -> list:
-        return [SimpleNamespace(canonical=n) for n in self._processor.extract_keywords(text)]
+    samsung = GazetteerEntry(company_id=1, stock_id=1, ticker="005930", canonical="삼성전자")
+    kia = GazetteerEntry(company_id=2, stock_id=2, ticker="000270", canonical="기아")
+    return CompanyMatcher({"삼성전자": samsung, "삼전": samsung, "기아": kia})
 
 
 class StubGenerator:
@@ -101,7 +97,7 @@ def _no_candidate_members() -> list[MemberArticle]:
 
 
 def test_build_create_input_dates_and_candidates():
-    dated_texts, candidates = job.build_create_input(_members(), FakeExtractor(), lead_chars=600)
+    dated_texts, candidates = job.build_create_input(_members(), _matcher(), lead_chars=600)
 
     assert dated_texts == [
         (date(2026, 9, 1), "삼성전자 유상증자 결정\n삼성전자이 결의했다."),
@@ -110,7 +106,7 @@ def test_build_create_input_dates_and_candidates():
     assert candidates == ["삼성전자", "기아"]
 
 
-def test_select_for_llm_applies_limit_after_candidate_filter():
+def test_select_for_llm_drops_only_clusters_without_candidates():
     prepared = [
         (_cluster(1), _members(), [(None, "t\nb")], ["삼성전자"]),
         (_cluster(2), _members(), [(None, "t\nb")], []),  # 후보 0 → 제외
@@ -118,21 +114,19 @@ def test_select_for_llm_applies_limit_after_candidate_filter():
         (_cluster(4), _members(), [(None, "t\nb")], ["삼성전자"]),
     ]
 
-    eligible, skipped_no_candidates, skipped_over_limit = job.select_for_llm(prepared, limit=2)
+    eligible, skipped_no_candidates = job.select_for_llm(prepared)
 
-    assert [item[0].cluster_id for item in eligible] == [1, 3]
+    assert [item[0].cluster_id for item in eligible] == [1, 3, 4]
     assert skipped_no_candidates == 1
-    assert skipped_over_limit == 1
 
 
 def test_summarize_stats_invariant():
     stats = {
-        "scanned": 6,
+        "scanned": 5,
         "created": 2,
         "created_without_edges": 1,
         "skipped_no_title": 1,
         "skipped_no_candidates": 1,
-        "skipped_over_limit": 1,
         "failed": 1,
     }
     assert job.summarize_stats(dict(stats)) == stats
@@ -236,7 +230,6 @@ def _event_settings(**overrides) -> SimpleNamespace:
     base = dict(
         min_size=5,
         scan_days=15,
-        max_items_per_run=2,
         llm_max_concurrency=2,
         lead_chars=600,
     )
@@ -274,7 +267,7 @@ def test_run_creates_only_own_half(monkeypatch):
         },
     )
     monkeypatch.setattr(job, "create_event", fake_create_event)
-    extractor_factory = CountingFactory(FakeExtractor())
+    extractor_factory = CountingFactory(_matcher())
     generator_factory = CountingFactory(StubGenerator(EventDraft(companies=["삼성전자"])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
@@ -285,15 +278,14 @@ def test_run_creates_only_own_half(monkeypatch):
         "created_without_edges": 1,
         "skipped_no_title": 1,
         "skipped_no_candidates": 1,
-        "skipped_over_limit": 0,
         "failed": 0,
     }
     assert job.summarize_stats(stats) == stats
     assert (extractor_factory.calls, generator_factory.calls) == (1, 1)
 
 
-def test_run_over_limit_caps_generator_calls(monkeypatch):
-    """후보가 있는 신규 4개 중 상한 2개만 LLM 을 부른다."""
+def test_run_creates_every_eligible_cluster_in_one_run(monkeypatch):
+    """런당 상한이 없다 — 후보가 있는 신규 4개 모두 LLM 을 부른다."""
 
     async def fake_create_event(record):
         return 1
@@ -303,16 +295,15 @@ def test_run_over_limit_caps_generator_calls(monkeypatch):
         to_create=[_cluster(cid) for cid in (1, 2, 3, 4)],
         to_refresh=[],
         members_by_cluster={cid: _members() for cid in (1, 2, 3, 4)},
-        settings=_event_settings(max_items_per_run=2),
+        settings=_event_settings(),
     )
     monkeypatch.setattr(job, "create_event", fake_create_event)
     generator = StubGenerator(EventDraft(companies=["삼성전자"]))
 
-    stats = asyncio.run(job._run(lambda: FakeExtractor(), lambda: generator))
+    stats = asyncio.run(job._run(lambda: _matcher(), lambda: generator))
 
-    assert stats["skipped_over_limit"] == 2
-    assert stats["created"] == 2
-    assert generator.calls == 2
+    assert stats["created"] == 4
+    assert generator.calls == 4
     assert job.summarize_stats(stats) == stats
 
 
@@ -320,7 +311,7 @@ def test_run_empty_scan_returns_zero_stats_without_building_anything(monkeypatch
     """신규 몫이 없으면 extractor·generator 를 만들지 않고 all-zero 로 반환한다."""
 
     _patch_common(monkeypatch, to_create=[], to_refresh=[_cluster(1)], members_by_cluster={})
-    extractor_factory = CountingFactory(FakeExtractor())
+    extractor_factory = CountingFactory(_matcher())
     generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))
@@ -338,7 +329,7 @@ def test_run_no_eligible_builds_extractor_but_not_generator(monkeypatch):
         to_refresh=[],
         members_by_cluster={3: _no_candidate_members()},
     )
-    extractor_factory = CountingFactory(FakeExtractor())
+    extractor_factory = CountingFactory(_matcher())
     generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
 
     stats = asyncio.run(job._run(extractor_factory, generator_factory))

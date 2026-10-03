@@ -3,20 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from functools import lru_cache
-from pathlib import Path
-from string import Template
 from typing import Any
 
 from pipelines.common.clients.bedrock import extract_bedrock_text, get_bedrock_client
 from pipelines.common.config import get_settings
+from pipelines.news.transformers.prompts import summary as summary_prompt
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
 )
-
-SUMMARY_PROMPT_DIRECTORY = Path(__file__).with_name("prompts")
 
 DEFAULT_BODY_LIMIT = 12000
 DEFAULT_MAX_TOKENS = 1024
@@ -51,15 +47,6 @@ def get_summarizer_config() -> dict[str, Any]:
         }
 
 
-@lru_cache
-def load_summary_prompt_text(filename: str) -> str:
-    return (SUMMARY_PROMPT_DIRECTORY / filename).read_text(encoding="utf-8").strip()
-
-
-def render_summary_prompt(filename: str, **values: str) -> str:
-    return Template(load_summary_prompt_text(filename)).safe_substitute(**values).strip()
-
-
 def build_summary_source_text(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LIMIT) -> str:
     text = clean_article_body_for_storage(
         get_printable_text(item.get("_text", "")),
@@ -82,12 +69,11 @@ def format_published_date(published_at: Any) -> str:
 
 
 def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LIMIT) -> str:
-    return render_summary_prompt(
-        "summary_single.txt",
+    return summary_prompt.USER.format(
         title=get_printable_text(item.get("title", "")),
         published_date=format_published_date(item.get("_published_at")),
         source_text=build_summary_source_text(item, body_limit),
-    )
+    ).strip()
 
 
 def clean_summary_text(content: str) -> str:
@@ -106,7 +92,7 @@ def build_bedrock_summary_request(
 
     return (
         model_id,
-        load_summary_prompt_text("summary_single_system.txt"),
+        summary_prompt.SYSTEM,
         build_summary_prompt(
             item,
             body_limit=int(config.get("body_limit") or DEFAULT_BODY_LIMIT),

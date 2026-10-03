@@ -111,8 +111,7 @@ def test_pick_representative_chooses_medoid():
 
     index, cohesion = pick_representative(terms)
 
-    similarity = build_tfidf(terms).cosine_similarity()
-    [cluster] = build_clusters(similarity, threshold=0.0)
+    [cluster] = build_clusters(build_tfidf(terms).matrix, threshold=0.0)
     assert index == cluster.representative
     assert cohesion == pytest.approx(cluster.cohesion)
 
@@ -225,8 +224,7 @@ def test_assign_batch_first_kept_is_medoid_when_under_cap():
 
     [assignment] = assign_batch(documents, [_at(2)] * 3, seeds=[], threshold=0.35, cap=3)
 
-    similarity = build_tfidf(documents).cosine_similarity()
-    [cluster] = build_clusters(similarity, threshold=0.35)
+    [cluster] = build_clusters(build_tfidf(documents).matrix, threshold=0.35)
     assert cluster.representative != 0  # 대표가 입력상 첫 번째가 아님을 전제로 검증한다
     assert assignment.kept[0] == cluster.representative
     assert len(assignment.kept) == 3 and assignment.dropped == []

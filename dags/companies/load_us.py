@@ -41,7 +41,8 @@ if dag and task:
 
             return run(index_path, overview_path)
 
-        @task
+        # Postgres·Neo4j 적재가 모두 끝난 뒤 개체 사전(companies_sync_gazetteer)을 깨운다.
+        @task(outlets=[Asset("etl://companies/us_loaded")])
         def load_neo4j(index_path: str) -> int:
             from pipelines.companies.jobs.load_us_neo4j import run
 

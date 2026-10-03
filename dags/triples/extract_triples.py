@@ -1,6 +1,6 @@
 """뉴스 삼중항 추출 — 미처리 기사 전량.
 
-`news_collect_articles`·`news_backfill_krx300` 이 발행하는 `etl://news/clusters` Asset 으로
+`news_collect_articles`·`news_backfill_krx100` 이 발행하는 `etl://news/clusters` Asset 으로
 깨어난다. 이벤트 내용은 쓰지 않고 `news.triple_extracted IS NULL` 인 기사를 전량 폴링하므로,
 런이 도는 동안 쌓인 이벤트는 다음 런 하나가 한꺼번에 처리한다. 폴링에 락이 없어
 `max_active_runs=1` 이 같은 기사의 중복 추출을 막는다.
