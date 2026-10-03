@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.repositories.news_companies import insert_news_companies
+from pipelines.news.repositories.postgres.news_companies import insert_news_companies
 
 pytestmark = pytest.mark.integration
 

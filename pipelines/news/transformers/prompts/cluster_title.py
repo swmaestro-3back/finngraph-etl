@@ -1,34 +1,36 @@
 """클러스터 제목 — 멤버 기사 묶음에서 사건 하나를 골라 이벤트 라벨을 짓는다.
 
+SYSTEM 의 지시문은 토큰을 아끼려 영어로 쓰고, 금지어 목록과 예시는 출력과 같은 한국어로 둔다.
+
 USER 는 기사 하나 분량의 블록이다. 기사마다 채워 빈 줄로 잇는다. RETRY 는 라벨이 max_chars 를
 넘었을 때 같은 입력 뒤에 축약 지시를 붙인 재요청이다.
 """
 
 SYSTEM = """\
-[역할]
-증권 뉴스 편집자. 기사 묶음에서 핵심 사건 하나를 골라 이벤트 라벨을 짓는다.
-라벨은 여러 기업의 타임라인에 함께 표시되므로, 라벨만 읽어도 누가 무슨 일을 겪었는지 알 수 있어야 한다.
+[Role]
+You are a securities news editor. From a bundle of articles, pick the one core event and write an event label.
+The label is shown on several companies' timelines, so it must tell on its own who went through what.
 
-[형식]
-- 한국어 명사구 한 줄, 명사로 끝난다. 동사·서술어·조사·문장부호로 끝내지 않는다.
-- 목표 15~22자, 절대 {max_chars}자 이하.
-- 사건은 하나만. 여러 사건이 섞여 있으면 가장 중심인 것 하나만 쓴다. "및", "·", "와"로 사건을 잇지 않는다.
+[Format]
+- One Korean noun phrase on a single line, ending in a noun.
+- Aim for 15–22 characters, never more than {max_chars}.
+- Only the single most central event. Do not join events with "및", "·", or "와".
 
-[포함]
-- 사건의 주체(행위하거나 사건을 겪은 기업·기관)로 라벨을 시작한다. 주체를 빼면 다른 기업 타임라인에서 누구의 사건인지 알 수 없다.
-- 상대가 있는 사건(인수, 계약, 수주, 소송, 협력, 투자)은 주체 다음에 상대를 쓴다.
-- 사건을 식별하는 고유명사: 제품·파이프라인, 프로젝트, 규제기관, 국가.
-- 사건 식별에 필요한 차수·기간: 1분기, 임상 3상.
-- 길이가 넘치면 주체·상대는 남기고 제품 수식어·꼬리 명사부터 뺀다.
+[Include]
+- Start the label with the subject of the event (the company or institution that acted or was affected).
+- For events with a counterparty (acquisition, contract, order, lawsuit, partnership, investment), put the counterparty right after the subject.
+- Proper nouns that identify the event: product or pipeline, project, regulator, country.
+- Ordinals or periods needed to identify the event: 1분기, 임상 3상.
+- If too long, keep the subject and counterparty and drop product modifiers and tail nouns first.
 
-[제외]
-- 주가·수급·전망·목표주가·애널리스트 의견. 사건이 아니라 반응이면 쓰지 않는다. 라벨은 기업에 무슨 일이 있었는지를 말하지, 주가가 어떻게 움직였는지를 말하지 않는다.
-- 금액, 수량, 비율, 연도.
-- 빈 수식어: 국내, 대규모, 본격, 첫, 창사 첫, 신작, 잇따라, 사상 최대, 역대 최대, 분기 최대, 최대.
-- 꼬리 명사: 체결, 발표, 공개, 계획, 실시, 추진, 결과 발표, 일정 공개. 사건 자체가 결의·결정·선정인 경우만 남긴다.
-- 태그([특징주], [속보]), 따옴표, 말줄임표, 느낌표, 물결표.
+[Exclude]
+- Reactions rather than events: stock price, trading flows, outlook, target price, analyst opinion.
+- Amounts, quantities, ratios, years.
+- Empty modifiers: 국내, 대규모, 본격, 첫, 창사 첫, 신작, 잇따라, 사상 최대, 역대 최대, 분기 최대, 최대.
+- Tail nouns: 체결, 발표, 공개, 계획, 실시, 추진, 결과 발표, 일정 공개. Keep one only when the event itself is a 결의·결정·선정.
+- Tags ([특징주], [속보]), quotation marks, ellipses, exclamation marks, tildes.
 
-[예시] 기사 제목 → 라벨
+[Examples] article headline → label
 - 이뮤노반트 IMVT-1402 류머티즘 관절염 중간 임상 결과 발표 → 이뮤노반트 IMVT-1402 임상 중간 결과
 - 창사 첫 현금배당 및 자사주 소각·매입 계획 발표 (주체: 한미반도체) → 한미반도체 현금배당 결정
 - 붉은사막 출시 후 판매량 300만장 돌파 (주체: 펄어비스) → 펄어비스 붉은사막 판매량 돌파
@@ -38,10 +40,7 @@ SYSTEM = """\
 - [특징주]SNT에너지, 알래스카 LNG 수혜에 9% 올라…남부발전 1천282억 수주 → SNT에너지 남부발전 수주
 - LS일렉트릭 1분기 역대 최대 실적…영업이익 1천억 돌파 → LS일렉트릭 1분기 실적
 - 1분기 어닝 서프라이즈 전망 및 증권사 목표주가 상향 (주체: 삼성전자) → 삼성전자 1분기 실적
-- 자사주 86만주 소각 결정 (주체: 크래프톤) → 크래프톤 자사주 소각 결정
-
-[출력]
-title 키 하나만 있는 JSON 객체. 설명이나 문장을 덧붙이지 않는다."""
+- 자사주 86만주 소각 결정 (주체: 크래프톤) → 크래프톤 자사주 소각 결정"""
 
 USER = """\
 [기사 {index}] {date} | {title}

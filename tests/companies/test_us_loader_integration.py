@@ -10,13 +10,13 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.companies.loaders.postgres import sync_listed_companies
-from pipelines.companies.loaders.us import (
-    STOCK_SOURCE_WIKIPEDIA,
-    clean_company_name,
-    load_us_companies,
-)
 from pipelines.companies.models import UsCompany
+from pipelines.companies.repositories.postgres.companies import (
+    STOCK_SOURCE_WIKIPEDIA,
+    load_us_companies,
+    sync_listed_companies,
+)
+from pipelines.companies.transformers.us import clean_company_name
 
 pytestmark = pytest.mark.integration
 

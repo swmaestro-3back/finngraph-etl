@@ -15,19 +15,23 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.stocks.loaders.candles import upsert_daily_candles
-from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import StockTicker
+from pipelines.stocks.repositories.postgres.stock_candles import (
+    fetch_trading_calendar,
+    upsert_daily_candles,
+)
+from pipelines.stocks.repositories.postgres.stocks import sync_tickers
 from pipelines.stocks.types import DailyCandle
 from pipelines.themes.jobs.calculate_theme_candles import run_change_rates, run_daily, run_period
-from pipelines.themes.loaders.candles import (
+from pipelines.themes.repositories.postgres.theme_candles import (
     fetch_anchors,
-    fetch_constituent_candles,
-    fetch_theme_ids,
-    fetch_trading_calendar,
     rebuild_theme_period_candles,
     refresh_theme_change_rates,
     upsert_theme_daily_candles,
+)
+from pipelines.themes.repositories.postgres.theme_stocks import (
+    fetch_constituent_candles,
+    fetch_theme_ids,
 )
 from pipelines.themes.types import ThemeCandle
 
@@ -217,7 +221,8 @@ def test_rebuild_period_candles_across_week_and_month_boundary() -> None:
         )
 
     with session_scope() as session:
-        rows = rebuild_theme_period_candles(session, since=date(2026, 9, 28))
+        # 로컬 DB 에 다른 테마의 봉이 있으면 함께 집계되므로 이 테마로 좁혀 행 수를 센다.
+        rows = rebuild_theme_period_candles(session, since=date(2026, 9, 28), theme_ids=[theme_id])
 
     # W: 9/28 주 1행. M: 9월 1행 (since 를 월초로 내리므로 9/25 도 포함). 합계 2행.
     assert rows == 2

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pipelines.themes.loaders.neo4j import build_theme_batch
 from pipelines.themes.models import Company, Theme
+from pipelines.themes.repositories.neo4j.themes import build_theme_batch
 
 
 def _theme(name: str, source: str = "naver") -> Theme:

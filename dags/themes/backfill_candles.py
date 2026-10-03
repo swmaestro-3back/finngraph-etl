@@ -63,7 +63,7 @@ if dag and task:
     def themes_backfill_candles():
         def _window(params: dict) -> tuple[date, date | None]:
             from pipelines.common.clients.postgres import session_scope
-            from pipelines.themes.loaders.candles import fetch_first_trade_date
+            from pipelines.stocks.repositories.postgres.stock_candles import fetch_first_trade_date
 
             def as_date(value: str | None) -> date | None:
                 return date.fromisoformat(value) if value else None

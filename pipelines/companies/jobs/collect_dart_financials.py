@@ -26,10 +26,13 @@ from pipelines.companies.extractors.dart import (
     FS_DIV_SEPARATE,
     fetch_financial_statements,
 )
-from pipelines.companies.loaders.dart import fetch_dart_financial_targets, fetch_unresolved_universe
-from pipelines.companies.loaders.diagnostics import describe_universe
-from pipelines.companies.loaders.financials import upsert_financials
 from pipelines.companies.models import CompanyFinancial
+from pipelines.companies.repositories.postgres.companies import (
+    fetch_dart_financial_targets,
+    fetch_unresolved_universe,
+)
+from pipelines.companies.repositories.postgres.company_financials import upsert_financials
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 from pipelines.companies.transformers.dart import build_dart_financials
 
 logger = get_logger(__name__)

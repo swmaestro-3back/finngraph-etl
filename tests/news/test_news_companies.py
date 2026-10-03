@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pipelines.news.repositories import news_companies
+from pipelines.news.repositories.postgres import news_companies
 
 
 def _record(monkeypatch) -> list[tuple[int, list[int]]]:

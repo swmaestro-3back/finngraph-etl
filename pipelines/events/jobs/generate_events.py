@@ -16,10 +16,10 @@ from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.events.config import get_event_settings
-from pipelines.events.loaders.neo4j import create_event
 from pipelines.events.models import ClusterCandidate, EventRecord, MemberArticle
-from pipelines.events.references.rdb import fetch_cluster_members
-from pipelines.events.references.scan import scan_promotable
+from pipelines.events.repositories.neo4j.events import create_event
+from pipelines.events.repositories.postgres.news import fetch_cluster_members
+from pipelines.events.scan import scan_promotable
 from pipelines.events.stats import check_total
 from pipelines.events.transformers.candidates import extract_company_candidates
 from pipelines.events.transformers.generator import validate_draft

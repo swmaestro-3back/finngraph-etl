@@ -5,7 +5,10 @@ from datetime import date
 from pipelines.common.clients.kis import KisClient, get_kis_client
 from pipelines.common.clients.postgres import session_scope
 from pipelines.market_calendar.extractors.kis_holiday import fetch_market_days
-from pipelines.market_calendar.loaders.store import select_market_days, upsert_market_days
+from pipelines.market_calendar.repositories.postgres.market_days import (
+    select_market_days,
+    upsert_market_days,
+)
 
 
 def is_market_open(target: date, client: KisClient | None = None) -> bool:

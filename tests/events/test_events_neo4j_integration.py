@@ -14,9 +14,12 @@ import pytest
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.config import get_settings
-from pipelines.events.loaders.neo4j import create_event, refresh_events
 from pipelines.events.models import EventRecord, EventRefresh
-from pipelines.events.references.graph import fetch_existing_event_ids
+from pipelines.events.repositories.neo4j.events import (
+    create_event,
+    fetch_existing_event_ids,
+    refresh_events,
+)
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 pytestmark = [

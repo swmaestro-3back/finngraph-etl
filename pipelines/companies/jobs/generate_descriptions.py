@@ -18,11 +18,11 @@ from pipelines.companies.extractors.dart import (
     fetch_document_text,
     fetch_periodic_report_receipts,
 )
-from pipelines.companies.loaders.descriptions import (
+from pipelines.companies.repositories.postgres.companies import (
     fetch_description_targets,
     update_description,
 )
-from pipelines.companies.loaders.diagnostics import describe_universe
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 from pipelines.companies.transformers.description import (
     DESCRIPTION_SOURCE_DART_LLM,
     extract_business_section,

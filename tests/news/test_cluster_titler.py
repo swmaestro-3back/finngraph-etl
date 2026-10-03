@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from pipelines.news.repositories.news_clusters import ClusterArticle
+from pipelines.news.repositories.postgres.news_clusters import ClusterArticle
 from pipelines.news.transformers.cluster_titler import (
     ClusterTitle,
     TitleTooLong,
@@ -50,7 +50,7 @@ def test_validate_cluster_title_cleans_and_bounds():
 def test_load_system_prompt_injects_max_chars():
     prompt = load_system_prompt(25)
 
-    assert "25자 이하" in prompt
+    assert "never more than 25" in prompt
     assert "{max_chars}" not in prompt
 
 

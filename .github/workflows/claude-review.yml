@@ -40,7 +40,7 @@ jobs:
             ## 이 리포에 대해
             Airflow 기반 ETL 플랫폼입니다. 컨벤션(README.md 참고):
             - `dags/`에는 DAG 정의만, 실제 로직은 `pipelines/{domain}/jobs/`에 둔다
-            - 외부 조회는 `extractors/`, 변환은 `transformers/`, 저장은 `loaders/` 담당
+            - 외부 조회는 `extractors/`, 변환은 `transformers/`, DB 조회·저장은 `repositories/{postgres,neo4j,redis}/<테이블>.py` 담당
             - 공용 코드는 `pipelines/common/`
 
             ## 중점 리뷰 관점 (ETL 특성)

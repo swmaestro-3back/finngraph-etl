@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from pipelines.common.clients.postgres import session_scope
 from pipelines.common.utils.time import now_kst
-from pipelines.news.repositories.hot_themes import HotThemesUnavailableError, fetch_hot_themes
-from pipelines.news.repositories.trade_dates import fetch_trade_dates
+from pipelines.news.repositories.redis.hot_themes import HotThemesUnavailableError, fetch_hot_themes
+from pipelines.stocks.repositories.postgres.stock_candles import fetch_trade_dates
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,8 @@ def run(theme_ids: list[int] | None = None) -> ThemeSelection:
         return ThemeSelection([int(theme_id) for theme_id in theme_ids])
 
     hot = fetch_hot_themes()
-    dates = fetch_trade_dates(as_of=now_kst().date())
+    with session_scope() as session:
+        dates = fetch_trade_dates(session, as_of=now_kst().date())
     if not dates.covers(hot.trade_date):
         raise HotThemesUnavailableError(
             f"핫테마 기준일이 DB 범위 밖 (페이로드 {hot.trade_date}, "

@@ -15,11 +15,13 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.companies.extractors.dart import fetch_corp_codes
-from pipelines.companies.loaders.dart import (
-    insert_dart_name_aliases,
+from pipelines.companies.repositories.postgres.companies import (
     link_listed_corp_codes,
-    seed_curated_aliases,
     upsert_unlisted_companies,
+)
+from pipelines.companies.repositories.postgres.company_aliases import (
+    insert_dart_name_aliases,
+    seed_curated_aliases,
 )
 
 logger = get_logger(__name__)

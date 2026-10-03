@@ -11,12 +11,12 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.companies.loaders.gazetteer import (
+from pipelines.companies.models import GazetteerAlias
+from pipelines.companies.repositories.postgres.company_aliases import seed_curated_aliases_by_ticker
+from pipelines.companies.repositories.postgres.entity_gazetteer import (
     INSERT_GAZETTEER_SQL,
     replace_gazetteer,
-    seed_curated_aliases_by_ticker,
 )
-from pipelines.companies.models import GazetteerAlias
 
 pytestmark = pytest.mark.integration
 

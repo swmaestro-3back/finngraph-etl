@@ -24,7 +24,7 @@ from pipelines.news.extractors.search_collector import (
     collect_company_news,
     validate_search_settings,
 )
-from pipelines.news.repositories.search_history import CompanyQuery
+from pipelines.news.repositories.postgres.search_history import CompanyQuery
 from pipelines.news.transformers.company_candidates import attach_candidate_companies
 from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
 from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news

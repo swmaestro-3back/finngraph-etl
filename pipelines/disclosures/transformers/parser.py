@@ -4,7 +4,7 @@
 블록이 앞에 붙는다. 그래서 표를 먼저 서식 무관하게 격자로 펼친 뒤에야 정규화 스키마
 (fields)로 매핑한다. 펼친 격자는 메모리에만 있다 — 레코드에는 fields 만 남는다.
 
-순수 함수만 있다. DB·HTTP 는 extractors/loaders 의 몫이다.
+순수 함수만 있다. DB·HTTP 는 extractors/repositories 의 몫이다.
 """
 
 from __future__ import annotations

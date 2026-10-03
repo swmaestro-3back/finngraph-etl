@@ -9,8 +9,11 @@ from pipelines.common.clients.dart import DartClient, QuotaExceeded, get_dart_cl
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
-from pipelines.companies.loaders.dart import update_company_profile
-from pipelines.companies.loaders.descriptions import update_description
+from pipelines.companies.repositories.postgres.companies import (
+    select_listed_tickers,
+    update_company_profile,
+    update_description,
+)
 from pipelines.companies.transformers.description import (
     DESCRIPTION_SOURCE_DART_LLM,
     extract_business_section,
@@ -22,18 +25,17 @@ from pipelines.market_calendar.extractors.dart_offerings import (
     fetch_offering_groups,
     fetch_profile,
 )
-from pipelines.market_calendar.loaders.offerings import (
+from pipelines.market_calendar.models import CompanyRef, IpoFilingHead, StoredFiling
+from pipelines.market_calendar.repositories.postgres.companies import select_company_refs
+from pipelines.market_calendar.repositories.postgres.ipo_filings import (
     mark_description_ready,
-    select_company_refs,
     select_filing_states,
-    select_ksd_offering_refs,
     select_link_targets,
-    select_listed_tickers,
     update_filing_terms,
     update_filing_tickers,
     upsert_filing_head,
 )
-from pipelines.market_calendar.models import CompanyRef, IpoFilingHead, StoredFiling
+from pipelines.market_calendar.repositories.postgres.ipo_offerings import select_ksd_offering_refs
 from pipelines.market_calendar.transformers.offerings import (
     derive_head,
     group_filing_rows,

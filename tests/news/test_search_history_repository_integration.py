@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.repositories.search_history import (
+from pipelines.news.repositories.postgres.search_history import (
     fetch_due_company_queries,
     fetch_due_krx100_queries,
     fetch_due_ticker_queries,

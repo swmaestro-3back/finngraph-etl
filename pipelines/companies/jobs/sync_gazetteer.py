@@ -12,10 +12,8 @@ from collections import Counter
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.companies.extractors.gazetteer import fetch_alias_candidates
-from pipelines.companies.loaders.gazetteer import (
-    replace_gazetteer,
-    seed_curated_aliases_by_ticker,
-)
+from pipelines.companies.repositories.postgres.company_aliases import seed_curated_aliases_by_ticker
+from pipelines.companies.repositories.postgres.entity_gazetteer import replace_gazetteer
 from pipelines.companies.transformers.gazetteer import build_entries
 
 logger = get_logger(__name__)

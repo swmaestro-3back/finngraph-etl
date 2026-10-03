@@ -7,7 +7,7 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.market_calendar.extractors.kis_holiday import fetch_market_days
-from pipelines.market_calendar.loaders.store import upsert_market_days
+from pipelines.market_calendar.repositories.postgres.market_days import upsert_market_days
 
 logger = get_logger(__name__)
 

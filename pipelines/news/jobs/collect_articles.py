@@ -9,20 +9,20 @@ from pipelines.news.extractors.search_collector import (
     validate_search_settings,
 )
 from pipelines.news.extractors.text_fetcher import fetch_article_body
-from pipelines.news.repositories.news import (
+from pipelines.news.repositories.postgres.news import (
     has_article_body,
     remove_stored_by_url,
     save_news_items,
 )
-from pipelines.news.repositories.news_clusters import (
+from pipelines.news.repositories.postgres.news_clusters import (
     fetch_active_cluster_seeds,
     fetch_cluster_articles,
     fetch_untitled_cluster_ids,
     record_cluster_assignments,
     update_cluster_title,
 )
-from pipelines.news.repositories.news_companies import link_saved_items
-from pipelines.news.repositories.search_history import (
+from pipelines.news.repositories.postgres.news_companies import link_saved_items
+from pipelines.news.repositories.postgres.search_history import (
     CompanyQuery,
     fetch_due_company_queries,
     fetch_due_krx100_queries,

@@ -18,15 +18,17 @@ import asyncio
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.disclosures.loaders.postgres import (
-    delete_stale_relation_sources,
-    fetch_disclosure_edge_keys,
+from pipelines.disclosures.repositories.postgres.disclosures import (
     fetch_supply_edges,
     resolve_original_rcept_nos,
+)
+from pipelines.disclosures.repositories.postgres.relation_sources import (
+    delete_stale_relation_sources,
+    fetch_disclosure_edge_keys,
     upsert_relation_sources,
 )
-from pipelines.triples.loaders.neo4j import delete_edges, sync_edge_summaries
-from pipelines.triples.references.rdb import fetch_edge_summaries
+from pipelines.triples.repositories.neo4j.relations import delete_edges, sync_edge_summaries
+from pipelines.triples.repositories.postgres.entities_relations import fetch_edge_summaries
 
 logger = get_logger(__name__)
 

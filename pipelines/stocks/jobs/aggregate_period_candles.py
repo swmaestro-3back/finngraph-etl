@@ -14,7 +14,9 @@ LOOKBACK_DAYS = 7
 
 
 def run() -> int:
-    from pipelines.stocks.loaders.candles import aggregate_current_period_candles
+    from pipelines.stocks.repositories.postgres.stock_candles import (
+        aggregate_current_period_candles,
+    )
 
     since = now_kst().date() - timedelta(days=LOOKBACK_DAYS)
     with session_scope() as session:

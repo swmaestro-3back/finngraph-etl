@@ -14,6 +14,7 @@ from typing import Any
 from pipelines.companies.models import UsCompany
 
 _BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
 # BRK.B → BRKb. 위키·한경은 점 표기, 네이버 reutersCode는 소문자 접미다(실측).
 _CLASS_SUFFIX = re.compile(r"^([A-Z]+)\.([A-Z])$")
 
@@ -122,3 +123,13 @@ def build_us_companies(
             )
         )
     return companies
+
+
+_PARENTHESIZED = re.compile(r"[(（][^()（）]*[)）]")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def clean_company_name(name: str) -> str:
+    """한경 한글명 → companies.name. 괄호 묶음(반각·전각)을 지우고 공백을 전부 없앤다."""
+
+    return _WHITESPACE.sub("", _PARENTHESIZED.sub("", name))

@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 import redis
 
-from pipelines.news.repositories import hot_themes as repo
+from pipelines.news.repositories.redis import hot_themes as repo
 
 
 def payload(**overrides):

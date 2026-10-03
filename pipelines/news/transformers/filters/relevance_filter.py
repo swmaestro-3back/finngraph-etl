@@ -1,5 +1,5 @@
 """
-LLM 필터 - 기사 제목에 나온 기업마다 그 기업 페이지에 보여줄 기사인지(GATE 1/2) 판정한다.
+LLM 필터 - 기사 제목에 나온 기업마다 그 기업 페이지에 보여줄 기사인지(GATE 1~3) 판정한다.
 저장 여부는 검색 대상 종목의 판정으로 정하고, 통과한 기업은 모두 news_companies 에 연결된다.
 """
 
@@ -20,20 +20,14 @@ DEFAULT_MAX_TOKENS = 1024
 RETRY_ATTEMPTS = 2
 
 
+# 아래 세 모델의 docstring 과 Field description 은 JSON 스키마에 실려 호출마다 LLM 에 전달된다.
+# 스키마 안의 한글은 시스템 프롬프트보다 글자당 토큰이 몇 배 든다 — 판정 기준은 시스템 프롬프트
+# (GATE 1~3)에만 두고 여기에는 다시 적지 않는다.
 class CompanyVerdict(BaseModel):
-    """판정 기업 하나의 판정. Field description 이 곧 프롬프트 규칙이다."""
+    """판정 기업 하나의 판정."""
 
     name: str = Field(description="입력의 '판정 기업' 목록에 있는 표기 그대로.")
-    valid: bool = Field(
-        description=(
-            "이 기업이 주어나 목적어인 등록 predicate 관계(수주·공급·인수·투자·계약 등)가 "
-            "제목·요약에 명시되어 있거나(GATE 1), 이 기업 자체의 사건(실적·유상증자·인허가·"
-            "소송·공시·증설 등)이 매출·비용·생산·공급·규제 등에 직접 영향을 주면(GATE 2) true. "
-            "둘 중 하나만 통과해도 true. 이 기업이 시세 변동만 서술되거나 지나가며 언급된 기사, "
-            "지수·타사·업황·거시 요인만으로 설명되는 시세 변동, 수혜주 전망, 여러 종목 나열, "
-            "광고·홍보, 더 긴 다른 이름의 일부로만 나온 경우면 false."
-        )
-    )
+    valid: bool = Field(description="이 기업이 GATE 1~3 중 하나를 통과하면 true.")
 
 
 class ArticleVerdict(BaseModel):

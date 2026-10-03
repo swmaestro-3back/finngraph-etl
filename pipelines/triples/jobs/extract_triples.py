@@ -6,13 +6,13 @@ from typing import Any
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.triples.edges import source_row_of
-from pipelines.triples.loaders.neo4j import sync_edge_summaries
-from pipelines.triples.loaders.postgres import (
+from pipelines.triples.repositories.neo4j.relations import sync_edge_summaries
+from pipelines.triples.repositories.postgres.entities_relations import fetch_edge_summaries
+from pipelines.triples.repositories.postgres.news import (
     fetch_unprocessed_triple_news_items,
-    insert_relation_sources,
     mark_triple_extraction_result,
 )
-from pipelines.triples.references.rdb import fetch_edge_summaries
+from pipelines.triples.repositories.postgres.relation_sources import insert_relation_sources
 from pipelines.triples.workflow import GraphRunner
 
 logger = get_logger(__name__)

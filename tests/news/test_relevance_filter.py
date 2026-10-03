@@ -53,10 +53,10 @@ def test_build_relevance_input_numbers_articles_and_lists_companies():
     )
 
     assert (
-        "[기사 0]\n제목: 엘앤에프, 삼성SDI에 양극재 공급\n요약: LFP\n판정 기업: 엘앤에프, 삼성SDI"
+        "[기사 0]\n제목: 엘앤에프, 삼성SDI에 양극재 공급\n스니펫: LFP\n판정 기업: 엘앤에프, 삼성SDI"
         in text
     )
-    assert "[기사 3]\n제목: 코스피 마감\n요약: \n판정 기업: 삼성전자" in text
+    assert "[기사 3]\n제목: 코스피 마감\n스니펫: \n판정 기업: 삼성전자" in text
 
 
 def test_chunked():

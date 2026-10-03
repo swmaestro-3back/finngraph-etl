@@ -23,17 +23,19 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.disclosures.loaders.postgres import (
-    delete_stale_relation_sources,
-    fetch_disclosure_edge_keys,
+from pipelines.disclosures.models import DisclosureRecord
+from pipelines.disclosures.repositories.postgres.disclosures import (
     fetch_existing_rcept_nos,
     fetch_supply_edges,
     resolve_original_rcept_nos,
     upsert_disclosures,
+)
+from pipelines.disclosures.repositories.postgres.relation_sources import (
+    delete_stale_relation_sources,
+    fetch_disclosure_edge_keys,
     upsert_relation_sources,
 )
-from pipelines.disclosures.models import DisclosureRecord
-from pipelines.triples.references.rdb import fetch_edge_summaries
+from pipelines.triples.repositories.postgres.entities_relations import fetch_edge_summaries
 
 pytestmark = pytest.mark.integration
 

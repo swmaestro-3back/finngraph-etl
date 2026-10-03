@@ -12,7 +12,7 @@ RECENT = NOW - timedelta(minutes=30)  # 아직 간격 안
 
 
 def test_group_dedupes_company_and_keeps_first_stock_name(caplog):
-    from pipelines.news.repositories.search_history import CompanyQuery, group_company_rows
+    from pipelines.news.repositories.postgres.search_history import CompanyQuery, group_company_rows
 
     rows = [
         (100, "엘앤에프", OLD),
@@ -35,7 +35,7 @@ def test_group_dedupes_company_and_keeps_first_stock_name(caplog):
 
 
 def test_group_skips_company_searched_within_interval():
-    from pipelines.news.repositories.search_history import CompanyQuery, group_company_rows
+    from pipelines.news.repositories.postgres.search_history import CompanyQuery, group_company_rows
 
     rows = [(100, "엘앤에프", RECENT), (200, "에코프로", OLD)]
 
@@ -46,7 +46,7 @@ def test_group_skips_company_searched_within_interval():
 
 
 def test_group_due_predicate_is_plain_interval():
-    from pipelines.news.repositories.search_history import group_company_rows
+    from pipelines.news.repositories.postgres.search_history import group_company_rows
 
     exactly = NOW - timedelta(hours=2)
     just_under = NOW - timedelta(hours=1, minutes=55)
@@ -60,7 +60,7 @@ def test_group_due_predicate_is_plain_interval():
 
 
 def test_group_with_no_rows():
-    from pipelines.news.repositories.search_history import group_company_rows
+    from pipelines.news.repositories.postgres.search_history import group_company_rows
 
     batch = group_company_rows(theme_ids=[10], rows=[], interval_hours=2, now=NOW)
 
@@ -71,7 +71,7 @@ def test_group_with_no_rows():
 
 
 def test_group_counts_orphan_stock_once(caplog):
-    from pipelines.news.repositories.search_history import group_company_rows
+    from pipelines.news.repositories.postgres.search_history import group_company_rows
 
     rows = [(None, "orphan", None), (None, "orphan", None)]
 

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from pipelines.news.repositories.search_history import CompanyQuery
+from pipelines.news.repositories.postgres.search_history import CompanyQuery
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=SEOUL_TIMEZONE)

@@ -26,14 +26,16 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
-from pipelines.themes.loaders.candles import (
+from pipelines.stocks.repositories.postgres.stock_candles import fetch_trading_calendar
+from pipelines.themes.repositories.postgres.theme_candles import (
     fetch_anchors,
-    fetch_constituent_candles,
-    fetch_theme_ids,
-    fetch_trading_calendar,
     rebuild_theme_period_candles,
     refresh_theme_change_rates,
     upsert_theme_daily_candles,
+)
+from pipelines.themes.repositories.postgres.theme_stocks import (
+    fetch_constituent_candles,
+    fetch_theme_ids,
 )
 from pipelines.themes.transformers.theme_index import compute_theme_candles
 

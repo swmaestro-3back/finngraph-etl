@@ -7,7 +7,7 @@ from typing import Any
 import requests
 
 from pipelines.news.config import get_news_settings
-from pipelines.news.repositories.search_history import CompanyQuery
+from pipelines.news.repositories.postgres.search_history import CompanyQuery
 from pipelines.news.utils.date_utils import parse_news_pub_date
 from pipelines.news.utils.text_utils import get_printable_text
 

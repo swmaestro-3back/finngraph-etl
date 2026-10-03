@@ -21,12 +21,13 @@ from pipelines.disclosures.extractors.dart import (
     fetch_target_filings,
     month_windows,
 )
-from pipelines.disclosures.loaders.postgres import (
+from pipelines.disclosures.models import DisclosureRecord
+from pipelines.disclosures.repositories.postgres.companies import fetch_corp_master
+from pipelines.disclosures.repositories.postgres.company_aliases import fetch_counterparty_aliases
+from pipelines.disclosures.repositories.postgres.disclosures import (
     fetch_existing_rcept_nos,
     upsert_disclosures,
 )
-from pipelines.disclosures.models import DisclosureRecord
-from pipelines.disclosures.references.companies import fetch_corp_master, fetch_counterparty_aliases
 from pipelines.disclosures.transformers.counterparty import CorpMaster
 from pipelines.disclosures.transformers.parser import build_disclosure
 

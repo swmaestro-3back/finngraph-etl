@@ -9,13 +9,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
+from pipelines.stocks.repositories.postgres.stocks import fetch_stock_names_by_tickers
 from pipelines.themes.extractors.base import today_folder
 from pipelines.themes.models import Theme
-from pipelines.themes.references.postgres import (
-    fetch_existing_themes,
-    fetch_stock_names_by_tickers,
-)
+from pipelines.themes.repositories.postgres.themes import fetch_existing_themes
 from pipelines.themes.transformers.company_filter import filter_companies
 from pipelines.themes.transformers.merger import merge_batch, merge_existing
 
@@ -29,7 +28,9 @@ def run(source_paths: list[str]) -> str:
         themes.extend(Theme(**item) for item in raw)
 
     tickers = sorted({c.ticker for theme in themes for c in theme.companies})
-    themes = filter_companies(themes, fetch_stock_names_by_tickers(tickers))
+    with session_scope() as session:
+        stock_names = fetch_stock_names_by_tickers(session, tickers)
+    themes = filter_companies(themes, stock_names)
     themes = merge_batch(themes)
     themes = merge_existing(themes, fetch_existing_themes())
 

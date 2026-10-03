@@ -7,12 +7,12 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.market_calendar.extractors.kis_ksd import PUBLIC_OFFERING, FetchStats, fetch_ksd_rows
-from pipelines.market_calendar.loaders.store import (
+from pipelines.market_calendar.repositories.postgres.ipo_offerings import (
     count_ipo_offerings,
     replace_ipo_offerings,
-    select_active_tickers,
 )
 from pipelines.market_calendar.transformers.events import to_ipo_offerings
+from pipelines.stocks.repositories.postgres.stocks import select_active_tickers
 
 logger = get_logger(__name__)
 
