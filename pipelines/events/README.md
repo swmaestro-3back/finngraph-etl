@@ -54,8 +54,8 @@ Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 
 1. `0003_events.cypher` 가 neo4j-init 으로 적용돼 있을 것. neo4j-init 은 매 기동마다
    전체를 재실행하며 멱등입니다.
 2. `companies_sync_master.seed_graph` 가 한 번은 성공해 KRX `is_listed` 가 채워져 있을 것.
-3. US Company 노드는 `companies_load_us` DAG 의 `seed_graph_us_companies` job 이 동적으로
-   시드합니다 — 마이그레이션에 들어 있지 않으므로 `docker compose down -v` 뒤에는
+3. US Company 노드는 `companies_load_us` DAG 의 `load_neo4j` task(`jobs/load_us_neo4j.py`)가
+   동적으로 시드합니다 — 마이그레이션에 들어 있지 않으므로 `docker compose down -v` 뒤에는
    `companies_crawl_us` 를 한 번 수동 실행해야 합니다(뒤이어 `companies_load_us` 가 Asset 으로
    자동으로 따라붙어 US 기업 간선이 붙습니다).
 4. `dags/news/collect_articles.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은

@@ -4,7 +4,7 @@ Airflow DAG 정의 폴더. 각 하위 폴더는 **도메인**을 나타내며, A
 
 ```
 dags/
-├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성
+├── companies/    # 법인 마스터 파일 동기화 · DART/KIS 수집 · 기업 설명 생성 · 미국 상장사 크롤링·적재 · 개체 사전
 ├── disclosures/  # DART 공시(단일판매ㆍ공급계약체결) 수집
 ├── events/       # 뉴스 클러스터 → Neo4j Event 승격 (news_collect_articles 의 Asset 으로 기동)
 ├── market_calendar/  # 휴장일·예탁원 일정(배당·증자·주총)·공모주·DART 공모 신고서 수집
@@ -21,12 +21,14 @@ dags/
 
 | 도메인 | 파일 | `dag_id` | `tags` | 스케줄 |
 |--------|------|----------|--------|--------|
-| companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | Asset ← `etl://stocks/master` **＋** `etl://companies/corp_codes` |
+| companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | AssetAny ← `etl://stocks/master`, `etl://companies/corp_codes` |
 | companies | `companies/sync_dart_corp_codes.py` | `companies_sync_dart_corp_codes` | `companies` | `0 3 * * *` (03시) |
 | companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 9 * * *` (09시) |
 | companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
 | companies | `companies/generate_descriptions.py` | `companies_generate_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
+| companies | `companies/crawl_us.py` | `companies_crawl_us` | `companies` | `0 22 * * 0` (일요일 22시) |
+| companies | `companies/load_us.py` | `companies_load_us` | `companies` | Asset ← `etl://companies/us_crawled` |
 | companies | `companies/sync_gazetteer.py` | `companies_sync_gazetteer` | `companies` | AssetAny ← `etl://companies/master_synced`, `etl://companies/us_loaded` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
@@ -42,8 +44,10 @@ dags/
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
-| stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
-| stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
+| stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks`, `backfill`, `manual` | 수동 |
+| stocks | `stocks/backfill_period_candles.py` | `stocks_backfill_period_candles` | `stocks`, `backfill`, `manual` | 수동 |
+| stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks`, `backfill`, `manual` | 수동 |
+| stocks | `stocks/backfill_derived.py` | `stocks_backfill_derived` | `stocks`, `backfill`, `manual` | 수동 |
 | themes | `themes/sync_master.py` | `themes_sync_master` | `themes` | `0 23 * * 0` (매주 일요일 23시) |
 | themes | `themes/backfill_candles.py` | `themes_backfill_candles` | `themes`, `backfill`, `manual` | 수동 |
 | triples | `triples/extract_triples.py` | `triples_extract_triples` | `triples` | Asset ← `etl://news/clusters` |
@@ -54,8 +58,10 @@ dags/
 앞 단계가 늦어지거나 실패한 날에도 그대로 돌아, 낡은 값을 섞은 결과가 조용히 나온다.
 
 ```
-stocks_sync_master ──────────► etl://stocks/master ──────► companies_sync_master
-                     (평일 08시)
+stocks_sync_master ──────────► etl://stocks/master ──────────┐
+                     (평일 08시)                                ├──► companies_sync_master
+companies_sync_dart_corp_codes ─► etl://companies/corp_codes ──┘     (AssetAny: 둘 중 하나만 갱신돼도 기동)
+                     (매일 03시)
 
 stocks_daily_pipeline ───────► etl://stocks/daily ───┐
   (평일 18시, 일봉→[기간봉 ∥ 테마 일봉→테마 기간봉]→수급)  ├──► stocks_compute_derived
@@ -95,10 +101,17 @@ RDB의 테마 편입만 보면 되고, Neo4j 적재나 임베딩이 늦어도 �
 임베딩이 없는 노드·간선만 대상이라 재시도는 남은 분량부터 이어서 채운다.
 
 ```
+companies_crawl_us ──(crawl_overview)──► etl://companies/us_crawled ──► companies_load_us
+  (일요일 22시, Wikipedia·한경 인덱스 → 네이버 overview)          (load_postgres → load_neo4j)
+
 companies_sync_master ──(seed_graph, 매 회차)──► etl://companies/master_synced ──┐
 companies_load_us ──────(load_neo4j)──────────► etl://companies/us_loaded ──────┴──► companies_sync_gazetteer
                                                               (AssetAny, entity_gazetteer 전량 재생성)
 ```
+
+미국 상장사는 크롤링과 적재를 별도 DAG 로 나눈다 — 크롤링은 외부 사이트에 좌우돼 재시도가 잦고,
+적재만 다시 돌릴 일도 있다. 크롤링 산출물은 `pipelines/companies/data/{YYYYMMDD}/` 에 남고,
+`companies_load_us` 의 `resolve_paths` 가 최신 날짜 폴더를 찾아 읽는다(XCom 으로 넘기지 않는다).
 
 개체 사전(`entity_gazetteer`)은 상장 기업의 본문 표기 → `company_id`·`stock_id`·`ticker` 스냅샷이다.
 triples·events 가 `pipelines/common/gazetteer.py` 로 읽는다. `etl://companies/linked` 가 아니라
@@ -163,14 +176,18 @@ flowchart TB
     CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
     SBD["stocks_backfill_daily_candles<br/>수동"]
+    SBP["stocks_backfill_period_candles<br/>수동"]
     SBI["stocks_backfill_investor_flows<br/>수동"]
+    SBV["stocks_backfill_derived<br/>수동"]
+    MCC["market_calendar_collect<br/><code>30 7 * * *</code>"]
+    MCB["market_calendar_backfill_market_days<br/>수동"]
     HC["health_check<br/>수동"]
     DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
     TBC["themes_backfill_candles<br/>수동"]
 
     classDef cron fill:#e8f0fe,stroke:#3b6db5,stroke-width:1.5px,color:#12243d
-    class CDP,CGD,SCD,SBD,SBI,HC,DCD,DBF,TBC cron
+    class CDP,CGD,SCD,SBD,SBP,SBI,SBV,MCC,MCB,HC,DCD,DBF,TBC cron
 ```
 
 ## `dag_id`
@@ -207,7 +224,8 @@ flowchart TB
 ```
 
 ### Tag 관련 규칙
-- **태그는 도메인(폴더명) 하나만 사용한다.**
-  - `["news"]`, `["stocks"]`, `["themes"]`, `["triples"]`, `["health"]`, `["disclosures"]`, `["companies"]`
+- **태그는 도메인(폴더명)을 기본으로 한다.**
+  - `["news"]`, `["stocks"]`, `["themes"]`, `["triples"]`, `["health"]`, `["disclosures"]`, `["companies"]`, `["events"]`, `["market_calendar"]`
+  - 수동 실행 백필 DAG만 예외로 `backfill`, `manual` 을 덧붙인다(예: `["stocks", "backfill", "manual"]`). 스케줄 DAG와 섞이지 않게 UI에서 따로 거르기 위함이다.
 - 태그는 **여러 DAG가 공유하며 사용하는 것이므로** 세부 동작명은 넣지 않는다.
   - 세부 동작명은 이미 `dag_id`에 담겨 있어 중복이고, 한 번만 쓰이는 태그가 늘어나 UI만 지저분해지기 때문이다.

@@ -23,14 +23,16 @@
 ## 테마 선정 (jobs/select_themes.py)
 
 런마다 백엔드가 Redis 에 발행한 핫테마(`etl:hot-themes`, `HOT_THEMES_REDIS_URL`)를 읽어 그
-테마를 그대로 씁니다(`repositories/redis/hot_themes.py`). 선정과 발행은 백엔드 몫이고
-(`stocks_compute_derived` 의 핫테마 발행 트리거), ETL 은 직접 계산하지 않습니다.
+테마를 그대로 씁니다(`repositories/redis/hot_themes.py`). 선정과 발행은 백엔드 몫이고, ETL 은
+`stocks_intraday_candles`(장중 매시)·`stocks_compute_derived`(마감 후)의 `publish_hot_themes` 로 백엔드
+내부 API(`BACKEND_INTERNAL_URL`·`INTERNAL_API_TOKEN`)를 호출해 발행 시점만 보장합니다.
 
 폴백은 없습니다. 아래 경우 태스크가 실패합니다:
 
 - Redis 조회 실패, 키 없음, 페이로드 파싱 실패
-- 페이로드 `tradeDate` 가 null 이거나 DB 최신 거래일(캔들·밸류에이션이 둘 다 있는 최신 날짜,
-  `stocks/repositories/postgres/stock_candles.py` 의 `fetch_trade_dates`)과 다름
+- 페이로드 `tradeDate` 가 null 이거나 DB 거래일 범위 밖 — 밸류에이션까지 있는 마감일(`settled`)부터
+  일봉만 있는 최신일(`latest`)까지가 허용 범위입니다(`stocks/repositories/postgres/stock_candles.py` 의
+  `fetch_trade_dates`). 장중 발행분은 당일 일봉만 있어도 통과합니다.
 
 수동 트리거 conf 로 `theme_ids` 를 주면 Redis 조회 없이 그 테마만 검색합니다:
 
@@ -47,7 +49,8 @@
 없는 기사 제거, 제목의 상장사는 판정 대상으로) → 배치 URL 중복 제거(먼저 걸린 종목만 남김 — 매치가
 먼저라 남는 사본은 검색 종목이 제목에 있는 것뿐) → 기사 유형 필터 → 제목 폴리싱 → DB 저장된 URL 제거(메모리 필터를 다 거친 뒤 DB 조회 1회) →
 LLM 관련성 필터(제목·스니펫, 판정 기업마다, `transformers/filters/relevance_filter.py`) →
-클러스터링·cap → 본문 크롤링 → 저장 → 클러스터 기록 → `news_companies` 연결 → `search_history` 갱신.
+클러스터링·cap → 본문 크롤링 → 저장 → 클러스터 기록 → 클러스터 이름 → `news_companies` 연결 →
+`search_history` 갱신.
 
 - LLM 필터가 클러스터링 앞에 있어 무관·시황 기사가 시드와 프로필을 오염시키지 않습니다.
 - 기사 하나는 검색 대상 종목 하나에 속합니다(`_query_company`). **제목**에 검색 종목이 없으면
@@ -63,6 +66,10 @@ LLM 관련성 필터(제목·스니펫, 판정 기업마다, `transformers/filte
 - `news_companies` 는 수집 단계만 씁니다(`repositories/postgres/news_companies.py`). 저장된 기사를 판정을
   통과한 기업 전부에 연결합니다. 트리플 추출은 연결하지 않습니다. 스니펫·본문에만 나오는 기업은
   연결되지 않습니다.
+- 클러스터 이름은 판정 기사 수가 `NEWS_CLUSTER_TITLE_MIN_SIZE`(기본 3) 이상인데 이름이 없는
+  클러스터에만 LLM 으로 짓습니다(`transformers/cluster_titler.py`, 프롬프트 `transformers/prompts/cluster_title.py`).
+  `NEWS_CLUSTER_TITLE_MAX_CHARS`(기본 25)를 넘으면 축약 지시를 붙여 한 번 더 묻고, 그래도 실패한 클러스터는
+  이름이 NULL 로 남아 다음 런에 다시 시도됩니다.
 - 버린 기사는 따로 기록하지 않습니다. 워터마크가 다음 런의 창 밖으로 밀어냅니다. 그래서
   LLM 호출 실패·cap 탈락·본문 실패 기사는 다시 오지 않습니다(전건 실패만 task 실패로 재시도).
 
@@ -89,3 +96,29 @@ LLM 관련성 필터(제목·스니펫, 판정 기업마다, `transformers/filte
   중간에 실패해도 다시 트리거하면 끝난 기업은 건너뜁니다.
 - 처음 검색하는 기업은 새 기사를 전부 LLM 관련성 필터에 보냅니다. 처음엔 `lookback_days` 를
   작게 줘서 청크당 기사 수와 소요 시간을 확인하세요.
+
+## LLM 프롬프트 (transformers/prompts/)
+
+- `relevance.py` — 관련성 판정. GATE 1(체결된 경제 관계)·GATE 2(기업 자체 사건)·GATE 3(기업 사업에 닿는
+  구체적 재료, 기대감·전망 단계 포함) 중 하나를 통과하면 `valid`. 지수·수급 등 시장 전반 요인이나 타사
+  재료로만 움직인 시세 기사는 탈락합니다.
+- `cluster_title.py` — 클러스터 이름. 지시문은 토큰을 아끼려 영어로, 금지어 목록과 예시는 출력과 같은
+  한국어로 둡니다.
+- `summary.py` — 기사 요약(`news_summarize_articles`).
+
+판정·형식 기준은 시스템 프롬프트에만 둡니다. 구조화 출력 스키마(pydantic `Field` description·docstring)도
+호출마다 LLM 에 실리는데, 스키마 안의 한글은 시스템 프롬프트보다 글자당 토큰이 몇 배 들어 같은 기준을
+다시 적으면 입력이 크게 늘어납니다. 프롬프트를 고치면 고정 입력셋으로 전후 판정을 비교하세요 — 문구만
+바꿔도 경계 사례의 판정이 움직입니다.
+
+## 로컬 확인 (scripts/probe_news_to_triples.py)
+
+검색어 하나로 네이버 검색 → 필터 → 관련성 판정 → 본문 크롤링 → 삼중항 추출까지 돌려 단계별 결과를
+로그로 남깁니다. DB·Neo4j 에는 쓰지 않고(개체 사전만 읽음), 워터마크·DB 저장 URL 필터·클러스터 cap 은
+적용하지 않습니다. 네이버 검색 API 와 Bedrock 을 실제로 호출합니다.
+
+```bash
+uv run python scripts/probe_news_to_triples.py "두산에너빌리티,특징주" --top 10
+```
+
+로그는 `logs/probe_news_to_triples_<시각>.log` 에 남습니다(콘솔은 INFO, 파일은 DEBUG 까지).
