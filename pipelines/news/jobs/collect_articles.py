@@ -37,10 +37,9 @@ from pipelines.news.transformers.clustering import (
 )
 from pipelines.news.transformers.company_matches import match_title_companies
 from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
-from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
 from pipelines.news.transformers.filters.relevance_filter import filter_relevant_news
+from pipelines.news.transformers.filters.title_filter import filter_titles
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
-from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
 logger = get_logger(__name__)
 
@@ -139,31 +138,23 @@ def collect(
     # 4. 배치 내 URL 중복 제거
     unique_items, _ = remove_duplicate_by_url(matched.kept)
 
-    # 5. 기사 유형 필터로 제거. 선두 브라켓([포토]·[…특징주])으로 거르므로 폴리싱보다 먼저다
-    typed_items, _ = filter_official_source_news(
-        unique_items,
-        pipeline_input={},
-        official_source_threshold=settings.official_source_threshold,
-    )
+    # 5. 제목 필터 — 제외 패턴이 걸린 기사는 탈락, 통과 기사는 제목 선두 브라켓 제거
+    titled_items, _ = filter_titles(unique_items)
 
-    # 6. 제목 폴리싱 (선두 브라켓 제거)
-    for item in typed_items:
-        item["title"] = remove_leading_title_brackets(item.get("title", ""))
-
-    # 7. 이미 저장된 URL 제거 — DB 조회라 메모리 필터를 다 거친 뒤 한 번만 한다
-    new_items = remove_stored_by_url(typed_items)
+    # 6. 이미 저장된 URL 제거 — DB 조회라 메모리 필터를 다 거친 뒤 한 번만 한다
+    new_items = remove_stored_by_url(titled_items)
     logger.info(
         "[collect_articles] 필터: 제목에 검색 종목 %d (판정 기업 %d개, 기사당 최대 %d) "
-        "→ URL 중복 제거 %d → 유형 필터 %d → DB 기존 제거 %d",
+        "→ URL 중복 제거 %d → 제목 필터 %d → DB 기존 제거 %d",
         len(matched.kept),
         matched.companies,
         matched.max_companies,
         len(unique_items),
-        len(typed_items),
+        len(titled_items),
         len(new_items),
     )
 
-    # 8. LLM 관련성 필터
+    # 7. LLM 관련성 필터
     relevance = filter_relevant_news(new_items, max_concurrency=settings.news_llm_max_concurrency)
     if new_items and len(relevance.failed) == len(new_items):
         raise RuntimeError(
@@ -178,7 +169,7 @@ def collect(
         len(relevance.failed),
     )
 
-    # 9. 배치 간 클러스터 판정. 시드 창은 배치 기사의 발행일 범위 기준이다
+    # 8. 배치 간 클러스터 판정. 시드 창은 배치 기사의 발행일 범위 기준이다
     documents, published_ats = batch_documents(
         passed, settings.cluster_description_weight, run_started_at
     )
@@ -208,11 +199,11 @@ def collect(
         sum(len(a.dropped) for a in assignments),
     )
 
-    # 10. 선별된 기사만 본문 크롤링
+    # 9. 선별된 기사만 본문 크롤링
     fetched = fetch_article_body(selected)
     storable = [item for item in fetched if has_article_body(item)]
 
-    # 11. DB에 뉴스 저장
+    # 10. DB에 뉴스 저장
     save_result = save_news_items(items=storable, save_summary=False, skip_existing=True)
     logger.info(
         "[collect_articles] 저장: 본문 성공 %d / 실패 %d → 신규 %d / 기존 스킵 %d / 실패 %d",
@@ -223,12 +214,12 @@ def collect(
         save_result["failed_count"],
     )
 
-    # 12. 클러스터 기록: 본문 실패로 저장 안 된 기사는 멤버에서 빠진다
+    # 11. 클러스터 기록: 본문 실패로 저장 안 된 기사는 멤버에서 빠진다
     cluster_result = record_cluster_assignments(
         assignments, passed, documents, settings.cluster_keyword_count
     )
 
-    # 13. 클러스터 이름 — 이번 런에 판정 기사 수가 기준을 넘었는데 이름이 없는 클러스터만
+    # 12. 클러스터 이름 — 이번 런에 판정 기사 수가 기준을 넘었는데 이름이 없는 클러스터만
     untitled = fetch_untitled_cluster_ids(settings.cluster_title_min_size, run_started_at)
     titles = title_clusters(
         fetch_cluster_articles(untitled),
@@ -251,10 +242,10 @@ def collect(
             untitled_failed,
         )
 
-    # 14. 기업 연결 — 제목에 나와 판정을 통과한 기업 전부를 news_companies 에
+    # 13. 기업 연결 — 제목에 나와 판정을 통과한 기업 전부를 news_companies 에
     linked = link_saved_items(storable)
 
-    # 15. 기업 최신 검색 기록 갱신
+    # 14. 기업 최신 검색 기록 갱신
     searched = [q.company_id for q in queries if q.company_id not in failed_company_ids]
     marked = mark_companies_searched(searched, run_started_at)
     logger.info(

@@ -47,7 +47,7 @@
 
 수집 → 제목 기업 매치(제목 × 기업 개체 사전, `transformers/company_matches.py`: 제목에 검색 종목이
 없는 기사 제거, 제목의 상장사는 판정 대상으로) → 배치 URL 중복 제거(먼저 걸린 종목만 남김 — 매치가
-먼저라 남는 사본은 검색 종목이 제목에 있는 것뿐) → 기사 유형 필터 → 제목 폴리싱 → DB 저장된 URL 제거(메모리 필터를 다 거친 뒤 DB 조회 1회) →
+먼저라 남는 사본은 검색 종목이 제목에 있는 것뿐) → 제목 필터(제외 패턴 탈락 + 통과 기사 제목 선두 브라켓 제거, `transformers/filters/title_filter.py`) → DB 저장된 URL 제거(메모리 필터를 다 거친 뒤 DB 조회 1회) →
 LLM 관련성 필터(제목·스니펫, 판정 기업마다, `transformers/filters/relevance_filter.py`) →
 클러스터링·cap → 본문 크롤링 → 저장 → 클러스터 기록 → 클러스터 이름 → `news_companies` 연결 →
 `search_history` 갱신.

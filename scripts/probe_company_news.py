@@ -27,13 +27,12 @@ from pipelines.news.extractors.search_collector import (
 from pipelines.news.repositories.postgres.search_history import CompanyQuery
 from pipelines.news.transformers.company_candidates import attach_candidate_companies
 from pipelines.news.transformers.filters.duplicate_filter import remove_duplicate_by_url
-from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
 from pipelines.news.transformers.filters.relevance_filter import (
     RelevanceResult,
     filter_relevant_news,
 )
+from pipelines.news.transformers.filters.title_filter import filter_titles
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
-from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logging.getLogger("langchain_aws").setLevel(logging.WARNING)
@@ -68,16 +67,8 @@ def collect_and_filter(names: list[str]) -> tuple[RelevanceResult, dict[str, int
     # 3. 배치 내 URL 중복 제거
     unique_items, _ = remove_duplicate_by_url(collected)
 
-    # 4. 기사 유형 필터로 제거
-    typed_items, _ = filter_official_source_news(
-        unique_items,
-        pipeline_input={},
-        official_source_threshold=settings.official_source_threshold,
-    )
-
-    # 5. 제목 폴리싱 (선두 브라켓 제거)
-    for item in typed_items:
-        item["title"] = remove_leading_title_brackets(item.get("title", ""))
+    # 4. 제목 필터 (탈락 + 통과 기사 제목 선두 브라켓 제거)
+    typed_items, _ = filter_titles(unique_items)
 
     # 7. 후보 상장사 부착 (gazetteer 활용)
     attach_candidate_companies(typed_items)
