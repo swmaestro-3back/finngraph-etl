@@ -55,7 +55,7 @@ if dag and task:
         @task(retries=1)
         def check_market_open() -> None:
             from pipelines.common.utils.time import now_kst
-            from pipelines.stocks.extractors.kis import is_market_open
+            from pipelines.market_calendar.jobs.market_open import is_market_open
 
             today = now_kst().date()
             if not is_market_open(today):
