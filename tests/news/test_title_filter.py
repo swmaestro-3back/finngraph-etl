@@ -1,4 +1,4 @@
-"""news_type_filter의 해외 특징주 태그 필터 + 제목 선두 브라켓 제거 단위 테스트."""
+"""title_filter의 제외 패턴 탈락 + 제목 선두 브라켓 제거 단위 테스트."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ def _item(title: str) -> dict:
 
 
 def _filter(items: list[dict]) -> tuple[list[dict], list[dict]]:
-    from pipelines.news.transformers.filters.news_type_filter import filter_official_source_news
+    from pipelines.news.transformers.filters.title_filter import filter_titles
 
-    return filter_official_source_news(items, pipeline_input={}, official_source_threshold=0)
+    return filter_titles(items)
 
 
 def test_foreign_featured_stock_tags_are_filtered():
@@ -85,7 +85,7 @@ def test_bot_price_notes_are_filtered():
 
     assert kept == []
     assert len(removed) == 3
-    assert removed[0]["debug_info"]["excluded_keywords"][0]["position"] == "price_note"
+    assert removed[0]["excluded_by"] == "주가, 9월 9일"
 
 
 def test_price_mention_without_date_note_is_kept():
@@ -99,3 +99,45 @@ def test_price_mention_without_date_note_is_kept():
 
     assert len(kept) == 2
     assert removed == []
+
+
+def test_kept_items_have_leading_brackets_removed():
+    kept, removed = _filter(
+        [
+            _item("[특징주] 삼성전자 급등"),
+            _item("[속보][마켓뷰] 코스피 반등"),
+            _item("삼성전자 [공식] 입장 발표"),
+        ]
+    )
+
+    assert [item["title"] for item in kept] == [
+        "삼성전자 급등",
+        "코스피 반등",
+        "삼성전자 [공식] 입장 발표",
+    ]
+    assert removed == []
+
+
+def test_removed_items_keep_original_title():
+    # 선두 브라켓으로 판정하므로 제거는 판정 뒤에 하고, 제거된 기사는 원본 제목을 남긴다
+    kept, removed = _filter([_item("[포토] 이재용 회장 출근"), _item("[미국 특징주] 테슬라 급등")])
+
+    assert kept == []
+    assert [entry["removed_item"]["title"] for entry in removed] == [
+        "[포토] 이재용 회장 출근",
+        "[미국 특징주] 테슬라 급등",
+    ]
+
+
+def test_each_exclusion_rule_removes_on_its_own():
+    # 점수 합산 없이 패턴 하나만 걸려도 탈락한다
+    kept, removed = _filter(
+        [
+            _item("[ 표 ] 외국인 순매수 상위"),
+            _item("[단독] 삼성전자, 신규 투자"),
+            _item("SK하이닉스 HBM 시장 분석"),
+        ]
+    )
+
+    assert kept == []
+    assert [entry["excluded_by"] for entry in removed] == ["[ 표 ]", "단독", "분석"]

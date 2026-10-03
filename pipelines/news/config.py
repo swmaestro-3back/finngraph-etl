@@ -65,8 +65,6 @@ class NewsSettings(BaseSettings):
 
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
 
-    official_source_threshold: int = Field(default=0, validation_alias="OFFICIAL_SOURCE_THRESHOLD")
-
     request_delay: float = Field(default=1.0, validation_alias="REQUEST_DELAY")
     # 본문 크롤링 동시 요청 수. 대상이 여러 언론사 페이지라 API 제한은 없고,
     # 이 값이 유일한 상한이다.

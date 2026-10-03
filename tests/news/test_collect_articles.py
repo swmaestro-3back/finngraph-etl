@@ -48,8 +48,7 @@ def wired(monkeypatch):
     from pipelines.news import config
     from pipelines.news.jobs import collect_articles as job
 
-    # run() 이 읽는 설정을 고정한다 — 로컬 .env 값(OFFICIAL_SOURCE_THRESHOLD 등)에 좌우되지 않게.
-    monkeypatch.setenv("OFFICIAL_SOURCE_THRESHOLD", "0")
+    # run() 이 읽는 설정을 고정한다 — 로컬 .env 값에 좌우되지 않게.
     monkeypatch.setenv("NEWS_CLUSTER_WINDOW_DAYS", "7")
     monkeypatch.setenv("NEWS_CLUSTER_THRESHOLD", "0.35")
     monkeypatch.setenv("NEWS_CLUSTER_DESCRIPTION_WEIGHT", "0.4")
@@ -292,15 +291,15 @@ def test_run_matches_titles_first_and_queries_stored_urls_last(wired, monkeypatc
     job, calls = wired
     order: list[tuple[str, list[str]]] = []
 
-    def fake_type(items, pipeline_input, official_source_threshold):
-        order.append(("type", [item["link"] for item in items]))
+    def fake_title(items):
+        order.append(("title", [item["link"] for item in items]))
         return items, []
 
     def fake_stored(items):
         order.append(("stored", [item["link"] for item in items]))
         return [item for item in items if item["link"] != "https://a/old"]
 
-    monkeypatch.setattr(job, "filter_official_source_news", fake_type)
+    monkeypatch.setattr(job, "filter_titles", fake_title)
     monkeypatch.setattr(job, "remove_stored_by_url", fake_stored)
 
     job.run(theme_ids=[10, 11])
@@ -308,7 +307,7 @@ def test_run_matches_titles_first_and_queries_stored_urls_last(wired, monkeypatc
     # 제목 매치가 시황 기사(https://a/2)를 먼저 버리고, DB 대조는 메모리 필터를 다 통과한 기사에만
     # 맨 마지막에 돈다
     assert order == [
-        ("type", ["https://a/1", "https://a/old"]),
+        ("title", ["https://a/1", "https://a/old"]),
         ("stored", ["https://a/1", "https://a/old"]),
     ]
 
