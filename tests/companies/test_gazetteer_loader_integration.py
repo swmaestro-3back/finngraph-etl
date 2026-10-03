@@ -1,6 +1,6 @@
 """개체 사전 적재 통합 테스트 — 수동 별칭 ticker 시드, 전량 교체, 축소 가드.
 
-로컬 Postgres 필요: `docker compose up -d db` 후 V7 적용, `pytest -m integration`.
+로컬 Postgres 필요: `docker compose up -d db` 후 V9 적용, `pytest -m integration`.
 테스트 종목은 PYTESTGZ 티커로 직접 만든다. entity_gazetteer 는 전량 교체 테이블이라
 교체 테스트 전후로 원래 행을 보존·복원한다.
 """

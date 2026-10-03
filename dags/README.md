@@ -106,7 +106,7 @@ triples·events 가 `pipelines/common/gazetteer.py` 로 읽는다. `etl://compan
 `master_synced` 는 `trigger_rule="all_done"` 인 `seed_graph` 가 발행하므로 `sync_master` 가 스킵된
 날에도 나온다. 새 사전이 기존의 절반 미만이면 교체하지 않고 실패한다.
 
-> **배포 순서(개체 사전).** `V7__entity_gazetteer.sql` 을 적용하고 `companies_sync_gazetteer` 를
+> **배포 순서(개체 사전).** `V9__entity_gazetteer.sql` 을 적용하고 `companies_sync_gazetteer` 를
 > 한 번 수동 실행한 뒤 triples·events 코드를 배포한다. 사전이 비어 있으면 두 DAG 가 실패한다.
 
 ```
