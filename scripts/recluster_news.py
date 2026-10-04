@@ -1,39 +1,144 @@
-"""저장된 news 만으로 클러스터를 다시 판정한다 (일회성 백필).
+"""저장된 news 만으로 클러스터를 다시 판정한다.
 
-1. Neo4j Event 노드·HAS_EVENT 간선 삭제, news_clusters 전부 삭제, news.cluster_id 초기화
-2. news 를 발행일(KST) 순으로 하루씩 묶어 운영과 같은 규칙(창·cap·시드 합류)으로 다시 판정
-3. original_size 가 기준을 넘은 클러스터에 LLM 으로 이름 생성
-4. events.generate_events 로 Neo4j Event 승격 (상한 단위로 반복)
+조회 모드(기본): DB 를 바꾸지 않는다. 저장된 기사를 발행 시각순으로 새 판정에 통과시키고
+클러스터 크기 분포를 출력한다 — NEWS_CLUSTER_THRESHOLD 를 정할 때 쓴다.
 
-실행: .venv/bin/python scripts/recluster_news.py
+  .venv/bin/python scripts/recluster_news.py --threshold 0.30 --grep 해상변전소
+  .venv/bin/python scripts/recluster_news.py --threshold 0.30 --grep 해상변전소 --title-only
+
+적용 모드(--apply): 일회성 백필이다.
+1. Neo4j Event 노드·HAS_EVENT 간선 삭제, news_clusters 전부 삭제,
+   news.cluster_id·cluster_terms 초기화
+2. news 를 발행 시각순으로 새 규칙으로 판정해 기록
+3. 후보가 다 찬 클러스터 승격 → 제목 생성 → Event 생성
+
+  .venv/bin/python scripts/recluster_news.py --apply
+
+판정 입력은 운영(cluster_articles.assign)과 같은 제목 + 본문 리드다. 본문이 없는 옛 행은
+제목만으로 판정한다. IDF 는 저장된 기사 전체에서 센다 — 운영(후보 기사만 센다)보다 큰 사건의
+토큰이 조금 더 흔하게 잡힌다.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
-from collections import defaultdict
-from datetime import datetime
+from collections import Counter
 
 from sqlalchemy import text
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.config import get_news_settings
-from pipelines.news.repositories.postgres.news_clusters import (
-    fetch_active_cluster_seeds,
-    fetch_cluster_articles,
-    fetch_untitled_cluster_ids,
-    record_cluster_assignments,
-    update_cluster_title,
+from pipelines.news.repositories.postgres.news_clusters import record_assignments
+from pipelines.news.transformers.clustering import (
+    ClusterAssignment,
+    IdfTable,
+    assign_online,
+    row_documents,
 )
-from pipelines.news.transformers.cluster_titler import title_clusters
-from pipelines.news.transformers.clustering import assign_batch, document_terms, seed_window
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 log = logging.getLogger("recluster")
+
+SIZE_BUCKETS = ((1, 1), (2, 4), (5, 9), (10, 19), (20, 49), (50, None))
+
+
+def load_news() -> list[dict]:
+    """저장된 기사 전부 (발행 시각순). 발행 시각이 없으면 수집 시각을 쓴다."""
+
+    with session_scope() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT id, title, text, COALESCE(published_at, collected_at, now()) AS published_at
+                  FROM news
+                 ORDER BY 4, id;
+                """
+            )
+        ).fetchall()
+
+    return [
+        {
+            "_news_id": int(news_id),
+            "title": title or "",
+            "text": body or "",
+            "published_at": published_at.astimezone(SEOUL_TIMEZONE),
+        }
+        for news_id, title, body, published_at in rows
+    ]
+
+
+def corpus_idf(documents: list[list[tuple[str, float]]]) -> IdfTable:
+    frequency: Counter[str] = Counter()
+    for terms in documents:
+        frequency.update({token for token, _ in terms})
+    return IdfTable(document_frequency=dict(frequency), document_count=len(documents))
+
+
+def judge(
+    items: list[dict], threshold: float, title_only: bool
+) -> tuple[list[ClusterAssignment], list]:
+    settings = get_news_settings()
+    documents, published_ats = row_documents(
+        items, 0 if title_only else settings.cluster_lead_chars, settings.cluster_description_weight
+    )
+    assignments = assign_online(
+        documents,
+        published_ats,
+        [],
+        corpus_idf(documents),
+        threshold=threshold,
+        promote_size=settings.cluster_promote_size,
+        window_days=settings.cluster_window_days,
+        backward_days=settings.cluster_backward_days,
+    )
+    return assignments, documents
+
+
+def _size(assignment: ClusterAssignment) -> int:
+    return len(assignment.candidates) + len(assignment.followers)
+
+
+def report(assignments: list[ClusterAssignment], items: list[dict], grep: str | None) -> None:
+    promote_size = get_news_settings().cluster_promote_size
+    sizes = [_size(assignment) for assignment in assignments]
+    promoted = [size for size in sizes if size >= promote_size]
+
+    log.info("[판정] 기사 %d건 → 클러스터 %d개", len(items), len(assignments))
+    for low, high in SIZE_BUCKETS:
+        label = f"{low}" if low == high else f"{low}~{high}" if high else f"{low}+"
+        count = sum(1 for size in sizes if size >= low and (high is None or size <= high))
+        log.info("  크기 %-6s 클러스터 %d개", label, count)
+    log.info(
+        "[승격] 기준 %d건 이상 클러스터 %d개 (기사 %d건, 전체의 %.1f%%)",
+        promote_size,
+        len(promoted),
+        sum(promoted),
+        100.0 * sum(promoted) / max(len(items), 1),
+    )
+
+    if not grep:
+        return
+
+    log.info("[grep] 제목에 '%s' 가 든 기사가 속한 클러스터", grep)
+    for assignment in sorted(assignments, key=_size, reverse=True):
+        members = assignment.candidates + assignment.followers
+        hits = [index for index in members if grep in items[index]["title"]]
+        if not hits:
+            continue
+        log.info(
+            "  크기 %d (그중 '%s' %d건), 시작 %s",
+            len(members),
+            grep,
+            len(hits),
+            assignment.first_published_at.date(),
+        )
+        for index in members[:5]:
+            log.info("    - %s", items[index]["title"])
 
 
 def reset() -> None:
@@ -51,111 +156,47 @@ def reset() -> None:
     with session_scope() as session:
         session.execute(text("UPDATE news SET cluster_id = NULL, cluster_terms = NULL"))
         deleted = session.execute(text("DELETE FROM news_clusters")).rowcount
-    log.info("[초기화] news_clusters %d행 삭제, news.cluster_id 초기화", deleted)
+    log.info("[초기화] news_clusters %d행 삭제, news.cluster_id·cluster_terms 초기화", deleted)
 
 
-def load_news_by_day() -> dict[object, list[dict]]:
-    """발행일(KST) → 기사 목록. 발행 시각이 없으면 수집 시각을 쓴다."""
-
-    with session_scope() as session:
-        rows = session.execute(
-            text(
-                """
-                SELECT id, title, COALESCE(published_at, collected_at) AS published_at
-                  FROM news
-                 ORDER BY 3, id;
-                """
-            )
-        ).fetchall()
-
-    by_day: dict[object, list[dict]] = defaultdict(list)
-    for news_id, title, published_at in rows:
-        published_at = published_at.astimezone(SEOUL_TIMEZONE)
-        by_day[published_at.date()].append(
-            {
-                "_news_id": int(news_id),
-                "_save_action": "inserted",
-                "title": title or "",
-                "published_at": published_at,
-            }
-        )
-    return by_day
-
-
-def recluster() -> dict[str, int]:
-    settings = get_news_settings()
-    totals = {"days": 0, "news": 0, "created": 0, "updated": 0, "failed": 0, "dropped": 0}
-
-    for day, items in sorted(load_news_by_day().items()):
-        documents = [
-            document_terms(item["title"], "", settings.cluster_description_weight) for item in items
-        ]
-        published_ats = [item["published_at"] for item in items]
-
-        window_start, window_end = seed_window(published_ats, settings.cluster_window_days)
-        seeds = fetch_active_cluster_seeds(window_start, window_end)
-        assignments = assign_batch(
-            documents,
-            published_ats,
-            seeds,
-            threshold=settings.cluster_threshold,
-            cap=settings.cluster_max_articles,
-            window_days=settings.cluster_window_days,
-        )
-        result = record_cluster_assignments(
-            assignments, items, documents, settings.cluster_keyword_count
-        )
-
-        totals["days"] += 1
-        totals["news"] += len(items)
-        for key in ("created", "updated", "failed"):
-            totals[key] += result[key]
-        totals["dropped"] += sum(len(a.dropped) for a in assignments)
-        log.info(
-            "[재판정] %s 기사 %d건 → 시드 %d, 생성 %d, 갱신 %d, cap 제외 %d",
-            day,
-            len(items),
-            len(seeds),
-            result["created"],
-            result["updated"],
-            sum(len(a.dropped) for a in assignments),
-        )
-
-    return totals
-
-
-def title_all(since: datetime) -> tuple[int, int]:
-    settings = get_news_settings()
-    untitled = fetch_untitled_cluster_ids(settings.cluster_title_min_size, since)
-    titles = title_clusters(
-        fetch_cluster_articles(untitled),
-        max_concurrency=settings.news_llm_max_concurrency,
-        max_chars=settings.cluster_title_max_chars,
-    )
-    for cluster_id, title in titles.items():
-        update_cluster_title(cluster_id, title)
-    log.info(
-        "[제목] 대상 %d → 생성 %d / 실패 %d",
-        len(untitled),
-        len(titles),
-        len(untitled) - len(titles),
-    )
-    return len(untitled), len(titles)
-
-
-def promote() -> dict[str, int]:
+def apply(assignments: list[ClusterAssignment], items: list[dict], documents: list) -> None:
     from pipelines.events.jobs import generate_events
+    from pipelines.news.jobs import cluster_articles
 
-    return generate_events.run()
+    reset()
+    result = record_assignments(
+        assignments, items, documents, get_news_settings().cluster_keyword_count
+    )
+    log.info("[기록] %s", result)
+    log.info("[승격·제목] %s", cluster_articles.promote())
+    log.info("[Event] %s", generate_events.run())
 
 
 def main() -> None:
-    started_at = datetime.now(SEOUL_TIMEZONE)
-    reset()
-    totals = recluster()
-    log.info("[재판정 합계] %s", totals)
-    title_all(started_at)
-    log.info("[승격 합계] %s", promote())
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--threshold", type=float, help="이번 실행에만 쓸 문턱 (기본: 설정값)")
+    parser.add_argument(
+        "--title-only", action="store_true", help="본문 리드를 빼고 제목만으로 판정한다"
+    )
+    parser.add_argument("--grep", help="제목에 이 말이 든 기사가 속한 클러스터를 출력한다")
+    parser.add_argument(
+        "--apply", action="store_true", help="클러스터와 Event 를 지우고 다시 만든다"
+    )
+    args = parser.parse_args()
+
+    if args.apply and args.title_only:
+        parser.error("--apply 는 운영과 같은 입력(제목 + 본문 리드)으로만 돈다")
+
+    threshold = args.threshold or get_news_settings().cluster_threshold
+    source = "제목" if args.title_only else "제목+리드"
+    log.info("[설정] threshold=%.2f, 입력=%s", threshold, source)
+
+    items = load_news()
+    assignments, documents = judge(items, threshold, args.title_only)
+    report(assignments, items, args.grep)
+
+    if args.apply:
+        apply(assignments, items, documents)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,9 @@ from datetime import datetime
 
 import pytest
 
-from pipelines.news.repositories.postgres.news_clusters import ClusterArticle
 from pipelines.news.transformers.cluster_titler import (
     ClusterTitle,
+    Headline,
     TitleTooLong,
     build_title_input,
     load_system_prompt,
@@ -18,21 +18,18 @@ from pipelines.news.transformers.cluster_titler import (
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 
-def _article(title: str, text: str = "본문", day: int | None = 9) -> ClusterArticle:
+def _headline(title: str, day: int | None = 9) -> Headline:
     published = datetime(2026, 9, day, 10, tzinfo=SEOUL_TIMEZONE) if day else None
-    return ClusterArticle(title=title, text=text, published_at=published)
+    return Headline(title=title, published_at=published)
 
 
-def test_build_title_input_numbers_articles_with_date_and_lead():
+def test_build_title_input_lists_headlines_with_date_and_no_body():
     text = build_title_input(
-        [_article("엘앤에프, 삼성SDI 공급", "본문  첫째 줄\n둘째 줄"), _article("후속", day=None)],
-        lead_chars=8,
+        [_headline("엘앤에프,  삼성SDI 공급"), _headline("   "), _headline("후속\n보도", day=None)]
     )
 
-    assert (
-        text
-        == "[기사 1] 2026-09-09 | 엘앤에프, 삼성SDI 공급\n본문 첫째 줄\n\n[기사 2] 날짜 미상 | 후속\n본문"
-    )
+    # 한 줄에 제목 하나. 빈 제목은 건너뛰고 번호는 이어진다. 본문은 없다.
+    assert text == "[기사 1] 2026-09-09 | 엘앤에프, 삼성SDI 공급\n[기사 2] 날짜 미상 | 후속 보도"
 
 
 def test_validate_cluster_title_cleans_and_bounds():
@@ -71,11 +68,11 @@ def test_title_clusters_isolates_failures_and_skips_empty():
 
     titles = title_clusters(
         {
-            1: [_article("알테오젠, 노바티스 계약")],
-            2: [_article("실패 기사")],
-            3: [_article("긴제목 기사")],
-            4: [],  # 멤버 없음 → 호출 안 함
-            5: [_article("축약 기사")],  # 한 번 넘치고 재요청에서 줄어든다
+            1: [_headline("알테오젠, 노바티스 계약")],
+            2: [_headline("실패 기사")],
+            3: [_headline("긴제목 기사")],
+            4: [],  # 후보 없음 → 호출 안 함
+            5: [_headline("축약 기사")],  # 한 번 넘치고 재요청에서 줄어든다
         },
         titler=titler,
         max_concurrency=2,
@@ -95,3 +92,35 @@ def test_title_clusters_empty_input_skips_llm():
         raise AssertionError("호출되면 안 된다")
 
     assert title_clusters({}, titler=titler) == {}
+
+
+def test_title_clusters_sends_every_candidate_headline():
+    seen: list[str] = []
+
+    async def titler(text):
+        seen.append(text)
+        return ClusterTitle(title="SNT에너지 남부발전 수주")
+
+    headlines = [_headline(f"SNT에너지, 남부발전 수주 {index}보") for index in range(1, 11)]
+
+    assert title_clusters({7: headlines}, titler=titler, max_chars=25) == {
+        7: "SNT에너지 남부발전 수주"
+    }
+    [text] = seen
+    assert text.count("\n") == 9
+    assert text.splitlines()[0] == "[기사 1] 2026-09-09 | SNT에너지, 남부발전 수주 1보"
+    assert text.splitlines()[-1] == "[기사 10] 2026-09-09 | SNT에너지, 남부발전 수주 10보"
+
+
+def test_title_clusters_skips_cluster_whose_headlines_are_all_blank():
+    async def titler(text):  # pragma: no cover
+        raise AssertionError("호출되면 안 된다")
+
+    assert title_clusters({1: [_headline("  "), _headline("")]}, titler=titler) == {}
+
+
+def test_system_prompt_asks_for_one_label_from_several_headlines():
+    prompt = load_system_prompt(25)
+
+    assert "several articles" in prompt
+    assert "one article headline" not in prompt
