@@ -228,7 +228,33 @@ def test_only_cluster_representative_is_summarize_target(link):
         # 옛 대표 기사 수천 건을 한꺼번에 요약하지 않는다
         assert representative not in targets(promote_size=3)
 
-        save_news_summaries([(representative, "엘앤에프가 삼성SDI 와 공급 계약을 맺었다.")])
+        # 포인트 없이 문단만 있는 옛 요약은 새 형식으로 다시 만들 대상이다
+        with session_scope() as session:
+            session.execute(
+                text("UPDATE news SET summary = '옛 요약이다.' WHERE id = :id"),
+                {"id": representative},
+            )
+        assert representative in targets()
+
+        points = [{"kind": "AFFECTED", "text": "엘앤에프와 삼성SDI 예요."}]
+        save_news_summaries(
+            [(representative, "엘앤에프가 삼성SDI 와 공급 계약을 맺었어요.", points)]
+        )
+        assert representative not in targets()
+        with session_scope() as session:
+            stored = session.execute(
+                text("SELECT summary, summary_points FROM news WHERE id = :id"),
+                {"id": representative},
+            ).one()
+        assert stored == ("엘앤에프가 삼성SDI 와 공급 계약을 맺었어요.", points)
+
+        # 사건이 없는 기사의 빈 포인트([])도 요약을 마친 것이다
+        with session_scope() as session:
+            session.execute(
+                text("UPDATE news SET summary_points = NULL WHERE id = :id"),
+                {"id": representative},
+            )
+        save_news_summaries([(representative, "코스피가 올랐어요.", [])])
         assert representative not in targets()
     finally:
         with session_scope() as session:

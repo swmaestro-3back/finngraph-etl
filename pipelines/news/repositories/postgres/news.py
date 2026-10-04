@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -49,26 +50,29 @@ SELECT_STORED_LINKS_SQL = text(
     """
 )
 
-# 요약 대상: 승격된 클러스터의 대표 기사이고 요약이 아직 없는 것. 삼중항 추출 결과를 기다리지
-# 않는다. member_count 조건은 옛 로직이 만든 작은 클러스터(대표는 있지만 후보 수가 승격 기준
-# 미만)를 뺀다.
+# 요약 대상: 승격된 클러스터의 대표 기사이고 핵심 포인트가 아직 없는 것. 삼중항 추출 결과를 기다리지
+# 않는다. 요약 문단과 포인트는 한 번에 저장되므로 summary_points 만 본다 — 포인트 없이 문단만 있는
+# 옛 요약도 대상이라 새 형식으로 다시 만들어진다. member_count 조건은 옛 로직이 만든 작은
+# 클러스터(대표는 있지만 후보 수가 승격 기준 미만)를 뺀다.
 SELECT_UNSUMMARIZED_NEWS_SQL = text(
     """
     SELECT n.id, n.title, n.text, n.published_at
       FROM news n
       JOIN news_clusters nc ON nc.representative_news_id = n.id
      WHERE nc.member_count >= :promote_size
-       AND (n.summary IS NULL OR BTRIM(n.summary) = '')
+       AND n.summary_points IS NULL
        AND n.text IS NOT NULL
        AND BTRIM(n.text) <> ''
      ORDER BY n.id ASC;
     """
 )
 
+# 사건이 없는 기사는 포인트가 빈 배열([])이다 — NULL 이 아니라서 다시 요약 대상이 되지 않는다.
 UPDATE_NEWS_SUMMARY_SQL = text(
     """
     UPDATE news
-       SET summary = :summary
+       SET summary = :summary,
+           summary_points = CAST(:points AS jsonb)
      WHERE id = :id;
     """
 )
@@ -286,11 +290,12 @@ def fetch_unsummarized_news_items(promote_size: int) -> list[dict[str, Any]]:
         return items
 
 
-def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
+def save_news_summaries(rows: list[tuple[int, str, list[dict[str, str]]]]) -> dict[str, int]:
+    """(news_id, 요약 문단, 핵심 포인트) 를 저장한다. 문단이 빈 행은 건너뛴다."""
 
     normalized = [
-        (int(news_id), summary)
-        for news_id, summary in rows
+        (int(news_id), summary.strip(), points or [])
+        for news_id, summary, points in rows
         if news_id and summary and summary.strip()
     ]
 
@@ -301,11 +306,16 @@ def save_news_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
     saved_count = 0
 
     with session_scope() as session:
-        for news_id, summary in normalized:
+        for news_id, summary, points in normalized:
             try:
                 with session.begin_nested():
                     session.execute(
-                        UPDATE_NEWS_SUMMARY_SQL, {"summary": summary.strip(), "id": news_id}
+                        UPDATE_NEWS_SUMMARY_SQL,
+                        {
+                            "summary": summary,
+                            "points": json.dumps(points, ensure_ascii=False),
+                            "id": news_id,
+                        },
                     )
                 saved_count += 1
             except Exception as e:

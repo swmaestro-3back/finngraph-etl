@@ -158,7 +158,13 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
   한국어로 둡니다.
 - `entity.py` — 본문 기업 판정(엔티티 필터). 기업 지칭 여부와 구체적 사업 행위의 당사자 여부를 보고,
   애매하면 버립니다.
-- `summary.py` — 기사 요약(`news_cluster_articles` 의 `summarize_articles` task).
+- `summary.py` — 기사 요약(`news_cluster_articles` 의 `summarize_articles` task). 승격된 클러스터의 대표
+  기사 본문 하나로 해요체 요약 문단(`news.summary`, 3~4문장)과 핵심 포인트(`news.summary_points`)를
+  만듭니다. 포인트는 `CHANGE`(무엇이 바뀌나요)·`AFFECTED`(누가 직접 영향받나요)·`SCALE`(얼마나
+  큰가요)·`CAUSE`(왜 일어났나요)·`TIMELINE`(앞으로 일정은요)·`RIPPLE`(어디로 이어지나요) 중 본문이
+  뒷받침하는 2~3개이고, 사건이 없는 기사는 빈 배열입니다. 모델은 키만 내고 화면 라벨은 키로
+  매핑합니다. 전망은 본문에 적힌 것만 전망으로 읽히게 씁니다. 개수·중복·문체는
+  `transformers/summarizer.py` 가 검증해 어기면 한 번 재요청합니다.
 
 판정·형식 기준은 시스템 프롬프트에만 둡니다. 구조화 출력 스키마(pydantic `Field` description·docstring)도
 호출마다 LLM 에 실리는데, 스키마 안의 한글은 시스템 프롬프트보다 글자당 토큰이 몇 배 들어 같은 기준을

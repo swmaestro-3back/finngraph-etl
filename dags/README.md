@@ -138,6 +138,10 @@ news_cluster_articles·news_backfill_cluster_articles:
                                          └──► summarize_articles
 ```
 
+> **배포 순서(요약 핵심 포인트).** `V10__news_summary_points.sql`(컬럼만 추가)을 코드보다 먼저 적용한다.
+> V10 없이 배포하면 `summarize_articles` 가 실패한다. 요약 대상이 `summary_points IS NULL` 인 대표
+> 기사라, 배포 뒤 첫 런이 옛 형식(했다체, 포인트 없음) 요약을 전부 새 형식으로 다시 만든다.
+
 `collect_articles`는 이번 런에 새로 저장한 기사가 없으면 스킵해 Asset을 발행하지 않는다 — 판정할
 기사가 없는 시간에 클러스터 DAG를 깨우지 않기 위해서다. `promote_clusters`는 삼중항 미처리 대표
 기사가 하나도 없으면 스킵한다. 이번 런에 승격이 없어도 지난 런에 추출이 실패한 대표가 남아 있으면

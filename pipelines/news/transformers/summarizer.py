@@ -1,12 +1,23 @@
+"""기사 요약 — 대표 기사 본문으로 요약 문단과 핵심 포인트를 만든다.
+
+핵심 포인트는 고정된 항목(PointKind) 중 본문이 뒷받침하는 2~3개다. 사건이 없는 기사(시황 나열)는
+빈 목록이다. 모델은 항목 키만 내고 화면 라벨은 키로 매핑한다. 개수·중복·문체는 스키마가 아니라
+여기서 검증하고, 어기면 같은 입력에 어긴 규칙을 붙여 한 번 더 요청한다(온도 0 이라 그냥 재시도하면
+같은 답이 나온다). 그래도 어기거나 호출이 실패한 기사는 결과에서 빠져 다음 런에 다시 시도된다.
+summarizer 를 갈아끼울 수 있어 테스트는 Bedrock 없이 돈다.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
+from collections.abc import Awaitable, Callable
+from enum import StrEnum
+from functools import lru_cache
 from typing import Any
 
-from pipelines.common.clients.bedrock import extract_bedrock_text, get_bedrock_client
-from pipelines.common.config import get_settings
+from pydantic import BaseModel
+
 from pipelines.news.transformers.prompts import summary as summary_prompt
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import (
@@ -17,34 +28,81 @@ from pipelines.news.utils.text_utils import (
 DEFAULT_BODY_LIMIT = 12000
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_MAX_CONCURRENCY = 4
-DEFAULT_TIMEOUT = 300
+RETRY_ATTEMPTS = 2
+
+MIN_POINTS = 2
+MAX_POINTS = 3
+# 문장 끝의 마침표·따옴표·괄호를 떼고 종결어미를 본다
+_SENTENCE_TAIL = " .!?\"'”’)…"
 
 
-def get_summarizer_config() -> dict[str, Any]:
+class PointKind(StrEnum):
+    """핵심 포인트 항목. 선언 순서가 화면 표시 순서다. 정의는 시스템 프롬프트에 있다."""
 
-    try:
-        from pipelines.news.config import get_news_settings
+    CHANGE = "CHANGE"
+    AFFECTED = "AFFECTED"
+    SCALE = "SCALE"
+    CAUSE = "CAUSE"
+    TIMELINE = "TIMELINE"
+    RIPPLE = "RIPPLE"
 
-        settings = get_settings()
-        news_settings = get_news_settings()
 
-        return {
-            "body_limit": news_settings.news_llm_body_limit,
-            "max_tokens": news_settings.news_llm_max_tokens,
-            "max_concurrency": news_settings.news_llm_max_concurrency,
-            "bedrock_region": settings.bedrock_region,
-            "bedrock_model": settings.bedrock_chat_model,
-            "bedrock_timeout": settings.bedrock_request_timeout,
-        }
-    except Exception:
-        return {
-            "body_limit": DEFAULT_BODY_LIMIT,
-            "max_tokens": DEFAULT_MAX_TOKENS,
-            "max_concurrency": DEFAULT_MAX_CONCURRENCY,
-            "bedrock_region": "",
-            "bedrock_model": "",
-            "bedrock_timeout": DEFAULT_TIMEOUT,
-        }
+_POINT_ORDER = {kind: index for index, kind in enumerate(PointKind)}
+
+
+# 형식 규칙은 시스템 프롬프트에만 둔다 — 스키마 설명의 한글은 호출마다 토큰이 비싸게 든다
+class KeyPoint(BaseModel):
+    kind: PointKind
+    text: str
+
+
+class NewsSummary(BaseModel):
+    summary: str
+    key_points: list[KeyPoint]
+
+
+Summarizer = Callable[[str], Awaitable[NewsSummary]]
+
+# (news_id, 요약 문단, [{"kind": ..., "text": ...}])
+SummaryRow = tuple[int, str, list[dict[str, str]]]
+
+
+class SummaryInvalid(ValueError):
+    """출력이 형식 규칙을 어겼다. 메시지는 재요청에 그대로 실린다."""
+
+
+def _collapse(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _ends_politely(text: str) -> bool:
+    return text.rstrip(_SENTENCE_TAIL).endswith("요")
+
+
+def validate_summary(draft: NewsSummary) -> NewsSummary:
+    """공백을 정리하고 포인트를 표시 순서로 정렬한다. 규칙을 어기면 SummaryInvalid."""
+
+    summary = _collapse(draft.summary)
+    points = [KeyPoint(kind=point.kind, text=_collapse(point.text)) for point in draft.key_points]
+
+    if not summary:
+        raise SummaryInvalid("summary 가 비어 있다")
+    if not _ends_politely(summary):
+        raise SummaryInvalid("summary 가 해요체(~요)로 끝나지 않는다")
+    if points and not MIN_POINTS <= len(points) <= MAX_POINTS:
+        raise SummaryInvalid(
+            f"key_points 가 {len(points)}개다"
+            f"({MIN_POINTS}~{MAX_POINTS}개, 본문에 기업 사건이 없을 때만 0개)"
+        )
+    if len({point.kind for point in points}) != len(points):
+        raise SummaryInvalid("key_points 에 같은 kind 가 두 번 나온다")
+    if any(not _ends_politely(point.text) for point in points):
+        raise SummaryInvalid("key_points 의 text 가 해요체(~요)로 끝나지 않는다")
+
+    return NewsSummary(
+        summary=summary,
+        key_points=sorted(points, key=lambda point: _POINT_ORDER[point.kind]),
+    )
 
 
 def build_summary_source_text(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LIMIT) -> str:
@@ -76,127 +134,118 @@ def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LI
     ).strip()
 
 
-def clean_summary_text(content: str) -> str:
-    content = re.sub(r"<think>.*?</think>", "", content or "", flags=re.DOTALL | re.IGNORECASE)
+def build_retry_input(article_text: str, reason: str) -> str:
+    """규칙을 어긴 출력 뒤에 같은 기사로 다시 쓰게 하는 재요청 입력."""
 
-    return content.replace("```", "").strip()
-
-
-def build_bedrock_summary_request(
-    item: dict[str, Any], config: dict[str, Any]
-) -> tuple[str, str, str, dict[str, Any]]:
-    model_id = str(config.get("bedrock_model") or "")
-
-    if not model_id:
-        raise RuntimeError("Bedrock 설정이 비어있음(모델 ID 필요)")
-
-    return (
-        model_id,
-        summary_prompt.SYSTEM,
-        build_summary_prompt(
-            item,
-            body_limit=int(config.get("body_limit") or DEFAULT_BODY_LIMIT),
-        ),
-        {
-            "temperature": 0.0,
-            "maxTokens": int(config.get("max_tokens") or DEFAULT_MAX_TOKENS),
-        },
-    )
+    return summary_prompt.RETRY.format(article=article_text, reason=reason)
 
 
-def parse_bedrock_summary_response(response_data: dict[str, Any]) -> str:
-    raw_response = extract_bedrock_text(response_data)
+class ArticleSummarizer:
+    """Bedrock 구조화 출력 체인. cluster_titler.ClusterTitler 와 같은 구성."""
 
-    if not raw_response:
-        raise RuntimeError("Bedrock 응답이 비어있음")
+    def __init__(self, max_tokens: int = DEFAULT_MAX_TOKENS):
+        from langchain_aws import ChatBedrockConverse
+        from langchain_core.messages import SystemMessage
+        from langchain_core.prompts import ChatPromptTemplate
 
-    return clean_summary_text(raw_response)
+        from pipelines.common.clients.bedrock import ensure_bedrock_token
+        from pipelines.common.config import get_settings
+
+        ensure_bedrock_token()
+        settings = get_settings()
+        logging.getLogger("langchain_aws").setLevel(logging.WARNING)
+
+        model = ChatBedrockConverse(
+            model=settings.bedrock_chat_model,
+            region_name=settings.bedrock_region,
+            temperature=0,
+            max_tokens=max_tokens,
+            timeout=settings.bedrock_request_timeout,
+        )
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessage(content=summary_prompt.SYSTEM),
+                ("human", "{article}"),
+            ]
+        )
+        structured = model.with_structured_output(schema=NewsSummary, method="json_schema")
+        self._chain = (prompt | structured).with_retry(stop_after_attempt=RETRY_ATTEMPTS)
+
+    async def summarize(self, article_text: str) -> NewsSummary:
+        return await self._chain.ainvoke({"article": article_text})
 
 
-def summarize_with_bedrock(item: dict[str, Any], config: dict[str, Any]) -> str:
-    model_id, system_text, user_text, inference_config = build_bedrock_summary_request(
-        item=item, config=config
-    )
-    client = get_bedrock_client(
-        str(config.get("bedrock_region") or ""),
-        int(config.get("bedrock_timeout") or DEFAULT_TIMEOUT),
-    )
-    response = client.converse(
-        modelId=model_id,
-        system=[{"text": system_text}],
-        messages=[{"role": "user", "content": [{"text": user_text}]}],
-        inferenceConfig=inference_config,
-    )
-
-    return parse_bedrock_summary_response(response)
+@lru_cache
+def get_article_summarizer(max_tokens: int = DEFAULT_MAX_TOKENS) -> Summarizer:
+    return ArticleSummarizer(max_tokens=max_tokens).summarize
 
 
-async def summarize_with_bedrock_async(item: dict[str, Any], config: dict[str, Any]) -> str:
-    # boto3는 동기 클라이언트라 to_thread로 감싸 asyncio.Semaphore 동시성만 활용한다.
-    return await asyncio.to_thread(summarize_with_bedrock, item, config)
+async def _summarize_one(summarizer: Summarizer, article_text: str) -> NewsSummary:
+    """요약 하나. 규칙을 어기면 어긴 규칙을 붙여 한 번 더 묻고, 그래도 어기면 SummaryInvalid."""
 
-
-async def build_summary_for_item_async(
-    item: dict[str, Any],
-    config: dict[str, Any],
-    semaphore: asyncio.Semaphore,
-) -> tuple[int, str] | None:
-
-    news_id = item.get("_news_id")
-
+    draft = await summarizer(article_text)
     try:
-        async with semaphore:
-            summary = await summarize_with_bedrock_async(item=item, config=config)
-    except Exception as e:
-        logging.warning(
-            f"[summarize_articles] 요약 실패: news_id={news_id}, error={type(e).__name__}: {e}"
-        )
-        return None
-
-    if not news_id or not summary:
-        return None
-
-    return (int(news_id), summary)
+        return validate_summary(draft)
+    except SummaryInvalid as e:
+        retry = await summarizer(build_retry_input(article_text, str(e)))
+        return validate_summary(retry)
 
 
-async def build_summaries_async(
+async def _summarize_all(
     items: list[dict[str, Any]],
-    config: dict[str, Any],
+    summarizer: Summarizer,
     max_concurrency: int,
-) -> list[tuple[int, str]]:
-    semaphore = asyncio.Semaphore(max(int(max_concurrency or 1), 1))
-    tasks = [
-        build_summary_for_item_async(
-            item=item,
-            config=config,
-            semaphore=semaphore,
-        )
-        for item in items
-    ]
-    results = await asyncio.gather(*tasks)
+    body_limit: int,
+) -> list[SummaryRow]:
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
-    return [result for result in results if result is not None]
+    async def one(item: dict[str, Any]) -> SummaryRow | None:
+        news_id = item.get("_news_id")
+        if not news_id:
+            return None
+        async with semaphore:
+            try:
+                result = await _summarize_one(summarizer, build_summary_prompt(item, body_limit))
+            except Exception as e:
+                logging.warning(
+                    "[summarize_articles] 요약 실패(다음 런에 재시도): news_id=%s, %s: %s",
+                    news_id,
+                    type(e).__name__,
+                    e,
+                )
+                return None
+        return (
+            int(news_id),
+            result.summary,
+            [{"kind": point.kind.value, "text": point.text} for point in result.key_points],
+        )
+
+    results = await asyncio.gather(*(one(item) for item in items))
+    return [row for row in results if row is not None]
 
 
 def summarize_news_items(
     items: list[dict[str, Any]],
-    mode: str = "async",
+    summarizer: Summarizer | None = None,
     max_concurrency: int | None = None,
-) -> list[tuple[int, str]]:
+) -> list[SummaryRow]:
+    """기사별 요약과 핵심 포인트. 실패한 기사는 결과에 없다.
+
+    summarizer 를 안 주면 Bedrock 싱글톤이고, 동시성·본문 길이·토큰 상한은 뉴스 설정을 따른다.
+    """
 
     if not items:
         return []
 
-    if mode != "async":
-        raise ValueError(f"지원하지 않는 모드: {mode} (async만 지원)")
+    body_limit = DEFAULT_BODY_LIMIT
+    if summarizer is None or max_concurrency is None:
+        from pipelines.news.config import get_news_settings
 
-    config = get_summarizer_config()
-    concurrency = max_concurrency or int(config.get("max_concurrency") or DEFAULT_MAX_CONCURRENCY)
+        settings = get_news_settings()
+        body_limit = settings.news_llm_body_limit
+        if max_concurrency is None:
+            max_concurrency = settings.news_llm_max_concurrency
+        if summarizer is None:
+            summarizer = get_article_summarizer(settings.news_llm_max_tokens)
 
-    return asyncio.run(
-        build_summaries_async(
-            items=items,
-            config=config,
-            max_concurrency=concurrency,
-        )
-    )
+    return asyncio.run(_summarize_all(items, summarizer, max_concurrency, body_limit))
