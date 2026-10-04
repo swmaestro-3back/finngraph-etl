@@ -1,9 +1,9 @@
 """KRX100 기업 뉴스 백필 (수동 실행).
 
-초기 데이터가 없을 때 KRX100 편입 기업의 과거 뉴스를 미리 채운다. 수집 이후 단계(필터·클러스터·
-저장)는 news_collect_articles 와 같고, 삼중항 추출·요약은 청크가 끝날 때마다 발행하는
-etl://news/clusters Asset 을 따라 triples_extract_triples → news_summarize_articles 가 수집과
-나란히 처리한다.
+초기 데이터가 없을 때 KRX100 편입 기업의 과거 뉴스를 미리 채운다. 수집 이후 단계(필터·본문
+크롤링·기업 판정·저장)는 news_collect_articles 와 같고, 클러스터 판정과 삼중항 추출은 청크가
+끝날 때마다 발행하는 etl://news/articles Asset 을 따라 news_cluster_articles →
+triples_extract_triples 가 수집과 나란히 처리한다.
 
 **대상.** stocks.krx100 활성 종목의 기업 중 search_history 기준 재검색 시점이 된 기업만 —
 스케줄 런과 같은 워터마크 규칙이라, 중간에 실패해도 다시 트리거하면 끝난 청크는 건너뛰고
@@ -13,6 +13,7 @@ etl://news/clusters Asset 을 따라 triples_extract_triples → news_summarize_
 search_history 를 마킹하므로 실패해도 그 청크만 재시도한다.
 
 **비용.** 처음 검색하는 기업은 lookback 전체를 읽고 새 기사를 전부 LLM 관련성 필터에 보낸다.
+통과한 기사는 전부 본문을 크롤링하고, 본문에 다른 상장사가 나오면 LLM 엔티티 필터를 한 번 더 탄다.
 처음엔 lookback_days 를 작게 줘서 청크당 기사 수·소요 시간을 확인하는 것을 권장한다.
 """
 
@@ -37,7 +38,7 @@ CHUNK_SIZE = 20
 
 
 if dag and task:
-    news_clusters_updated = Asset("etl://news/clusters")
+    news_articles_saved = Asset("etl://news/articles")
 
     @dag(
         dag_id="news_backfill_krx100",
@@ -81,7 +82,7 @@ if dag and task:
             retries=2,
             retry_delay=timedelta(minutes=5),
             max_active_tis_per_dagrun=1,
-            outlets=[news_clusters_updated],
+            outlets=[news_articles_saved],
         )
         def collect_articles(company_ids: list[int], params: dict | None = None) -> dict[str, Any]:
             from pipelines.news.jobs.collect_articles import run_krx100
@@ -91,8 +92,8 @@ if dag and task:
                 lookback_days=params["lookback_days"],
                 max_pages=params["max_pages"],
             )
-            if result["created"] + result["updated"] == 0:
-                raise AirflowSkipException("클러스터 생성·갱신 0건 — 하류를 깨우지 않는다")
+            if result["saved"] == 0:
+                raise AirflowSkipException("신규 저장 0건 — 클러스터 DAG 를 깨우지 않는다")
             return result
 
         collect_articles.expand(company_ids=select_companies())
