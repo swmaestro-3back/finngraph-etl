@@ -10,8 +10,9 @@
 
 등락률(change_rate)은 봉 적재와 분리된 태스크가 각 갈래 끝에서 다시 계산한다.
 
-일봉이 들어오면 백엔드에 핫테마 재발행을 요청하고, 성공하면 etl://themes/hot 을 발행해
-news_collect_articles 가 정각을 기다리지 않고 새 핫테마로 뉴스를 검색하게 한다.
+테마 일봉 계산이 끝나면 백엔드에 핫테마 재발행을 요청한다(핫테마 선정이 당일 테마 지수
+등락률을 쓴다). 성공하면 etl://themes/hot 을 발행해 news_collect_articles 가 정각을 기다리지
+않고 새 핫테마로 뉴스를 검색하게 한다.
 """
 
 from __future__ import annotations
@@ -98,12 +99,8 @@ if dag and task:
 
         candles = check_market_open() >> collect_daily_candles()
         candles >> aggregate_period_candles() >> calculate_stock_change_rates()
-        (
-            candles
-            >> calculate_theme_daily()
-            >> aggregate_theme_period()
-            >> calculate_theme_change_rates()
-        )
-        candles >> publish_hot_themes()
+        theme_daily = candles >> calculate_theme_daily()
+        theme_daily >> aggregate_theme_period() >> calculate_theme_change_rates()
+        theme_daily >> publish_hot_themes()
 
     stocks_intraday_candles()
