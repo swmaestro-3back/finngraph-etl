@@ -1,4 +1,4 @@
-"""승격 후보 클러스터 참조 조회. news_clusters 는 news 도메인이 채우고 여기서는 읽기만 한다."""
+"""Event 로 올릴 클러스터 조회. news_clusters 는 news 도메인이 채우고 여기서는 읽기만 한다."""
 
 from __future__ import annotations
 
@@ -9,48 +9,32 @@ from sqlalchemy import text
 from pipelines.common.clients.postgres import session_scope
 from pipelines.events.models import ClusterCandidate
 
-# EVENT 승격 가능 Cluster 조회
-SELECT_PROMOTABLE_SQL = text(
+# 대표와 제목이 있는 클러스터. member_count 조건은 옛 로직이 만든 작은 클러스터(대표는 있지만
+# 후보 수가 승격 기준 미만)를 뺀다.
+SELECT_PROMOTED_SQL = text(
     """
-    SELECT
-        id,
-        representative_news_id,
-        keywords,
-        original_size,
-        member_count,
-        first_published_at,
-        last_published_at,
-        title
-    FROM news_clusters
-    WHERE original_size >= :min_size
-      AND member_count >= 1
-      AND updated_at >= :since
-    ORDER BY last_published_at DESC;
+    SELECT id, title, first_published_at
+      FROM news_clusters
+     WHERE representative_news_id IS NOT NULL
+       AND title IS NOT NULL
+       AND member_count >= :promote_size
+       AND updated_at >= :since
+     ORDER BY first_published_at DESC, id DESC;
     """
 )
 
 
-def fetch_promotable_clusters(min_size: int, since: datetime) -> list[ClusterCandidate]:
-    """
-    Neo4j의 Event 노드로 승격가능한 Cluster 조회
-    """
+def fetch_promoted_clusters(promote_size: int, since: datetime) -> list[ClusterCandidate]:
+    """since 이후 갱신된 클러스터 중 승격되고 제목이 붙은 것 (최신 사건 먼저)"""
+
     with session_scope() as session:
         rows = session.execute(
-            SELECT_PROMOTABLE_SQL, {"min_size": min_size, "since": since}
+            SELECT_PROMOTED_SQL, {"promote_size": promote_size, "since": since}
         ).fetchall()
 
     return [
         ClusterCandidate(
-            cluster_id=int(row.id),
-            representative_news_id=(
-                int(row.representative_news_id) if row.representative_news_id is not None else None
-            ),
-            keywords=list(row.keywords or []),
-            original_size=int(row.original_size),
-            member_count=int(row.member_count),
-            first_published_at=row.first_published_at,
-            last_published_at=row.last_published_at,
-            title=row.title,
+            cluster_id=int(row.id), title=row.title, first_published_at=row.first_published_at
         )
         for row in rows
     ]
