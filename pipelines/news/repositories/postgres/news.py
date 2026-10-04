@@ -4,6 +4,10 @@ from typing import Any
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
+from pipelines.news.repositories.postgres.news_companies import (
+    link_news_companies,
+    linked_company_ids,
+)
 from pipelines.news.transformers.filters.duplicate_filter import normalize_url_for_duplicate
 from pipelines.news.utils.date_utils import parse_news_pub_date
 from pipelines.news.utils.text_utils import (
@@ -24,32 +28,16 @@ SELECT_EXISTING_NEWS_ID_SQL = text(
     """
 )
 
-# 기존 행 덮어쓰기. {summary_assignment} 는 save_summary 일 때만 "summary = :summary," 가 된다.
-UPDATE_NEWS_SQL = """
-    UPDATE news
-       SET title = :title,
-           {summary_assignment}
-           text = :text,
-           link = :link,
-           originallink = :originallink,
-           published_at = :published_at
-     WHERE id = :id
-    RETURNING id;
-"""
 
-# 신규 삽입. link UNIQUE 충돌 시 덮어쓴다. {summary_update} 는 save_summary 일 때만
-# "summary = EXCLUDED.summary," 가 된다.
-INSERT_NEWS_SQL = """
-    INSERT INTO news (title, summary, text, link, originallink, published_at)
-    VALUES (:title, :summary, :text, :link, :originallink, :published_at)
-    ON CONFLICT (link) DO UPDATE
-       SET title = EXCLUDED.title,
-           {summary_update}
-           text = EXCLUDED.text,
-           originallink = EXCLUDED.originallink,
-           published_at = EXCLUDED.published_at
+# 본문과 함께 신규 삽입. link UNIQUE 충돌이면 아무것도 돌려주지 않는다.
+INSERT_NEWS_SQL = text(
+    """
+    INSERT INTO news (title, text, link, originallink, published_at)
+    VALUES (:title, :text, :link, :originallink, :published_at)
+    ON CONFLICT (link) DO NOTHING
     RETURNING id;
-"""
+    """
+)
 
 # 배치의 정규화 URL 중 이미 저장된 것
 SELECT_STORED_LINKS_SQL = text(
@@ -61,16 +49,19 @@ SELECT_STORED_LINKS_SQL = text(
     """
 )
 
-# 요약 대상: 삼중항 추출을 마쳤고 요약이 아직 없는 기사
+# 요약 대상: 승격된 클러스터의 대표 기사이고 요약이 아직 없는 것. 삼중항 추출 결과를 기다리지
+# 않는다. member_count 조건은 옛 로직이 만든 작은 클러스터(대표는 있지만 후보 수가 승격 기준
+# 미만)를 뺀다.
 SELECT_UNSUMMARIZED_NEWS_SQL = text(
     """
-    SELECT id, title, text, published_at
-      FROM news
-     WHERE triple_extracted = TRUE
-       AND (summary IS NULL OR BTRIM(summary) = '')
-       AND text IS NOT NULL
-       AND BTRIM(text) <> ''
-     ORDER BY id ASC;
+    SELECT n.id, n.title, n.text, n.published_at
+      FROM news n
+      JOIN news_clusters nc ON nc.representative_news_id = n.id
+     WHERE nc.member_count >= :promote_size
+       AND (n.summary IS NULL OR BTRIM(n.summary) = '')
+       AND n.text IS NOT NULL
+       AND BTRIM(n.text) <> ''
+     ORDER BY n.id ASC;
     """
 )
 
@@ -94,39 +85,6 @@ def parse_anchor_pub_date(pub_date: str):
         logging.warning(f"pubDate 파싱 실패: {pub_date}")
 
     return parsed
-
-
-def build_news_summary(item: dict[str, Any]) -> str:
-
-    explicit_summary = get_printable_text(item.get("_summary", ""))
-
-    if explicit_summary:
-        return explicit_summary
-
-    description = get_printable_text(item.get("description", ""))
-    sentiment = item.get("_sentiment", {})
-    sentiment_reason = get_printable_text(sentiment.get("reason", ""))
-
-    summary_parts = []
-
-    if description:
-        summary_parts.append(description)
-
-    if sentiment_reason:
-        summary_parts.append(f"현재 상태 판단: {sentiment_reason}")
-
-    if summary_parts:
-        return "\n".join(summary_parts)
-
-    news_text = clean_article_body_for_storage(
-        item.get("_text", ""),
-        article_title=get_printable_text(item.get("title", "")),
-    )
-
-    if news_text:
-        return news_text[:300]
-
-    return get_printable_text(item.get("title", ""))
 
 
 def _prepare_article_body_for_storage(item: dict[str, Any]) -> str:
@@ -160,18 +118,17 @@ def has_article_body(item: dict[str, Any]) -> bool:
     )
 
 
-def insert_or_update_news(
-    session, item: dict[str, Any], save_summary: bool = True, skip_existing: bool = False
-) -> dict[str, Any]:
+def insert_news(session, item: dict[str, Any]) -> dict[str, Any]:
+    """본문과 함께 기사 한 건을 넣는다. 같은 기사가 이미 있으면 그 id 로 skipped_existing 이다."""
 
     title = get_printable_text(item.get("title", ""))
-    news_text = _prepare_article_body_for_storage(item)
-    summary = (build_news_summary(item) or None) if save_summary else None
     link = item.get("link", "")
     originallink = item.get("originallink", "")
-    normalized_link = normalize_url_for_duplicate(link)
-    normalized_originallink = normalize_url_for_duplicate(originallink)
-    published_at = parse_anchor_pub_date(item.get("pubDate", ""))
+    normalized_urls = [
+        url
+        for url in (normalize_url_for_duplicate(link), normalize_url_for_duplicate(originallink))
+        if url
+    ]
 
     if not title:
         raise ValueError("뉴스 제목이 비어있음")
@@ -179,139 +136,89 @@ def insert_or_update_news(
     if not link:
         raise ValueError("뉴스 링크가 비어있음")
 
+    news_text = _prepare_article_body_for_storage(item)
     if not news_text:
-        raise ValueError("뉴스가 없음")
+        raise ValueError("뉴스 본문이 비어있음")
 
-    existing_row = session.execute(
-        SELECT_EXISTING_NEWS_ID_SQL,
-        {
-            "link": link,
-            "originallink": originallink,
-            "normalized_urls": [url for url in [normalized_link, normalized_originallink] if url],
-        },
-    ).fetchone()
-
-    if existing_row and skip_existing:
-        return {"id": existing_row[0], "action": "skipped_existing"}
+    existing_params = {
+        "link": link,
+        "originallink": originallink,
+        "normalized_urls": normalized_urls,
+    }
+    existing_row = session.execute(SELECT_EXISTING_NEWS_ID_SQL, existing_params).fetchone()
 
     if existing_row:
-        existing_news_id = existing_row[0]
-
-        update_params = {
-            "title": title,
-            "text": news_text,
-            "link": link,
-            "originallink": originallink,
-            "published_at": published_at,
-            "id": existing_news_id,
-        }
-
-        summary_assignment = ""
-
-        if save_summary:
-            summary_assignment = "summary = :summary,"
-            update_params["summary"] = summary
-
-        updated_row = session.execute(
-            text(UPDATE_NEWS_SQL.format(summary_assignment=summary_assignment)),
-            update_params,
-        ).fetchone()
-
-        return {
-            "id": updated_row[0],
-            "action": "updated",
-        }
-
-    summary_update = "summary = EXCLUDED.summary," if save_summary else ""
+        return {"id": existing_row[0], "action": "skipped_existing"}
 
     inserted_row = session.execute(
-        text(INSERT_NEWS_SQL.format(summary_update=summary_update)),
+        INSERT_NEWS_SQL,
         {
             "title": title,
-            "summary": summary,
             "text": news_text,
             "link": link,
             "originallink": originallink,
-            "published_at": published_at,
+            "published_at": parse_anchor_pub_date(item.get("pubDate", "")),
         },
     ).fetchone()
+
+    if inserted_row is None:
+        # 조회와 삽입 사이에 같은 link 가 들어왔다
+        existing_row = session.execute(SELECT_EXISTING_NEWS_ID_SQL, existing_params).fetchone()
+        return {"id": existing_row[0], "action": "skipped_existing"}
 
     return {"id": inserted_row[0], "action": "inserted"}
 
 
-def save_news_items(
-    items: list[dict[str, Any]], save_summary: bool = True, skip_existing: bool = False
-) -> dict[str, int]:
+def save_news(items: list[dict[str, Any]]) -> dict[str, int]:
+    """본문과 기업 판정까지 끝난 기사를 기업 연결과 함께 저장하고 `_news_id`·`_save_action` 을
+    붙인다.
+
+    기사 INSERT 와 news_companies INSERT 가 같은 SAVEPOINT 안이다 — 함께 저장되거나 함께 버려진다.
+    news_companies 는 Event 당사자와 삼중항 엔티티의 유일한 원천이라, 연결 없는 기사가 남으면
+    그 기사는 하류에서 쓸 수 없다. 이미 있던 기사(skipped_existing)는 첫 저장 때 연결이 끝났으므로
+    다시 연결하지 않는다.
+
+    본문이 없는 기사는 저장하지 않는다(실패로 센다) — 수집 잡이 미리 걸러서 보내므로 여기서
+    걸리면 정제 결과가 달라진 경우다.
+    """
+
+    counts = {
+        "inserted_count": 0,
+        "skipped_existing_count": 0,
+        "failed_count": 0,
+        "linked_count": 0,
+    }
 
     if not items:
-        logging.debug("뉴스가 없습니다.")
-        return {
-            "inserted_count": 0,
-            "updated_count": 0,
-            "skipped_existing_count": 0,
-            "skipped_no_body_count": 0,
-            "failed_count": 0,
-        }
-
-    inserted_count = 0
-    updated_count = 0
-    skipped_existing_count = 0
-    skipped_no_body_count = 0
-    failed_count = 0
+        return counts
 
     with session_scope() as session:
         for item in items:
-            title = get_printable_text(item.get("title", ""))
-
-            if not has_article_body(item):
-                skipped_no_body_count += 1
-                logging.debug(f"저장 스킵: {title}")
-                continue
-
             try:
                 # 항목마다 SAVEPOINT(begin_nested)로 격리해 개별 실패가 전체를 깨지 않게 한다.
                 with session.begin_nested():
-                    save_result = insert_or_update_news(
-                        session=session,
-                        item=item,
-                        save_summary=save_summary,
-                        skip_existing=skip_existing,
-                    )
-
-                news_id = save_result["id"]
-                action = save_result["action"]
-                item["_news_id"] = int(news_id)
-                item["_save_action"] = action
-
-                if action == "inserted":
-                    inserted_count += 1
-                    logging.debug(f"뉴스 신규 저장 완료: id={news_id}, title={title}")
-                elif action == "skipped_existing":
-                    skipped_existing_count += 1
-                    logging.debug(f"이미 DB에 있어 저장 스킵: id={news_id}, title={title}")
-                else:
-                    updated_count += 1
-                    logging.debug(f"기존 뉴스 업데이트 완료: id={news_id}, title={title}")
-
+                    save_result = insert_news(session, item)
+                    linked = 0
+                    if save_result["action"] == "inserted":
+                        linked = link_news_companies(
+                            session, int(save_result["id"]), linked_company_ids(item)
+                        )
             except Exception as e:
-                failed_count += 1
-
+                counts["failed_count"] += 1
                 logging.error(f"뉴스 저장 실패: {type(e).__name__}: {e}")
+                continue
 
-        logging.debug(
-            f"뉴스 DB 저장 완료: 신규저장 {inserted_count}개, "
-            f"기존업데이트 {updated_count}개, "
-            f"기존뉴스스킵 {skipped_existing_count}개, "
-            f"뉴스없음스킵 {skipped_no_body_count}개, 실패 {failed_count}개"
-        )
+            item["_news_id"] = int(save_result["id"])
+            item["_save_action"] = save_result["action"]
+            counts[f"{save_result['action']}_count"] += 1
+            counts["linked_count"] += linked
 
-        return {
-            "inserted_count": inserted_count,
-            "updated_count": updated_count,
-            "skipped_existing_count": skipped_existing_count,
-            "skipped_no_body_count": skipped_no_body_count,
-            "failed_count": failed_count,
-        }
+    logging.debug(
+        f"뉴스 저장 완료: 신규 {counts['inserted_count']}개, "
+        f"기존 스킵 {counts['skipped_existing_count']}개, 실패 {counts['failed_count']}개"
+    )
+
+    return counts
 
 
 def remove_stored_by_url(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -351,11 +258,16 @@ def remove_stored_by_url(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
-def fetch_unsummarized_news_items() -> list[dict[str, Any]]:
-    """요약 대상 전량. 런마다 상한 없이 밀린 기사를 모두 처리한다."""
+def fetch_unsummarized_news_items(promote_size: int) -> list[dict[str, Any]]:
+    """요약 대상 전량. 런마다 상한 없이 밀린 기사를 모두 처리한다.
+
+    후보가 promote_size 건 이상인 클러스터의 대표만 대상이다.
+    """
 
     with session_scope() as session:
-        rows = session.execute(SELECT_UNSUMMARIZED_NEWS_SQL).fetchall()
+        rows = session.execute(
+            SELECT_UNSUMMARIZED_NEWS_SQL, {"promote_size": promote_size}
+        ).fetchall()
 
         items = []
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from pipelines.common.logging import get_logger
+from pipelines.news.config import get_news_settings
 from pipelines.news.repositories.postgres.news import (
     fetch_unsummarized_news_items,
     save_news_summaries,
@@ -17,7 +18,7 @@ def summarize_unsummarized_news(
     max_concurrency: int | None = None,
 ) -> dict[str, Any]:
 
-    source_news = fetch_unsummarized_news_items()
+    source_news = fetch_unsummarized_news_items(get_news_settings().cluster_promote_size)
 
     results = summarize_news_items(
         items=source_news,
