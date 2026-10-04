@@ -1,4 +1,5 @@
 from pipelines.news.transformers.clustering.batch import (
+    add_batch_frequency,
     row_documents,
     seed_window,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "ClusterSeed",
     "IdfTable",
     "Terms",
+    "add_batch_frequency",
     "assign_online",
     "cosine",
     "document_terms",

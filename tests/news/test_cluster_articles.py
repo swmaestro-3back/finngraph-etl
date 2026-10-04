@@ -323,3 +323,54 @@ def test_promote_leaves_title_null_when_llm_fails_and_reports_pending(wired, mon
     assert cluster["title"] is None
     # 제목이 없어도 대표는 정해졌으므로 삼중항 DAG 는 깨운다
     assert result == {"promoted": 1, "titled": 0, "pending_triples": 1}
+
+
+def _capture_idf(monkeypatch, job) -> list[IdfTable]:
+    """assign_online 이 받은 IDF 표를 모은다. 판정은 원래 함수가 한다."""
+    seen: list[IdfTable] = []
+    original = job.assign_online
+
+    def spy(documents, published_ats, seeds, idf, **kwargs):
+        seen.append(idf)
+        return original(documents, published_ats, seeds, idf, **kwargs)
+
+    monkeypatch.setattr(job, "assign_online", spy)
+    return seen
+
+
+def test_assign_uses_stored_idf_table_by_default(wired, monkeypatch):
+    job, store, _ = wired
+    seen = _capture_idf(monkeypatch, job)
+
+    _add_same_event(store, 3)
+    job.assign()
+
+    assert seen[0].document_count == 0
+
+
+def test_assign_adds_batch_frequency_when_requested(wired, monkeypatch):
+    job, store, _ = wired
+    seen = _capture_idf(monkeypatch, job)
+
+    # 초기 백필: 저장된 IDF 표가 비어 있어도 배치에서 센 문서 수로 판정한다
+    _add_same_event(store, 3)
+    assert job.assign(include_batch_idf=True) == {
+        "articles": 3,
+        "created": 1,
+        "updated": 0,
+        "failed": 0,
+    }
+
+    assert seen[0].document_count == 3
+    assert seen[0].document_frequency["엘앤에프"] == 3
+
+
+def test_count_unclustered_reads_repository(wired, monkeypatch):
+    job, store, _ = wired
+    monkeypatch.setattr(job, "count_unclustered_news", lambda: len(store.unclustered()))
+
+    _add_same_event(store, 4)
+    assert job.count_unclustered() == 4
+
+    job.assign()
+    assert job.count_unclustered() == 0

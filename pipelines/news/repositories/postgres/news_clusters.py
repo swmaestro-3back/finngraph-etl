@@ -298,6 +298,25 @@ def fetch_unclustered_news() -> list[dict[str, Any]]:
     ]
 
 
+# SELECT_UNCLUSTERED_NEWS_SQL 과 같은 조건이다.
+COUNT_UNCLUSTERED_NEWS_SQL = text(
+    """
+    SELECT COUNT(*)
+      FROM news
+     WHERE cluster_id IS NULL
+       AND text IS NOT NULL
+       AND BTRIM(text) <> '';
+    """
+)
+
+
+def count_unclustered_news() -> int:
+    """클러스터 판정 대상 기사 수. 백필 DAG 가 하류를 깨울지 정할 때 쓴다."""
+
+    with session_scope() as session:
+        return int(session.execute(COUNT_UNCLUSTERED_NEWS_SQL).scalar_one())
+
+
 # ── 승격 ─────────────────────────────────────────────────────────────────────
 
 # 후보가 다 찼는데 대표가 없는 클러스터. since 는 재시도 범위다 — 오래 갱신되지 않은 클러스터는

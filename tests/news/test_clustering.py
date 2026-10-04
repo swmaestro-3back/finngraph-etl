@@ -104,3 +104,32 @@ def test_document_terms_normalizes_compatibility_characters():
 
     # "㎿" 같은 호환 문자는 NFKC 로 "MW" 가 돼 같은 토큰으로 모인다
     assert document_terms("500㎿급 해상변전소") == document_terms("500MW급 해상변전소")
+
+
+def test_add_batch_frequency_counts_each_document_once_on_top_of_table():
+    from pipelines.news.transformers.clustering.batch import add_batch_frequency
+    from pipelines.news.transformers.clustering.vectorize import IdfTable
+
+    table = IdfTable(document_frequency={"삼성전자": 90, "해상변전소": 2}, document_count=100)
+    documents = [
+        [("삼성전자", 3.0), ("삼성전자", 1.0), ("파운드리", 1.0)],
+        [("삼성전자", 3.0), ("해상변전소", 1.0)],
+    ]
+
+    merged = add_batch_frequency(table, documents)
+
+    # 한 문서에 같은 토큰이 여러 번 나와도 문서 수는 1 만 오른다
+    assert merged.document_frequency == {"삼성전자": 92, "해상변전소": 3, "파운드리": 1}
+    assert merged.document_count == 102
+    # 원래 표는 바뀌지 않는다
+    assert table.document_frequency == {"삼성전자": 90, "해상변전소": 2}
+
+
+def test_add_batch_frequency_on_empty_table_is_batch_count():
+    from pipelines.news.transformers.clustering.batch import add_batch_frequency
+    from pipelines.news.transformers.clustering.vectorize import IdfTable
+
+    merged = add_batch_frequency(IdfTable(), [[("엘앤에프", 3.0)], [("엘앤에프", 1.0)], []])
+
+    assert merged.document_frequency == {"엘앤에프": 2}
+    assert merged.document_count == 3

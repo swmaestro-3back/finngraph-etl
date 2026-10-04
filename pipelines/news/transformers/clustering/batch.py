@@ -1,16 +1,19 @@
 """클러스터 판정의 입력 변환 — 순수 함수만.
 
-저장된 기사 행을 클러스터링 문서·발행 시각으로 바꾸고, 시드 창을 계산한다. DB 를 만지지
-않으므로 transformer 다. 조회와 기록은 repositories/postgres/news_clusters.py.
+저장된 기사 행을 클러스터링 문서·발행 시각으로 바꾸고, 시드 창을 계산하고, IDF 표에 배치 문서
+수를 더한다. DB 를 만지지 않으므로 transformer 다. 조회와 기록은
+repositories/postgres/news_clusters.py.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
 
 from pipelines.news.transformers.clustering.online import Terms
 from pipelines.news.transformers.clustering.preprocess import document_terms
+from pipelines.news.transformers.clustering.vectorize import IdfTable
 
 
 def row_documents(
@@ -45,4 +48,21 @@ def seed_window(
     return (
         min(published_ats) - timedelta(days=window_days),
         max(published_ats) + timedelta(days=backward_days),
+    )
+
+
+def add_batch_frequency(idf: IdfTable, documents: list[Terms]) -> IdfTable:
+    """IDF 표에 이번 배치 문서의 토큰별 문서 수를 더한 새 표. 백필 판정이 쓴다.
+
+    저장된 표가 비어 있는 초기 백필에서는 배치에서 센 값이 곧 표가 되고, 표가 쌓인 뒤에는 표가
+    주가 된다. 배치가 기업·기간에 걸쳐 넓을 때만 쓴다 — 한 사건이 배치를 채우면 그 사건의 핵심
+    토큰이 가장 흔한 토큰이 된다(IdfTable 참고). 저장된 표와 달리 후보가 아닌 기사도 센다.
+    """
+
+    frequency: Counter[str] = Counter(idf.document_frequency)
+    for terms in documents:
+        frequency.update({token for token, _ in terms})
+    return IdfTable(
+        document_frequency=dict(frequency),
+        document_count=idf.document_count + len(documents),
     )

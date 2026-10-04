@@ -1,8 +1,10 @@
-"""클러스터 판정과 승격 — news_cluster_articles DAG 의 assign_clusters·promote_clusters task.
+"""클러스터 판정과 승격 — news_cluster_articles·news_backfill_cluster_articles DAG 의
+assign_clusters·promote_clusters task.
 
 수집 잡(collect_articles)이 본문과 news_companies 까지 채워 저장한 기사 중 cluster_id 가 없는
-것을 읽어 판정한다. 이 잡만 클러스터를 쓰므로 수집 DAG 와 백필 DAG 가 동시에 돌아도 같은 사건에
-클러스터가 둘 생기지 않는다(DAG 의 max_active_runs=1).
+것을 읽어 판정한다. 기사의 출처(정시 수집·백필)를 가리지 않는다. 두 DAG 는 각자
+max_active_runs=1 이지만 서로는 막지 않으므로, 백필을 돌리는 동안에는 news_cluster_articles 를
+꺼 둔다 — 겹쳐 돌면 같은 사건에 클러스터가 둘 생긴다.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
 from pipelines.news.repositories.postgres.news_clusters import (
     count_pending_representatives,
+    count_unclustered_news,
     fetch_cluster_candidates,
     fetch_cluster_seeds,
     fetch_idf_table,
@@ -24,7 +27,11 @@ from pipelines.news.repositories.postgres.news_clusters import (
     update_cluster_title,
 )
 from pipelines.news.transformers.cluster_titler import Headline, title_clusters
-from pipelines.news.transformers.clustering.batch import row_documents, seed_window
+from pipelines.news.transformers.clustering.batch import (
+    add_batch_frequency,
+    row_documents,
+    seed_window,
+)
 from pipelines.news.transformers.clustering.online import assign_online
 from pipelines.news.transformers.clustering.representative import pick_representative
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
@@ -32,11 +39,21 @@ from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 logger = get_logger(__name__)
 
 
-def assign() -> dict[str, int]:
+def count_unclustered() -> int:
+    """판정을 기다리는 기사 수. 백필 DAG 가 수집을 다 끝낸 뒤 하류를 깨울지 정할 때 쓴다."""
+
+    return count_unclustered_news()
+
+
+def assign(*, include_batch_idf: bool = False) -> dict[str, int]:
     """미판정 기사를 발행 시각순으로 하나씩 기존 클러스터에 편입시키거나 새 클러스터로 만든다.
 
     이번 수집 런의 기사만이 아니라 cluster_id 가 없는 기사 전부가 대상이다 — 지난 런에 기록이
     실패한 기사도 다시 판정된다.
+
+    include_batch_idf 는 백필용이다. 저장된 IDF 표에 이번 배치의 문서 수를 더해 판정한다 — 초기
+    백필에는 표가 비어 있어, 그대로 쓰면 모든 토큰의 IDF 가 같아져 기업명 같은 흔한 토큰이
+    눌리지 않는다.
     """
 
     settings = get_news_settings()
@@ -55,6 +72,8 @@ def assign() -> dict[str, int]:
     )
     seeds = fetch_cluster_seeds(window_start, window_end)
     idf = fetch_idf_table(started_at - timedelta(days=settings.cluster_idf_days))
+    if include_batch_idf:
+        idf = add_batch_frequency(idf, documents)
 
     assignments = assign_online(
         documents,
