@@ -1,17 +1,21 @@
-"""뉴스 클러스터 판정 → 대표 선정 → Event 생성·요약.
+"""백필 뉴스 클러스터 판정 → 대표 선정 → Event 생성·요약.
 
-`news_collect_articles` 가 발행하는 `etl://news/articles` Asset 으로 깨어난다. 이벤트 내용은 쓰지
-않고 DB 를 폴링한다 — `assign_clusters` 는 cluster_id 가 없는 기사 전량을, 나머지 task 는 각자의
-미처리분 전량을 읽는다. 런이 도는 동안 쌓인 이벤트는 다음 런 하나가 한꺼번에 처리한다.
+`news_backfill_krx100` 이 모든 청크의 수집을 끝낸 뒤 한 번 발행하는 `etl://news/backfill-articles`
+Asset 으로 깨어난다. task 구성은 `news_cluster_articles` 와 같고, 다른 점은 둘이다.
 
-`max_active_runs=1` 이라 수집이 겹쳐도 같은 사건에 클러스터가 둘 생기지 않는다. 클러스터를 쓰는
-DAG 는 이것과 백필 전용 `news_backfill_cluster_articles` 둘이고 서로는 막지 않는다 —
-`news_backfill_krx100` 을 돌리는 동안에는 이 DAG 를 꺼 둔다. 켜 두면 수집 중인 백필 기사를 이
-DAG 가 먼저 판정한다.
+- **한 번에 판정한다.** 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터의 시간
+  창(기준점 1일 전 ~ 7일 뒤)보다 이르게 도착해 같은 사건에 클러스터가 하나 더 생긴다. 수집이 다
+  끝난 뒤 cluster_id 가 없는 기사 전량을 발행 시각순으로 한 번에 본다.
+- **IDF 에 배치 문서 수를 더한다.** 초기 백필에는 저장된 IDF 표가 비어 있어, 그대로 쓰면 기업명
+  같은 흔한 토큰이 눌리지 않는다(`assign(include_batch_idf=True)`).
 
-`promote_clusters` 는 삼중항 미처리 대표 기사가 남아 있을 때만 `etl://news/clusters` 를 발행해
-`triples_extract_triples` 를 깨운다. 이번 런에 승격이 없어도 지난 런에 추출이 실패한 대표가 있으면
-다시 깨운다. 발행을 건너뛰어도(skip) Event 생성과 요약은 돈다(`trigger_rule="none_failed"`).
+**백필 중에는 `news_cluster_articles` 를 꺼 둔다.** 두 DAG 모두 출처를 가리지 않고 cluster_id 가
+없는 기사 전량을 읽는다. 켜 두면 정시 수집이 깨운 `news_cluster_articles` 가 수집 중인 백필 기사를
+먼저 판정하고, 이 DAG 와 겹쳐 돌면 같은 사건에 클러스터가 둘 생긴다. 이 DAG 가 끝난 뒤 다시 켠다 —
+그동안 정시 수집이 저장한 기사는 이 DAG 가 함께 판정한다.
+
+삼중항 추출은 `news_cluster_articles` 와 같은 `etl://news/clusters` 를 발행해
+`triples_extract_triples` 가 처리한다.
 """
 
 from __future__ import annotations
@@ -33,20 +37,20 @@ if dag and task:
     news_clusters_updated = Asset("etl://news/clusters")
 
     @dag(
-        dag_id="news_cluster_articles",
+        dag_id="news_backfill_cluster_articles",
         start_date=datetime(2026, 1, 1),
-        schedule=Asset("etl://news/articles"),
+        schedule=Asset("etl://news/backfill-articles"),
         catchup=False,
         max_active_runs=1,
-        tags=["news"],
+        tags=["news", "backfill"],
         doc_md=__doc__,
     )
-    def news_cluster_articles():
+    def news_backfill_cluster_articles():
         @task(retries=1, retry_delay=timedelta(minutes=5))
         def assign_clusters() -> dict[str, int]:
             from pipelines.news.jobs.cluster_articles import assign
 
-            return assign()
+            return assign(include_batch_idf=True)
 
         @task(retries=1, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
         def promote_clusters() -> dict[str, int]:
@@ -58,7 +62,6 @@ if dag and task:
                 raise AirflowSkipException("삼중항 미처리 대표 0건 — 삼중항 DAG 를 깨우지 않는다")
             return result
 
-        # 클러스터별로 실패가 격리돼 있고 실패한 클러스터는 다음 런에 자연히 재시도된다.
         # promote_clusters 가 skip 이어도 돈다 — 제목은 지난 런에 붙었을 수 있다.
         @task(retries=1, retry_delay=timedelta(minutes=10), trigger_rule="none_failed")
         def generate_events() -> dict[str, int]:
@@ -77,4 +80,4 @@ if dag and task:
         assign_clusters() >> promoted
         promoted >> [generate_events(), summarize_articles()]
 
-    news_cluster_articles()
+    news_backfill_cluster_articles()

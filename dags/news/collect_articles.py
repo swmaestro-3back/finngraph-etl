@@ -2,8 +2,8 @@
 
 수집·필터·본문 크롤링·기업 판정·저장까지만 한다. 클러스터 판정은 이 DAG 이 발행하는
 `etl://news/articles` Asset 을 따라 `news_cluster_articles` 가, 삼중항 추출은 그 뒤
-`triples_extract_triples` 가 이어서 돈다 — LLM 처리가 길어져도 다음 수집을 막지 않고,
-백필(`news_backfill_krx100`)과 하류를 공유하기 위해서다.
+`triples_extract_triples` 가 이어서 돈다 — LLM 처리가 길어져도 다음 수집을 막지 않기 위해서다.
+백필(`news_backfill_krx100`)은 클러스터 DAG 를 따로 둔다(`news_backfill_cluster_articles`).
 """
 
 from __future__ import annotations
