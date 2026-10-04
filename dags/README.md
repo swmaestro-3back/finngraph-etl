@@ -32,12 +32,11 @@ dags/
 | companies | `companies/sync_gazetteer.py` | `companies_sync_gazetteer` | `companies` | AssetAny ← `etl://companies/master_synced`, `etl://companies/us_loaded` |
 | disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
-| events | `events/promote_clusters.py` | `events_promote_clusters` | `events` | Asset ← `etl://news/clusters` |
 | market_calendar | `market_calendar/collect.py` | `market_calendar_collect` | `market_calendar` | `30 7 * * *` (매일 07:30) |
 | market_calendar | `market_calendar/backfill_market_days.py` | `market_calendar_backfill_market_days` | `market_calendar`, `backfill`, `manual` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
-| news | `news/summarize_articles.py` | `news_summarize_articles` | `news` | Asset ← `etl://triples/extracted` |
+| news | `news/cluster_articles.py` | `news_cluster_articles` | `news` | Asset ← `etl://news/articles` |
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각), `etl://themes/hot` 발행 |
@@ -114,46 +113,57 @@ companies_load_us ──────(load_neo4j)──────────�
 `companies_load_us` 의 `resolve_paths` 가 최신 날짜 폴더를 찾아 읽는다(XCom 으로 넘기지 않는다).
 
 개체 사전(`entity_gazetteer`)은 상장 기업의 본문 표기 → `company_id`·`stock_id`·`ticker` 스냅샷이다.
-triples·events 가 `pipelines/common/gazetteer.py` 로 읽는다. `etl://companies/linked` 가 아니라
+news(제목·본문 기업 매치)·triples 가 `pipelines/common/gazetteer.py` 로 읽는다. 기업 판정은 news 가
+끝내 `news_companies` 에 저장한다 — events 는 사전을 읽지 않고 그 연결을 쓰고, triples 는 엔티티를
+추출·검증하지 않고 그 연결에 든 기업의 본문 표기만 사전으로 되찾는다. `etl://companies/linked` 가 아니라
 `master_synced` 에 거는 이유는 사명 변경·상폐·별칭 추가가 종목 연결 수를 바꾸지 않기 때문이다 —
 `master_synced` 는 `trigger_rule="all_done"` 인 `seed_graph` 가 발행하므로 `sync_master` 가 스킵된
 날에도 나온다. 새 사전이 기존의 절반 미만이면 교체하지 않고 실패한다.
 
 > **배포 순서(개체 사전).** `V9__entity_gazetteer.sql` 을 적용하고 `companies_sync_gazetteer` 를
-> 한 번 수동 실행한 뒤 triples·events 코드를 배포한다. 사전이 비어 있으면 두 DAG 가 실패한다.
+> 한 번 수동 실행한 뒤 news·triples 코드를 배포한다. 사전이 비어 있으면 두 DAG 가 실패한다.
 
 ```
 stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles
   (평일 09~17시 매 정각)                                  (또는 cron: 평일 07:30·18·21시, 주말 09·15·21시)
 
-news_collect_articles ──┐                           ┌──► events_promote_clusters
-  (위 Asset 또는 cron)    ├──► etl://news/clusters ───┤      (sync_events ∥ generate_events)
-news_backfill_krx100 ───┘   (collect_articles)      └──► triples_extract_triples
-  (수동, 청크마다 발행)                                       │
-                                                             ▼
-                                   news_summarize_articles ◄── etl://triples/extracted
+news_collect_articles ──┐
+  (위 Asset 또는 cron)    ├──► etl://news/articles ──► news_cluster_articles ──► etl://news/clusters ──► triples_extract_triples
+news_backfill_krx100 ───┘   (collect_articles)        (promote_clusters 가 발행)
+  (수동, 청크마다 발행)
+
+news_cluster_articles:  assign_clusters ──► promote_clusters ──┬──► generate_events
+                                                               └──► summarize_articles
 ```
 
-`collect_articles`는 이번 런에 클러스터를 하나도 생성·갱신하지 않았으면 스킵해 Asset을
-발행하지 않는다 — 새 기사도, Event로 올리거나 갱신할 것도 없는 시간에 LLM·Neo4j 왕복을
-만들지 않기 위해서다.
+`collect_articles`는 이번 런에 새로 저장한 기사가 없으면 스킵해 Asset을 발행하지 않는다 — 판정할
+기사가 없는 시간에 클러스터 DAG를 깨우지 않기 위해서다. `promote_clusters`는 삼중항 미처리 대표
+기사가 하나도 없으면 스킵한다. 이번 런에 승격이 없어도 지난 런에 추출이 실패한 대표가 남아 있으면
+다시 발행한다.
 
-삼중항 추출과 요약을 수집 DAG의 task가 아니라 별도 DAG로 둔 이유:
+수집·클러스터·삼중항을 DAG 셋으로 나눈 이유:
 
-- **중복 추출 방지.** `extract_triples`는 `triple_extracted IS NULL`인 기사를 락 없이 전량
-  폴링한다. 정시 수집과 백필이 각자 이 task를 가지면 겹쳐 돌 때 같은 기사를 두 번 LLM에 보낸다.
-  DAG 하나에 `max_active_runs=1`이면 직렬화된다.
+- **클러스터 중복 생성 방지.** 클러스터를 쓰는 곳은 `news_cluster_articles` 하나다. 정시 수집과
+  백필이 각자 판정하면 겹쳐 돌 때 같은 사건에 클러스터가 둘 생긴다. DAG 하나에
+  `max_active_runs=1`이면 직렬화된다.
+- **중복 추출 방지.** `extract_triples`는 `triple_extracted IS NULL`인 대표 기사를 락 없이 전량
+  폴링한다. 같은 이유로 DAG 하나에 둔다.
 - **수집 주기 보호.** 삼중항 추출은 런당 상한이 없어 한 시간을 넘길 수 있다. 같은 DAG에 있으면
   다음 정시 수집이 밀린다.
 - **백필 점진 처리.** 백필은 청크가 끝날 때마다 Asset을 발행하므로 수집이 다 끝나길 기다리지
-  않고 삼중항 추출·요약이 나란히 진행된다. 런이 도는 동안 쌓인 이벤트는 다음 런 하나로 합쳐진다.
+  않고 클러스터 판정과 삼중항 추출이 나란히 진행된다. 런이 도는 동안 쌓인 이벤트는 다음 런 하나로
+  합쳐진다.
 
-요약(`news_summarize_articles`)이 수집이 아니라 삼중항 추출 뒤에 걸린 것은 요약 대상이
-`triple_extracted = TRUE`인 기사이기 때문이다.
+요약과 Event 생성은 클러스터 DAG의 task다. 대상이 클러스터 대표 기사라 삼중항 추출을 기다리지
+않고, `promote_clusters`가 스킵돼도 돈다(`trigger_rule="none_failed"`).
 
-> **실패분 재시도.** 삼중항 추출·요약에 실패한 기사는 미처리로 남아 다음 런에 다시 시도된다.
-> 다음 런은 다음 Asset 이벤트, 즉 **새 기사가 수집된 시점**에 온다 — 수집이 0건으로 스킵된
-> 시간에는 재시도도 없다. 급하면 `triples_extract_triples`를 수동 트리거한다.
+기업 판정은 수집 DAG가 끝낸다. 제목의 기업은 관련성 필터가, 본문에만 나온 기업은 엔티티 필터가
+판정해 `news_companies`에 저장하고, 클러스터·Event·삼중항은 그 연결을 읽기만 한다.
+
+> **실패분 재시도.** 삼중항 추출·요약·제목 생성에 실패한 것은 미처리로 남아 다음 런에 다시
+> 시도된다. 다음 런은 클러스터 DAG가 다시 도는 시점, 즉 **새 기사가 저장된 시점**에 온다 — 수집이
+> 0건으로 스킵된 시간에는 재시도도 없다. 급하면 `news_cluster_articles`나
+> `triples_extract_triples`를 수동 트리거한다.
 
 `select_themes`가 백엔드가 Redis(`etl:hot-themes`, `HOT_THEMES_REDIS_URL`)에 발행한 핫테마를
 읽고 — 조회 실패·키 없음이거나 기준일이 DB 거래일 범위(밸류에이션까지 있는 마감일 ~ 일봉만 있는
