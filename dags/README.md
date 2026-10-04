@@ -38,6 +38,7 @@ dags/
 | news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
 | news | `news/cluster_articles.py` | `news_cluster_articles` | `news` | Asset ← `etl://news/articles` |
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
+| news | `news/backfill_cluster_articles.py` | `news_backfill_cluster_articles` | `news`, `backfill` | Asset ← `etl://news/backfill-articles` |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각), `etl://themes/hot` 발행 |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
@@ -127,13 +128,14 @@ news(제목·본문 기업 매치)·triples 가 `pipelines/common/gazetteer.py` 
 stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles
   (평일 09~17시 매 정각)                                  (또는 cron: 평일 07:30·18·21시, 주말 09·15·21시)
 
-news_collect_articles ──┐
-  (위 Asset 또는 cron)    ├──► etl://news/articles ──► news_cluster_articles ──► etl://news/clusters ──► triples_extract_triples
-news_backfill_krx100 ───┘   (collect_articles)        (promote_clusters 가 발행)
-  (수동, 청크마다 발행)
+news_collect_articles ──► etl://news/articles ──────────► news_cluster_articles ──────────┐
+  (위 Asset 또는 cron)      (collect_articles)                                              ├──► etl://news/clusters ──► triples_extract_triples
+news_backfill_krx100 ───► etl://news/backfill-articles ──► news_backfill_cluster_articles ─┘   (promote_clusters 가 발행)
+  (수동)                    (publish_backfill, 전체 청크가 끝난 뒤 1회)
 
-news_cluster_articles:  assign_clusters ──► promote_clusters ──┬──► generate_events
-                                                               └──► summarize_articles
+news_cluster_articles·news_backfill_cluster_articles:
+  assign_clusters ──► promote_clusters ──┬──► generate_events
+                                         └──► summarize_articles
 ```
 
 `collect_articles`는 이번 런에 새로 저장한 기사가 없으면 스킵해 Asset을 발행하지 않는다 — 판정할
@@ -141,11 +143,22 @@ news_cluster_articles:  assign_clusters ──► promote_clusters ──┬─�
 기사가 하나도 없으면 스킵한다. 이번 런에 승격이 없어도 지난 런에 추출이 실패한 대표가 남아 있으면
 다시 발행한다.
 
+백필은 클러스터 DAG를 따로 둔다. 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터의
+시간 창보다 이르게 도착해 같은 사건이 갈라지므로, `publish_backfill`이 모든 청크가 끝난 뒤 한 번만
+발행한다(실패한 청크가 있으면 발행하지 않는다). `news_backfill_cluster_articles`는 task 구성이
+`news_cluster_articles`와 같고, 저장된 IDF 표에 배치 문서 수를 더해 판정하는 점만 다르다 — 초기
+백필에는 표가 비어 있다.
+
+> **백필 중에는 `news_cluster_articles`를 꺼 둔다.** 두 클러스터 DAG 모두 출처를 가리지 않고
+> `cluster_id`가 없는 기사 전량을 읽는다. 켜 두면 정시 수집이 깨운 `news_cluster_articles`가 수집
+> 중인 백필 기사를 먼저 판정하고, 두 DAG가 겹쳐 돌면 같은 사건에 클러스터가 둘 생긴다.
+> `news_backfill_cluster_articles`가 끝난 뒤 다시 켠다.
+
 수집·클러스터·삼중항을 DAG 셋으로 나눈 이유:
 
-- **클러스터 중복 생성 방지.** 클러스터를 쓰는 곳은 `news_cluster_articles` 하나다. 정시 수집과
-  백필이 각자 판정하면 겹쳐 돌 때 같은 사건에 클러스터가 둘 생긴다. DAG 하나에
-  `max_active_runs=1`이면 직렬화된다.
+- **클러스터 중복 생성 방지.** 수집 잡은 클러스터를 쓰지 않는다. 수집 런마다 판정하면 겹쳐 돌 때
+  같은 사건에 클러스터가 둘 생긴다. 클러스터 DAG에 `max_active_runs=1`이면 직렬화된다. 백필 전용
+  클러스터 DAG와는 서로 막지 않으므로 위 운영 규칙으로 겹치지 않게 한다.
 - **중복 추출 방지.** `extract_triples`는 `triple_extracted IS NULL`인 대표 기사를 락 없이 전량
   폴링한다. 같은 이유로 DAG 하나에 둔다.
 - **수집 주기 보호.** 삼중항 추출은 런당 상한이 없어 한 시간을 넘길 수 있다. 같은 DAG에 있으면

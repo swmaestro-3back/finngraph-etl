@@ -110,8 +110,8 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
   엔티티는 `news_companies` 에서 읽습니다. 후보가 기준에 못 미친 사건은 추출하지 않습니다.
 - `promote_clusters` 는 삼중항 미처리 대표 기사가 남아 있을 때만 Asset 을 발행합니다. 추출에 실패한
   대표는 미처리로 남아 다음 클러스터 런(다음에 새 기사가 저장된 시점)에 다시 깨워집니다.
-- 클러스터를 쓰는 곳은 이 DAG 하나라, 수집과 백필이 동시에 돌아도 같은 사건에 클러스터가 둘 생기지
-  않습니다.
+- 수집 잡은 클러스터를 쓰지 않고 이 DAG 가 `max_active_runs=1` 로 직렬화하므로, 수집이 겹쳐도 같은
+  사건에 클러스터가 둘 생기지 않습니다. 백필은 클러스터 DAG 를 따로 둡니다(아래 "KRX100 백필" 절).
 
 설계: `docs/superpowers/specs/2026-10-04-news-pipeline-three-dags-design.md`,
 `transformers/clustering/docs/` 의 세 문서.
@@ -120,8 +120,26 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 
 `news_backfill_krx100` 은 초기 데이터를 채우는 수동 DAG 입니다. `stocks.krx100` 활성 종목의 기업
 (`fetch_due_krx100_queries`)을 20개씩 청크로 나눠 하나씩 `collect_articles.run_krx100` 을 돌립니다.
-청크가 끝날 때마다 `etl://news/articles` 를 발행해 클러스터 판정과 삼중항 추출이 수집과 나란히 진행됩니다. 대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은
-`collect()` 를 씁니다. 검색어도 스케줄 런과 같은 `NEWS_SEARCH_QUERY_TEMPLATES` 입니다.
+대상 선정만 다르고 수집 이후 단계는 스케줄 런과 같은 `collect()` 를 씁니다. 검색어도 스케줄 런과
+같은 `NEWS_SEARCH_QUERY_TEMPLATES` 입니다.
+
+클러스터 판정은 청크마다 하지 않습니다. 모든 청크가 끝나면 `publish_backfill` 이
+`etl://news/backfill-articles` 를 한 번 발행하고, 백필 전용 `news_backfill_cluster_articles`
+(`dags/news/backfill_cluster_articles.py`)가 저장된 미판정 기사 전량을 한 번에 판정합니다. task 구성은
+`news_cluster_articles` 와 같고 삼중항 DAG 도 같이 씁니다.
+
+- **한 번에 판정하는 이유**: 시간 창의 기준점은 먼저 판정된 기사의 발행 시각이고, 그보다 이른 기사는
+  1일 전까지만 붙습니다. 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터보다 이르게
+  도착해 같은 사건에 클러스터가 하나 더 생깁니다.
+- **IDF**: 백필 판정은 저장된 IDF 표에 이번 배치의 문서 수를 더해 씁니다
+  (`assign(include_batch_idf=True)`, `transformers/clustering/batch.py` 의 `add_batch_frequency`). 초기
+  백필에는 표가 비어 있어, 그대로 쓰면 기업명 같은 흔한 토큰이 눌리지 않습니다.
+- **발행 조건**: 실패한 청크가 있으면 발행하지 않습니다. 다시 트리거하면 남은 기업만 수집한 뒤
+  발행합니다. 미판정 기사가 없으면 발행을 건너뜁니다.
+- **백필 중에는 `news_cluster_articles` 를 꺼 둡니다.** 두 클러스터 DAG 모두 출처를 가리지 않고
+  `cluster_id` 가 없는 기사 전량을 읽습니다. 켜 두면 정시 수집이 깨운 `news_cluster_articles` 가 수집
+  중인 백필 기사를 먼저 판정하고, 두 DAG 가 겹쳐 돌면 같은 사건에 클러스터가 둘 생깁니다.
+  `news_backfill_cluster_articles` 가 끝난 뒤 다시 켭니다.
 
 - 수집 창은 트리거 params 로 넓힙니다: `lookback_days`(기본 180, 최대 180), `max_pages`(기본 8,
   최대 10). 스케줄 런은 `NEWS_SEARCH_LOOKBACK_DAYS`·`NEWS_SEARCH_MAX_PAGES` 를 그대로 씁니다.
