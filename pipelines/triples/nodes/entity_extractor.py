@@ -1,73 +1,40 @@
+from collections.abc import Iterable
 from dataclasses import asdict
 
-from langchain_aws import ChatBedrockConverse
-
-from pipelines.common.clients.bedrock import ensure_bedrock_token
-from pipelines.common.config import get_settings
 from pipelines.common.gazetteer import CompanyMatcher, get_company_matcher
-from pipelines.triples.models import Entity, RawEntityJudgement, RawEntityJudgementList
-from pipelines.triples.prompts.entity_verification import PROMPT
+from pipelines.triples.models import Entity
 
 
-def filter_verified(
-    entities: list[Entity],
-    judgements: list[RawEntityJudgement],
+def linked_entities(
+    text: str,
+    company_ids: Iterable[int],
+    matcher: CompanyMatcher | None = None,
 ) -> list[Entity]:
     """
-    Keep the gazetteer entities the LLM did not reject
+    Build the entity list for relation extraction from the companies already linked to the article
 
-    Pure function, kept apart from the LLM call so it can be unit tested without an API key.
-    Judgements naming an entity outside the input are ignored, so the LLM cannot add entities.
-    An entity the LLM skipped is kept: it already matched the gazetteer, and dropping it would
-    lose every relation it takes part in.
+    The news pipeline decides which companies an article is about (news_companies): the title
+    relevance filter plus the body entity filter. This only recovers how the article spells them,
+    because the relation prompt works on surface forms and news_companies holds ids only.
+    The gazetteer matcher is deterministic, so it finds the same spellings the news pipeline
+    judged; matches for companies outside company_ids are dropped. No LLM call.
+    Entities are deduped by surface form, in article order, so two spellings of one company stay
+    separate entities. The gazetteer is not loaded when there is no linked company.
     """
 
-    keep_by_text: dict[str, bool] = {}
-    for judgement in judgements:
-        text = judgement.entity.strip()
-        if text in keep_by_text:
+    wanted = {int(company_id) for company_id in company_ids}
+    if not wanted:
+        return []
+
+    if matcher is None:
+        matcher = get_company_matcher()
+
+    seen: set[str] = set()
+    entities: list[Entity] = []
+    for match in matcher.extract(text):
+        if match.entry.company_id not in wanted or match.text in seen:
             continue
-        keep_by_text[text] = judgement.keep
+        seen.add(match.text)
+        entities.append(Entity(text=match.text, **asdict(match.entry)))
 
-    return [entity for entity in entities if keep_by_text.get(entity.text.strip(), True)]
-
-
-class EntityExtractor:
-    def __init__(self, matcher: CompanyMatcher | None = None):
-
-        # Only companies are gazetteer-anchored; products stay as the free text the LLM copied
-        # out of the article. The gazetteer is the entity_gazetteer table (common/gazetteer.py).
-        self._matcher = matcher if matcher is not None else get_company_matcher()
-
-        ensure_bedrock_token()
-        settings = get_settings()
-        self._model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
-            region_name=settings.bedrock_region,
-            temperature=0,
-        )
-
-        self._chain = PROMPT | self._model.with_structured_output(
-            schema=RawEntityJudgementList,
-            method="json_schema",
-        )
-
-    def extract(self, text: str) -> list[Entity]:
-        """
-        Extract entities using gazetteer, each as the article spells it plus the company it names
-        """
-        return [
-            Entity(text=match.text, **asdict(match.entry)) for match in self._matcher.extract(text)
-        ]
-
-    async def verify(self, text: str, entities: list[Entity]) -> list[Entity]:
-        """
-        Drop gazetteer false hits and background-only mentions using the LLM
-        """
-        invoke_input = {
-            "text": text,
-            "entities": "\n".join(f"- {entity.text}" for entity in entities),
-        }
-
-        result = await self._chain.ainvoke(invoke_input)
-        return filter_verified(entities, result.judgements)
+    return entities
