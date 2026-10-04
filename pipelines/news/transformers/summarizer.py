@@ -1,7 +1,7 @@
 """기사 요약 — 대표 기사 본문으로 요약 문단과 핵심 포인트를 만든다.
 
 핵심 포인트는 고정된 항목(PointKind) 중 본문이 뒷받침하는 2~3개다. 사건이 없는 기사(시황 나열)는
-빈 목록이다. 모델은 항목 키만 내고 화면 라벨은 키로 매핑한다. 개수·중복·문체는 스키마가 아니라
+빈 목록이다. 모델은 항목 키만 내고 화면 라벨은 키로 매핑한다. 개수·중복·문체·길이는 스키마가 아니라
 여기서 검증하고, 어기면 같은 입력에 어긴 규칙을 붙여 한 번 더 요청한다(온도 0 이라 그냥 재시도하면
 같은 답이 나온다). 그래도 어기거나 호출이 실패한 기사는 결과에서 빠져 다음 런에 다시 시도된다.
 summarizer 를 갈아끼울 수 있어 테스트는 Bedrock 없이 돈다.
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from functools import lru_cache
@@ -32,8 +33,14 @@ RETRY_ATTEMPTS = 2
 
 MIN_POINTS = 2
 MAX_POINTS = 3
+# 길이 상한(글자 수는 공백 포함). 프롬프트에는 이보다 짧은 목표치와 함께 주입된다.
+SUMMARY_MAX_SENTENCES = 4
+SENTENCE_MAX_CHARS = 80
+POINT_MAX_CHARS = 60
 # 문장 끝의 마침표·따옴표·괄호를 떼고 종결어미를 본다
 _SENTENCE_TAIL = " .!?\"'”’)…"
+# 문장 경계: 종결 부호 뒤의 공백. 소수점(7.0%)처럼 공백이 따르지 않는 마침표는 경계가 아니다
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
 
 
 class PointKind(StrEnum):
@@ -43,7 +50,6 @@ class PointKind(StrEnum):
     AFFECTED = "AFFECTED"
     SCALE = "SCALE"
     CAUSE = "CAUSE"
-    TIMELINE = "TIMELINE"
     RIPPLE = "RIPPLE"
 
 
@@ -89,6 +95,17 @@ def validate_summary(draft: NewsSummary) -> NewsSummary:
         raise SummaryInvalid("summary 가 비어 있다")
     if not _ends_politely(summary):
         raise SummaryInvalid("summary 가 해요체(~요)로 끝나지 않는다")
+    sentences = _SENTENCE_BREAK.split(summary)
+    if len(sentences) > SUMMARY_MAX_SENTENCES:
+        raise SummaryInvalid(
+            f"summary 가 {len(sentences)}문장이다({SUMMARY_MAX_SENTENCES}문장 이내)"
+        )
+    longest = max(len(sentence) for sentence in sentences)
+    if longest > SENTENCE_MAX_CHARS:
+        raise SummaryInvalid(
+            f"summary 의 한 문장이 {longest}자다"
+            f"({SENTENCE_MAX_CHARS}자 이내, 문장을 나누거나 부수 정보를 뺀다)"
+        )
     if points and not MIN_POINTS <= len(points) <= MAX_POINTS:
         raise SummaryInvalid(
             f"key_points 가 {len(points)}개다"
@@ -98,6 +115,12 @@ def validate_summary(draft: NewsSummary) -> NewsSummary:
         raise SummaryInvalid("key_points 에 같은 kind 가 두 번 나온다")
     if any(not _ends_politely(point.text) for point in points):
         raise SummaryInvalid("key_points 의 text 가 해요체(~요)로 끝나지 않는다")
+    longest_point = max((len(point.text) for point in points), default=0)
+    if longest_point > POINT_MAX_CHARS:
+        raise SummaryInvalid(
+            f"key_points 의 text 가 {longest_point}자다"
+            f"({POINT_MAX_CHARS}자 이내, 한 가지 사실만 남긴다)"
+        )
 
     return NewsSummary(
         summary=summary,
@@ -134,6 +157,14 @@ def build_summary_prompt(item: dict[str, Any], body_limit: int = DEFAULT_BODY_LI
     ).strip()
 
 
+def load_system_prompt() -> str:
+    return summary_prompt.SYSTEM.format(
+        summary_max_sentences=SUMMARY_MAX_SENTENCES,
+        sentence_max_chars=SENTENCE_MAX_CHARS,
+        point_max_chars=POINT_MAX_CHARS,
+    )
+
+
 def build_retry_input(article_text: str, reason: str) -> str:
     """규칙을 어긴 출력 뒤에 같은 기사로 다시 쓰게 하는 재요청 입력."""
 
@@ -164,7 +195,7 @@ class ArticleSummarizer:
         )
         prompt = ChatPromptTemplate.from_messages(
             [
-                SystemMessage(content=summary_prompt.SYSTEM),
+                SystemMessage(content=load_system_prompt()),
                 ("human", "{article}"),
             ]
         )

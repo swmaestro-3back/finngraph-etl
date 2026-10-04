@@ -161,10 +161,11 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 - `summary.py` — 기사 요약(`news_cluster_articles` 의 `summarize_articles` task). 승격된 클러스터의 대표
   기사 본문 하나로 해요체 요약 문단(`news.summary`, 3~4문장)과 핵심 포인트(`news.summary_points`)를
   만듭니다. 포인트는 `CHANGE`(무엇이 바뀌나요)·`AFFECTED`(누가 직접 영향받나요)·`SCALE`(얼마나
-  큰가요)·`CAUSE`(왜 일어났나요)·`TIMELINE`(앞으로 일정은요)·`RIPPLE`(어디로 이어지나요) 중 본문이
+  큰가요)·`CAUSE`(왜 일어났나요)·`RIPPLE`(어디로 이어지나요) 중 본문이
   뒷받침하는 2~3개이고, 사건이 없는 기사는 빈 배열입니다. 모델은 키만 내고 화면 라벨은 키로
-  매핑합니다. 전망은 본문에 적힌 것만 전망으로 읽히게 씁니다. 개수·중복·문체는
-  `transformers/summarizer.py` 가 검증해 어기면 한 번 재요청합니다.
+  매핑합니다. 전망은 본문에 적힌 것만 전망으로 읽히게 씁니다. 개수·중복·문체·길이는
+  `transformers/summarizer.py` 가 검증해 어기면 한 번 재요청합니다. 길이 상한은 요약 4문장·문장당
+  80자, 포인트 60자이고(같은 파일의 상수), 프롬프트에는 더 짧은 목표치(3문장·60자·45자)와 함께 들어갑니다.
 
 판정·형식 기준은 시스템 프롬프트에만 둡니다. 구조화 출력 스키마(pydantic `Field` description·docstring)도
 호출마다 LLM 에 실리는데, 스키마 안의 한글은 시스템 프롬프트보다 글자당 토큰이 몇 배 들어 같은 기준을

@@ -14,6 +14,7 @@ from pipelines.news.transformers.summarizer import (
     SummaryInvalid,
     build_summary_prompt,
     format_published_date,
+    load_system_prompt,
     summarize_news_items,
     validate_summary,
 )
@@ -109,6 +110,45 @@ def test_validate_summary_allows_no_points_for_eventless_article():
 def test_validate_summary_rejects_rule_violations(draft):
     with pytest.raises(SummaryInvalid):
         validate_summary(draft)
+
+
+@pytest.mark.parametrize(
+    ("draft", "reason"),
+    [
+        (
+            NewsSummary(
+                summary=SUMMARY,
+                key_points=[_point("CHANGE"), _point("SCALE", "가" * 59 + "예요.")],
+            ),
+            "62자",
+        ),
+        (_draft("CHANGE", "SCALE", summary=" ".join(["규제가 시행돼요."] * 5)), "5문장"),
+        (_draft("CHANGE", "SCALE", summary="규제가 시행돼요. " + "가" * 79 + "해요."), "82자"),
+    ],
+)
+def test_validate_summary_rejects_overlong_output(draft, reason):
+    with pytest.raises(SummaryInvalid, match=reason):
+        validate_summary(draft)
+
+
+def test_validate_summary_accepts_output_at_the_limits():
+    # 소수점·천 단위 구두점은 문장 경계가 아니다
+    sentence = "매출은 7.0% 늘어난 5조3,139억원이에요."
+    draft = NewsSummary(
+        summary=" ".join([sentence, "가" * 78 + "요.", sentence, sentence]),
+        key_points=[_point("CHANGE"), _point("SCALE", "가" * 58 + "요.")],
+    )
+
+    assert len(validate_summary(draft).key_points) == 2
+
+
+def test_load_system_prompt_injects_length_limits():
+    prompt = load_system_prompt()
+
+    assert "never more than 4." in prompt
+    assert "never more than 80." in prompt
+    assert "never more than 60." in prompt
+    assert "{" not in prompt
 
 
 def test_summarize_news_items_retries_once_and_isolates_failures():
