@@ -187,7 +187,7 @@ class ArticleSummarizer:
         logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 
         model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("summary"),
             region_name=settings.bedrock_region,
             temperature=0,
             max_tokens=max_tokens,

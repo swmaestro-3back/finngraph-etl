@@ -113,7 +113,7 @@ class ClusterTitler:
         logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 
         model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("cluster_title"),
             region_name=settings.bedrock_region,
             temperature=0,
             max_tokens=max_tokens,

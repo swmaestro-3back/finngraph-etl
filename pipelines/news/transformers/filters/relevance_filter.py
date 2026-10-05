@@ -190,7 +190,7 @@ class RelevanceJudge:
             max_tokens = max(DEFAULT_MAX_TOKENS, 128 * get_news_settings().news_llm_batch_size)
 
         model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("relevance"),
             region_name=settings.bedrock_region,
             temperature=0,
             max_tokens=max_tokens,

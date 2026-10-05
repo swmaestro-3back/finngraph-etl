@@ -62,6 +62,8 @@ def test_build_search_queries_uses_templates(settings, monkeypatch):
     monkeypatch.setenv("NEWS_SEARCH_QUERY_TEMPLATES", '["특징주,{name}","{name}"]')
     config.get_news_settings.cache_clear()
     assert build_search_queries(QUERY) == ["특징주,엘앤에프", "엘앤에프"]
+    # 서식을 직접 주면 설정값 대신 그것만 쓴다 (백필)
+    assert build_search_queries(QUERY, ["{name},수혜주"]) == ["엘앤에프,수혜주"]
 
 
 def test_collection_cutoff(settings):
@@ -181,6 +183,40 @@ def test_collect_stock_news_searches_each_template(settings, fake_pages, monkeyp
     assert {i["_search_keyword"] for i in items} == {"특징주,엘앤에프", "엘앤에프"}
 
 
+def test_collect_stock_news_searches_only_given_templates(settings, fake_pages, monkeypatch):
+    from pipelines.news import config
+    from pipelines.news.extractors.search_collector import collect_stock_news
+
+    monkeypatch.setenv("NEWS_SEARCH_QUERY_TEMPLATES", '["특징주,{name}","{name}"]')
+    config.get_news_settings.cache_clear()
+
+    pages, calls = fake_pages
+    pages[1] = [_raw(f"https://a/{i}", hours_ago=0.5) for i in range(40)]
+
+    items = collect_stock_news(MARKED, NOW, query_templates=["{name},수혜주"])
+
+    assert calls == [("엘앤에프,수혜주", 1)]
+    assert {i["_search_keyword"] for i in items} == {"엘앤에프,수혜주"}
+
+
+def test_collect_company_news_passes_query_templates(settings, monkeypatch):
+    from pipelines.news.extractors import search_collector
+    from pipelines.news.extractors.search_collector import collect_company_news
+
+    seen = []
+
+    def fake_collect(query, run_started_at, lookback_days, max_pages, query_templates):
+        seen.append(query_templates)
+        return []
+
+    monkeypatch.setattr(search_collector, "collect_stock_news", fake_collect)
+
+    collect_company_news([QUERY], NOW, query_templates=["{name},수혜주"])
+    collect_company_news([QUERY], NOW)
+
+    assert seen == [["{name},수혜주"], None]
+
+
 def test_collect_company_news_isolates_stock_failure(settings, monkeypatch):
     from pipelines.news.extractors import search_collector
     from pipelines.news.extractors.search_collector import NewsSearchError, collect_company_news
@@ -188,7 +224,7 @@ def test_collect_company_news_isolates_stock_failure(settings, monkeypatch):
     ok = CompanyQuery(company_id=100, name="엘앤에프")
     bad = CompanyQuery(company_id=200, name="에코프로")
 
-    def fake_collect(query, run_started_at, lookback_days, max_pages):
+    def fake_collect(query, run_started_at, lookback_days, max_pages, query_templates):
         if query is bad:
             raise NewsSearchError("boom")
         return [{"title": "t", "_query_company": {"company_id": 100, "name": "엘앤에프"}}]
@@ -205,7 +241,7 @@ def test_collect_company_news_raises_when_all_fail(settings, monkeypatch):
     from pipelines.news.extractors import search_collector
     from pipelines.news.extractors.search_collector import NewsSearchError, collect_company_news
 
-    def fake_collect(query, run_started_at, lookback_days, max_pages):
+    def fake_collect(query, run_started_at, lookback_days, max_pages, query_templates):
         raise NewsSearchError("boom")
 
     monkeypatch.setattr(search_collector, "collect_stock_news", fake_collect)

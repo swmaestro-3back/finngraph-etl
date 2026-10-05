@@ -66,11 +66,19 @@ def run_krx100(
     company_ids: list[int],
     lookback_days: int | None = None,
     max_pages: int | None = None,
+    query_templates: list[str] | None = None,
 ) -> dict[str, int]:
     """KRX100 기업 중 company_ids 에 든, 재검색 시점이 된 기업의 뉴스 수집 (news_backfill_krx100).
 
-    lookback_days·max_pages 로 수집 창을 넓힌다. None 이면 스케줄 런과 같은 설정값이다.
+    lookback_days·max_pages 로 수집 창을 넓히고, query_templates 로 검색어 서식을 줄인다. None 이면
+    스케줄 런과 같은 설정값이다. 서식마다 {name} 이 있어야 한다 — 없으면 모든 기업이 같은 검색어로
+    검색된다.
     """
+
+    if query_templates is not None and (
+        not query_templates or any("{name}" not in template for template in query_templates)
+    ):
+        raise ValueError(f"검색어 서식마다 {{name}} 이 있어야 한다: {query_templates}")
 
     validate_search_settings()
     settings = get_news_settings()
@@ -86,7 +94,7 @@ def run_krx100(
         sum(1 for q in batch.queries if q.watermark is None),
     )
 
-    return collect(batch.queries, run_started_at, lookback_days, max_pages)
+    return collect(batch.queries, run_started_at, lookback_days, max_pages, query_templates)
 
 
 def collect(
@@ -94,6 +102,7 @@ def collect(
     run_started_at: datetime,
     lookback_days: int | None = None,
     max_pages: int | None = None,
+    query_templates: list[str] | None = None,
 ) -> dict[str, int]:
     """검색 대상 기업의 기사를 수집해 필터·본문 크롤링·기업 판정을 거쳐 저장하고 search_history 를
     마킹한다.
@@ -107,7 +116,7 @@ def collect(
 
     # 1. 네이버 API 호출 후 수동 필터링 + 연관성 필터링
     passed, failed_company_ids = _collect_and_filter(
-        queries, run_started_at, lookback_days, max_pages
+        queries, run_started_at, lookback_days, max_pages, query_templates
     )
 
     # 8. 본문 크롤링 — 본문을 못 가져온 기사는 저장하지 않음
@@ -146,6 +155,7 @@ def _collect_and_filter(
     run_started_at: datetime,
     lookback_days: int | None,
     max_pages: int | None,
+    query_templates: list[str] | None,
 ) -> tuple[list[dict], list[int]]:
     """네이버 수집부터 LLM 관련성 필터까지. (통과 기사, 수집에 실패한 company_id)를 돌려준다."""
 
@@ -153,7 +163,7 @@ def _collect_and_filter(
 
     # 2. 네이버 기사 수집
     collected, failed_company_ids = collect_company_news(
-        queries, run_started_at, lookback_days, max_pages
+        queries, run_started_at, lookback_days, max_pages, query_templates
     )
     logger.info(
         "[collect_articles] 수집: 기사 %d건 (기업 %d개 중 실패 %d개)",

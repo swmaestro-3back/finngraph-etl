@@ -80,6 +80,7 @@ def wired(monkeypatch):
         "saved": [],
         "entity_judged": [],
         "collect_window": [],
+        "query_templates": [],
     }
     bodies: dict[str, str] = {}
 
@@ -99,8 +100,9 @@ def wired(monkeypatch):
     monkeypatch.setattr(job, "fetch_due_krx100_queries", lambda hours, now, company_ids: batch)
 
     # 200 번 기업의 검색은 실패한 것으로 본다
-    def fake_collect(queries, run_started_at, lookback_days, max_pages):
+    def fake_collect(queries, run_started_at, lookback_days, max_pages, query_templates):
         calls["collect_window"].append((lookback_days, max_pages))
+        calls["query_templates"].append(query_templates)
         return [fresh, market, existing], [200]
 
     monkeypatch.setattr(job, "collect_company_news", fake_collect)
@@ -269,7 +271,9 @@ def test_listing_title_is_dropped_before_relevance_and_crawl(wired, monkeypatch)
     job, calls, _ = wired
     listing = _item("엘앤에프·삼성SDI·포스코퓨처엠 등", "https://a/3")
     monkeypatch.setattr(
-        job, "collect_company_news", lambda queries, now, lookback, pages: ([listing], [])
+        job,
+        "collect_company_news",
+        lambda queries, now, lookback, pages, templates: ([listing], []),
     )
 
     def fail():
@@ -337,7 +341,9 @@ def test_entity_failure_on_one_article_links_only_its_title_companies(wired, mon
     second = _item("엘앤에프, 미국 공장 증설", "https://a/3")
     bodies["https://a/3"] = "엘앤에프가 미국 공장을 증설한다. 포스코퓨처엠이 원료를 댄다. " * 10
     monkeypatch.setattr(
-        job, "collect_company_news", lambda queries, now, lookback, pages: ([fresh, second], [])
+        job,
+        "collect_company_news",
+        lambda queries, now, lookback, pages, templates: ([fresh, second], []),
     )
 
     async def flaky(text, surfaces):
@@ -460,6 +466,27 @@ def test_run_uses_settings_collection_window(wired):
     job.run(theme_ids=[10, 11])
 
     assert calls["collect_window"] == [(None, None)]
+    assert calls["query_templates"] == [None]
+
+
+def test_run_krx100_passes_query_templates(wired):
+    job, calls, _ = wired
+
+    job.run_krx100([100, 200], query_templates=["{name},수혜주"])
+
+    # 백필이 고른 검색어 서식만 수집기로 내려간다 — 안 주면 None 으로 설정값(스케줄 런과 같다)
+    assert calls["query_templates"] == [["{name},수혜주"]]
+
+
+@pytest.mark.parametrize("templates", [[], ["수혜주"], ["{name},수혜", "특징주"]])
+def test_run_krx100_rejects_templates_without_name(wired, templates):
+    job, calls, _ = wired
+
+    # {name} 이 없으면 모든 기업이 같은 검색어로 검색된다
+    with pytest.raises(ValueError):
+        job.run_krx100([100, 200], query_templates=templates)
+
+    assert calls["collect_window"] == []
 
 
 def test_run_filters_in_memory_first_then_db_then_llm_then_crawl(wired, monkeypatch):
@@ -501,7 +528,9 @@ def test_run_keeps_the_copy_whose_query_company_is_in_the_title(wired, monkeypat
     fresh = _item(FRESH_TITLE, "https://a/1", "LFP 양극재")
     first_copy = dict(fresh, _query_company={"company_id": 200, "name": "에코프로"})
     monkeypatch.setattr(
-        job, "collect_company_news", lambda queries, now, lookback, pages: ([first_copy, fresh], [])
+        job,
+        "collect_company_news",
+        lambda queries, now, lookback, pages, templates: ([first_copy, fresh], []),
     )
 
     job.run(theme_ids=[10, 11])
@@ -516,7 +545,9 @@ def test_run_stores_article_when_another_fetching_search_company_is_valid(wired,
     fresh = _item(FRESH_TITLE, "https://a/1", "LFP 양극재")
     sdi_copy = dict(fresh, _query_company={"company_id": 300, "name": "삼성SDI"})
     monkeypatch.setattr(
-        job, "collect_company_news", lambda queries, now, lookback, pages: ([fresh, sdi_copy], [])
+        job,
+        "collect_company_news",
+        lambda queries, now, lookback, pages, templates: ([fresh, sdi_copy], []),
     )
 
     async def judge(articles):

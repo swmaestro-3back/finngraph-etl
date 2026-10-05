@@ -123,7 +123,7 @@ class EntityJudge:
         logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 
         model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("entity"),
             region_name=settings.bedrock_region,
             temperature=0,
             timeout=settings.bedrock_request_timeout,

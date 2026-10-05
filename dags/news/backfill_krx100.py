@@ -19,6 +19,10 @@ search_history 를 마킹하므로 실패해도 그 청크만 재시도한다.
 트리거하면 남은 기업만 수집한 뒤 발행한다. 대상 기업이 없어 수집을 건너뛴 런도 판정을 기다리는
 기사가 남아 있으면 발행한다.
 
+**검색어.** query_templates 파라미터의 서식만 검색한다(기본 특징주·수혜·악재 3개). 스케줄 런의 6개
+서식(NEWS_SEARCH_QUERY_TEMPLATES)을 다 쓰면 청크마다 검색·LLM 판정이 몇 배로 늘어서 줄였다.
+서식마다 {name} 이 있어야 한다.
+
 **비용.** 처음 검색하는 기업은 lookback 전체를 읽고 새 기사를 전부 LLM 관련성 필터에 보낸다.
 통과한 기사는 전부 본문을 크롤링하고, 본문에 다른 상장사가 나오면 LLM 엔티티 필터를 한 번 더 탄다.
 처음엔 lookback_days 를 작게 줘서 청크당 기사 수·소요 시간을 확인하는 것을 권장한다.
@@ -39,8 +43,8 @@ except ImportError:
     dag = None
     task = None
 
-# 청크 하나 = 기업 20개 × 검색어 6개(NEWS_SEARCH_QUERY_TEMPLATES) × 최대 8페이지
-# = 네이버 API 최대 960회
+# 청크 하나 = 기업 20개 × 검색어 서식 수(query_templates, 기본 3개) × 최대 8페이지
+# = 네이버 API 최대 480회(서식 3개)
 CHUNK_SIZE = 20
 
 
@@ -72,6 +76,14 @@ if dag and task:
                 title="검색어당 최대 페이지",
                 description="페이지당 100건. 네이버 검색 API 는 start 1000 까지라 10 이 상한",
             ),
+            "query_templates": Param(
+                default=["{name},특징주", "{name},수혜", "{name},악재"],
+                type="array",
+                items={"type": "string", "pattern": "\\{name\\}"},
+                minItems=1,
+                title="검색어 서식",
+                description="{name} 자리에 종목명이 들어간다. 스케줄 런은 6개 서식을 쓴다",
+            ),
         },
     )
     def news_backfill_krx100():
@@ -93,6 +105,7 @@ if dag and task:
                 company_ids,
                 lookback_days=params["lookback_days"],
                 max_pages=params["max_pages"],
+                query_templates=params["query_templates"],
             )
 
         # none_failed: 청크가 하나라도 실패하면 돌지 않고, select_companies 가 스킵해 수집이 통째로
