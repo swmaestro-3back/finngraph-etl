@@ -1,6 +1,6 @@
 """장중 일봉 갱신.
 
-08~20시 매 정각 일봉을 받고, 그 일봉으로 이번 주·이번 달 봉을 계산한다. 주·월봉의 확정값은
+08~19시 매 정각 일봉을 받고, 그 일봉으로 이번 주·이번 달 봉을 계산한다. 주·월봉의 확정값은
 20:30 stocks_daily_pipeline이 KIS에서 받아 같은 키에 덮어쓴다. Asset은 발행하지 않는다 —
 파생 지표 계산은 마감 후 한 번이면 된다.
 
@@ -35,7 +35,7 @@ if dag and task:
     @dag(
         dag_id="stocks_intraday_candles",
         start_date=datetime(2026, 1, 1),
-        schedule="0 8-20 * * 1-5",
+        schedule="0 8-19 * * 1-5",
         catchup=False,
         max_active_runs=1,
         tags=["stocks"],

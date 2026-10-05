@@ -40,7 +40,7 @@ dags/
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | news | `news/backfill_cluster_articles.py` | `news_backfill_cluster_articles` | `news`, `backfill` | Asset ← `etl://news/backfill-articles` |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `30 7 * * 1-5` (평일 07:30) |
-| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 8-20 * * 1-5` (평일 08~20시 매 정각), `etl://themes/hot` 발행 |
+| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 8-19 * * 1-5` (평일 08~19시 매 정각), `etl://themes/hot` 발행 |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `30 20 * * 1-5` (평일 20:30) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
@@ -132,7 +132,7 @@ news(제목·본문 기업 매치)·triples 가 `pipelines/common/gazetteer.py` 
 
 ```
 stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles
-  (평일 08~20시 매 정각)                                  (또는 cron: 평일 07:30·21시, 주말 09·15·21시)
+  (평일 08~19시 매 정각)                                  (또는 cron: 평일 07:30·21시, 주말 09·15·21시)
 
 news_collect_articles ──► etl://news/articles ──────────► news_cluster_articles ──────────┐
   (위 Asset 또는 cron)      (collect_articles)                                              ├──► etl://news/clusters ──► triples_extract_triples

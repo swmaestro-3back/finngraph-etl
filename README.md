@@ -112,7 +112,7 @@ docker compose --profile airflow down -v
 - `dags/`, `pipelines/`, `scripts/`는 컨테이너에 마운트되므로 코드 수정이 즉시 반영된다.
   `pyproject.toml` 의존성이 바뀌면 `airflow build`로 이미지를 다시 빌드해야 한다.
 - 컨테이너 안에서 ETL DB 접속은 `db:5432`다(compose가 `DATABASE_URL`/`DB_HOST`/`DB_PORT`를 덮어씀).
-- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`8-20 * * 1-5` 등)이 KST 기준으로 해석된다.
+- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`8-19 * * 1-5` 등)이 KST 기준으로 해석된다.
 - DAG는 생성 시 일시정지 상태로 등록된다(`DAGS_ARE_PAUSED_AT_CREATION`). UI에서 unpause 후 사용한다.
 
 ### 스택 구성
