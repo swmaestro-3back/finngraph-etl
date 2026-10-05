@@ -54,7 +54,12 @@ def _load_stock() -> int:
         ).scalar()
 
 
-def _daily(trade_date: date, close: str, trade_value: int | None = None) -> DailyCandle:
+def _daily(
+    trade_date: date,
+    close: str,
+    trade_value: int | None = None,
+    base_price: str | None = None,
+) -> DailyCandle:
     price = Decimal(close)
     return DailyCandle(
         ticker=TICKER,
@@ -65,7 +70,24 @@ def _daily(trade_date: date, close: str, trade_value: int | None = None) -> Dail
         close=price,
         volume=1000,
         trade_value=trade_value,
+        base_price=Decimal(base_price) if base_price is not None else None,
     )
+
+
+def _base_prices() -> list[tuple]:
+    with session_scope() as session:
+        rows = session.execute(
+            text(
+                """
+                SELECT c.trade_date, c.base_price FROM stock_candles_daily AS c
+                  JOIN stocks AS s ON s.id = c.stock_id
+                 WHERE s.ticker = :ticker
+                 ORDER BY c.trade_date
+                """
+            ),
+            {"ticker": TICKER},
+        )
+        return [tuple(row) for row in rows]
 
 
 def _rows() -> list[dict]:
@@ -419,6 +441,65 @@ def test_daily_change_rate_uses_bar_before_since_and_refreshes_later_bars() -> N
         (date(2026, 8, 5), None),
         (date(2026, 8, 6), Decimal("-20.00")),
         (date(2026, 8, 7), Decimal("50.00")),
+    ]
+
+
+def test_base_price_is_stored_and_overwritten_by_latest_fetch() -> None:
+    _load_stock()
+
+    with session_scope() as session:
+        upsert_daily_candles(session, [_daily(date(2026, 10, 1), "212000", base_price="212500")])
+    assert _base_prices() == [(date(2026, 10, 1), Decimal("212500"))]
+
+    with session_scope() as session:
+        upsert_daily_candles(session, [_daily(date(2026, 10, 1), "42400", base_price="42500")])
+    assert _base_prices() == [(date(2026, 10, 1), Decimal("42500"))]
+
+    with session_scope() as session:
+        upsert_daily_candles(session, [_daily(date(2026, 10, 1), "42400")])
+    assert _base_prices() == [(date(2026, 10, 1), None)]
+
+
+def test_daily_change_rate_prefers_base_price_over_previous_close() -> None:
+    stock_id = _load_stock()
+
+    with session_scope() as session:
+        upsert_daily_candles(
+            session,
+            [
+                _daily(date(2026, 9, 29), "100", base_price="98"),
+                _daily(date(2026, 9, 30), "110", base_price="105"),
+                _daily(date(2026, 10, 1), "99"),
+                _daily(date(2026, 10, 2), "99", base_price="99"),
+            ],
+        )
+        refresh_daily_change_rates(session, since=date(2026, 9, 29), stock_ids=[stock_id])
+
+    assert _daily_change_rates() == [
+        (date(2026, 9, 29), Decimal("2.04")),
+        (date(2026, 9, 30), Decimal("4.76")),
+        (date(2026, 10, 1), Decimal("-10.00")),
+        (date(2026, 10, 2), Decimal("0.00")),
+    ]
+
+
+def test_daily_change_rate_follows_overwritten_base_price() -> None:
+    stock_id = _load_stock()
+    with session_scope() as session:
+        upsert_daily_candles(
+            session,
+            [_daily(date(2026, 9, 30), "100"), _daily(date(2026, 10, 1), "110", base_price="104")],
+        )
+        refresh_daily_change_rates(session, since=date(2026, 9, 30), stock_ids=[stock_id])
+
+    with session_scope() as session:
+        upsert_daily_candles(session, [_daily(date(2026, 10, 1), "110")])
+        changed = refresh_daily_change_rates(session, since=date(2026, 9, 30), stock_ids=[stock_id])
+
+    assert changed == 1
+    assert _daily_change_rates() == [
+        (date(2026, 9, 30), None),
+        (date(2026, 10, 1), Decimal("10.00")),
     ]
 
 
