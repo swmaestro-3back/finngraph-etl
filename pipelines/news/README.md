@@ -92,7 +92,8 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 ## 클러스터와 하류 (jobs/cluster_articles.py)
 
 수집 DAG 는 새 기사를 저장하면 `etl://news/articles` 를 발행하고, `news_cluster_articles` DAG 가
-이어서 돕니다: `assign_clusters` → `promote_clusters` → `generate_events` ∥ `summarize_articles`.
+이어서 돕니다: `assign_clusters` → `promote_clusters` → `generate_events` ∥ `summarize_articles`,
+요약 뒤에 `link_issues`(아래 "이슈 타임라인" 절).
 
 - **판정** (`assign`, `transformers/clustering/online.py`): `cluster_id` 가 없는 저장 기사를 발행
   시각순으로 하나씩, 시간 창(클러스터 첫 기사 1일 전 ~ 7일 뒤) 안 클러스터의 프로필과 비교합니다.
@@ -116,6 +117,114 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 
 설계: `docs/superpowers/specs/2026-10-04-news-pipeline-three-dags-design.md`,
 `transformers/clustering/docs/` 의 세 문서.
+
+## 이슈 타임라인 (jobs/link_issues.py)
+
+이슈 하나(`news_clusters` 한 행 — 백엔드 `/api/v1/issues`)의 타임라인은 같은 이야기를 다룬 앞선
+이슈의 사슬입니다(실적 프리뷰 → 실적 발표, 7월 건설지출 → 8월 건설지출). `link_issues` 가 이슈마다
+부모 하나를 골라 `parent_cluster_id`·`story_root_id`(이야기 첫 이슈, 루트는 자기 id)·`link_score`
+(부모와의 코사인)·`link_relation`·`linked_at` 을 씁니다. 백엔드는 요청 이슈에서 `parent_cluster_id`
+를 따라 올라간 사슬을 최신순으로 보여 주고(후속으로 갈라진 다른 갈래는 넣지 않습니다),
+`same_event` 로 이어진 이슈는 한 노드로 접습니다. LLM 은 부르지 않습니다 — 노드 제목은
+`news_clusters.title`, 한 줄 요약은 대표 기사 핵심 포인트의 `CHANGE` 항목(없으면 `news.summary` 첫
+문장)입니다. 판정 규칙은 `transformers/issue_linker.py`, 조회·쓰기는
+`repositories/postgres/news_clusters.py` 의 "이슈 타임라인" 절에 있습니다.
+
+- **대상**: 이름과 대표가 있고 `linked_at` 이 NULL 인 클러스터를 첫 기사 시각순으로, 지금부터
+  `NEWS_ISSUE_LINK_LOOKBACK_DAYS` 안에서 런당 `NEWS_ISSUE_LINK_MAX_PER_RUN` 개. 판정마다 커밋하므로
+  같은 런의 앞선 대상이 뒤 대상의 부모 후보가 됩니다.
+- **요약 대기**: 대표 기사에 요약(포인트나 문단)이 아직 없으면 클러스터 `updated_at` 이 24시간 넘게
+  지난 뒤에만 요약 없이 잇습니다. `updated_at` 은 승격·제목 생성 때 갱신되므로 그동안 클러스터 DAG
+  런마다 요약이 다시 시도됩니다. 후속 기사가 붙을 때도 갱신되어, 기사가 계속 붙는 이슈는 그만큼
+  더 기다립니다(대개 클러스터 시간 창 `NEWS_CLUSTER_WINDOW_DAYS` 안에서 끝납니다).
+- **임베딩**: 제목, 한 줄 요약, 멤버 기사 제목 3개(후보 기사 먼저 발행 시각순)를 줄바꿈으로 이어
+  Titan v2(1024)로 `news_clusters.embedding` 에 저장합니다. 후보 기사는 승격 전에 다 차고 바뀌지
+  않으므로 승격 직후에 만들든 클러스터가 자란 뒤(백필·평가 스크립트)에 만들든 입력이 같습니다.
+  모델은 테마용 `BEDROCK_EMBEDDING_MODEL` 과 따로 `NEWS_ISSUE_EMBEDDING_MODEL` 입니다. 한 번 저장한
+  임베딩은 다시 만들지 않습니다.
+- **주요 기업**: 이슈의 `news_companies` 기업 중 멤버 기사 제목 하나 이상에 나온 기업입니다. 제목
+  매치는 수집 잡과 같은 개체 사전 매처(`common/gazetteer.py`)라 약칭도 같은 기업으로 잡고, 본문에만
+  스친 거래처·경쟁사는 빠집니다. 제목에 아무 기업도 안 걸리면 전체 기업으로 돌아갑니다.
+- **부모**: 대상보다 먼저 시작했고(첫 기사 시각, 같으면 id) 대상 시작 전 lookback 안이며 이미
+  판정된 이슈 중, 주요 기업이 하나 이상 겹치고 코사인이 `NEWS_ISSUE_LINK_THRESHOLD` 이상인 것.
+  기업이 없는 이슈는 기업이 없는 이슈에만 `NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD` 이상으로 잇습니다.
+  코사인 최대, 같으면 늦게 시작한 쪽, 그래도 같으면 큰 id 가 부모이고, 없으면 루트입니다. 후보는
+  코사인 순으로 30개씩 읽고, 주요 기업 규칙을 넘는 후보가 나올 때까지 다음 페이지를 읽습니다(SQL 은
+  본문에만 스친 기업까지 함께 걸러, 그런 후보가 위를 채우면 맞는 부모가 아래에 있을 수 있습니다).
+- **꼬리 재판정**: 이슈는 시작 순서가 아니라 승격·요약을 받는 순서로 들어옵니다. 먼저 시작한 이슈가
+  늦게 들어오면(후보가 늦게 차거나 요약이 늦을 때) 그 뒤에 시작해 이미 판정된 이슈는 그 이슈를
+  부모로 못 본 채 판정돼 있습니다 — 같은 사건이 갈린 두 클러스터가 서로 루트로 남는 식입니다. 그래서
+  런마다 이번 대상 중 가장 먼저 시작한 것보다 뒤에 시작한 판정(꼬리)을 대상과 함께 시작 순서로 다시
+  만듭니다. 부모는 늘 먼저 시작한 이슈라 꼬리의 자식도 모두 꼬리 안에 있어 `story_root_id` 가 어긋나지
+  않습니다. 꼬리는 지금부터 `NEWS_ISSUE_RELINK_WINDOW_HOURS` 안에 시작한 판정으로 묶습니다 — 그 밖의
+  판정은 그대로 두므로, 그보다 오래된 이슈가 한꺼번에 들어오면(아래 "연결을 다시 만들어야 할 때")
+  백필 스크립트로 다시 만듭니다.
+- **관계**: 같은 사건이 클러스터 둘로 갈리는 일이 잦아 연결마다 관계를 붙입니다. 첫 기사 시각 차가
+  `NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS` 이내이거나, 코사인이 `NEWS_ISSUE_SAME_EVENT_SCORE` 이상이면서
+  시각 차가 `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` 이내이면 `same_event`(백엔드가 한 노드로
+  접습니다), 아니면 `follow_up` 입니다. 코사인 쪽 간격 상한은 클러스터 시간 창
+  `NEWS_CLUSTER_WINDOW_DAYS`(7일)와 같습니다 — 한 사건이 클러스터 둘로 갈리는 일은 그 창 안에서
+  일어나고, 시리즈 지표의 다음 회차(7월 건설지출 → 8월 건설지출)는 제목·요약이 거의 같아 코사인이
+  높아도 몇 주 떨어져 있습니다. 이 상한이 없으면 하한(0.75)이 같은 사건 기준과 같은 기업 없는 연결이
+  전부 한 노드로 접힙니다.
+- **실패**: 이슈 하나의 실패는 세고 넘어가 다음 런에 다시 봅니다. 전부 실패하면 task 를 실패시킵니다.
+  연결 쓰기는 `updated_at` 을 건드리지 않습니다 — 승격·제목 재시도와 Event 스캔이 그 창을 봅니다.
+- **DAG**: `summarize_articles` 뒤에 `trigger_rule="all_done"` 으로 돕니다. 요약이 실패해도 연결은
+  돌고, 요약 실패는 요약 뒤의 말단 `finish` 가 런 실패로 남깁니다.
+
+| 설정 | 기본값 | 의미 |
+| --- | --- | --- |
+| `NEWS_ISSUE_LINK_ENABLED` | `false` | 스케줄 연결 스위치. 백필 스크립트는 보지 않습니다 |
+| `NEWS_ISSUE_LINK_THRESHOLD` | `0.45` | 주요 기업이 겹치는 부모의 코사인 하한 |
+| `NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD` | `0.75` | 기업 없는 이슈끼리의 하한 |
+| `NEWS_ISSUE_LINK_LOOKBACK_DAYS` | `90` | 대상(지금부터)·부모 후보(대상 첫 기사부터) 범위 |
+| `NEWS_ISSUE_LINK_MAX_PER_RUN` | `200` | 런당 대상 상한 |
+| `NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS` | `24` | 같은 사건으로 보는 첫 기사 시각 차 |
+| `NEWS_ISSUE_SAME_EVENT_SCORE` | `0.75` | 같은 사건으로 보는 코사인(아래 간격 상한 안에서만) |
+| `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` | `168` | 코사인으로 같은 사건을 보는 첫 기사 시각 차 상한(클러스터 시간 창과 같은 7일) |
+| `NEWS_ISSUE_RELINK_WINDOW_HOURS` | `72` | 꼬리 재판정 범위(지금부터, 시간). `0` 이면 다시 판정하지 않습니다 |
+| `NEWS_ISSUE_EMBEDDING_MODEL` | `amazon.titan-embed-text-v2:0` | 연결용 임베딩 모델 |
+
+임계값은 dev 데이터 시뮬레이션에서 고른 초기값입니다(0.6 은 같은 사건의 중복만 잇고 실제 후속
+이슈를 놓쳤습니다). 라벨 평가셋으로 다시 맞춥니다. 임계값이나 임베딩 모델을 바꾸면 이미 저장된
+판정·임베딩은 그대로이므로 백필 스크립트의 `--reset-links` 로 다시 만듭니다.
+
+### 배포 순서
+
+1. `migrations/versions/V12__issue_timeline.sql` 적용(컬럼·인덱스만 추가).
+2. 스위치를 끈 채(`NEWS_ISSUE_LINK_ENABLED=false`, 기본값) 배포합니다. `link_issues` 는 0 통계로 끝납니다.
+3. 기존 이슈를 오래된 것부터 잇습니다. 기본은 dry-run 이라 대상 수와 예시만 출력하고 쓰지도
+   Bedrock 을 부르지도 않습니다.
+
+   ```bash
+   uv run python scripts/backfill_issue_timeline.py --links            # dry-run
+   uv run python scripts/backfill_issue_timeline.py --links --apply
+   ```
+
+4. 백필이 끝나면 `NEWS_ISSUE_LINK_ENABLED=true` 로 켭니다.
+
+스위치를 먼저 켜면 lookback 안의 최근 이슈만 보고 판정해 백필 전의 옛 이슈를 부모로 못 본 채 루트로
+굳습니다. 그랬다면 스위치를 끄고 `--reset-links --links --apply`(기간을 좁히려면 `--since-days N`)로
+다시 만듭니다. `--reset-links` 는 임베딩과 연결 컬럼만 지우고 `updated_at` 은 그대로 둡니다.
+
+### 연결을 다시 만들어야 할 때
+
+스케줄 연결은 꼬리 재판정 창 밖의 판정을 고치지 않습니다. 아래 작업 뒤에는 스위치를 끄고 백필
+스크립트로 그 기간의 연결을 다시 만든 뒤 켭니다.
+
+- **옛 기사 백필(`news_backfill_krx100` → `news_backfill_cluster_articles`)**: 몇 달 전에 시작한 이슈가
+  한꺼번에 생깁니다. `news_backfill_cluster_articles` 의 `link_issues` 는 런당 상한만큼만, lookback
+  안에서만 잇고, 그 뒤에 시작해 이미 판정된 이슈는 창 밖이라 새 이슈를 부모로 못 봅니다. 백필 클러스터의
+  승격·제목·요약이 끝난 뒤(dry-run 의 "대표 요약 대기로 빠짐" 이 0) 백필 기간만큼 다시 만듭니다.
+
+  ```bash
+  uv run python scripts/backfill_issue_timeline.py --reset-links --since-days <백필 기간 일수> --links --apply
+  ```
+
+- **클러스터 재판정(`scripts/recluster_news.py --apply`)**: `news_clusters` 를 전부 지우므로 연결도 모두
+  사라집니다. 스위치를 켠 채 두면 스케줄 연결이 lookback(90일) 안만 승격 순서대로 다시 잇고, 그보다
+  오래된 이슈는 영영 판정되지 않습니다. `--apply` 전에 스위치를 끄고, 재판정 뒤 승격·제목·요약이 끝나면
+  `--links --apply` 로 전체를 이은 다음 켭니다(새 클러스터라 `--reset-links` 는 필요 없습니다).
 
 ## KRX100 백필 (dags/news/backfill_krx100.py)
 

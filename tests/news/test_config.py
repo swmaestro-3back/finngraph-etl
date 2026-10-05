@@ -80,3 +80,76 @@ def test_body_candidate_max_default(monkeypatch):
     monkeypatch.delenv("NEWS_BODY_CANDIDATE_MAX", raising=False)
 
     assert NewsSettings(_env_file=None).news_body_candidate_max == 15
+
+
+ISSUE_LINK_ENV = (
+    "NEWS_ISSUE_LINK_ENABLED",
+    "NEWS_ISSUE_LINK_THRESHOLD",
+    "NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD",
+    "NEWS_ISSUE_LINK_LOOKBACK_DAYS",
+    "NEWS_ISSUE_LINK_MAX_PER_RUN",
+    "NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS",
+    "NEWS_ISSUE_SAME_EVENT_SCORE",
+    "NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS",
+    "NEWS_ISSUE_RELINK_WINDOW_HOURS",
+    "NEWS_ISSUE_EMBEDDING_MODEL",
+)
+
+
+def test_issue_link_defaults(monkeypatch):
+    from pipelines.news.config import NewsSettings
+
+    for key in ISSUE_LINK_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+    settings = NewsSettings(_env_file=None)
+
+    # 스위치는 꺼진 채로 배포한다 — 연결 백필이 끝난 뒤 켠다
+    assert settings.issue_link_enabled is False
+    assert settings.issue_link_threshold == 0.45
+    assert settings.issue_link_no_company_threshold == 0.75
+    assert settings.issue_link_lookback_days == 90
+    assert settings.issue_link_max_per_run == 200
+    assert settings.issue_same_event_max_gap_hours == 24
+    assert settings.issue_same_event_score == 0.75
+    # 클러스터 시간 창(7일)과 같다
+    assert settings.issue_same_event_score_max_gap_hours == 168
+    assert settings.issue_relink_window_hours == 72
+    assert settings.issue_embedding_model == "amazon.titan-embed-text-v2:0"
+
+
+def test_issue_link_settings_read_env(monkeypatch):
+    from pipelines.news.config import NewsSettings
+
+    monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "true")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_THRESHOLD", "0.5")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD", "0.8")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_LOOKBACK_DAYS", "30")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_MAX_PER_RUN", "50")
+    monkeypatch.setenv("NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS", "12")
+    monkeypatch.setenv("NEWS_ISSUE_SAME_EVENT_SCORE", "0.9")
+    monkeypatch.setenv("NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS", "72")
+    monkeypatch.setenv("NEWS_ISSUE_RELINK_WINDOW_HOURS", "0")
+    monkeypatch.setenv("NEWS_ISSUE_EMBEDDING_MODEL", "titan-test")
+
+    settings = NewsSettings(_env_file=None)
+
+    assert settings.issue_link_enabled is True
+    assert settings.issue_link_threshold == 0.5
+    assert settings.issue_link_no_company_threshold == 0.8
+    assert settings.issue_link_lookback_days == 30
+    assert settings.issue_link_max_per_run == 50
+    assert settings.issue_same_event_max_gap_hours == 12
+    assert settings.issue_same_event_score == 0.9
+    assert settings.issue_same_event_score_max_gap_hours == 72
+    assert settings.issue_relink_window_hours == 0
+    assert settings.issue_embedding_model == "titan-test"
+
+
+def test_env_example_lists_issue_link_settings():
+    from pathlib import Path
+
+    env_example = (Path(__file__).resolve().parents[2] / ".env.example").read_text()
+
+    for key in ISSUE_LINK_ENV:
+        assert f"\n{key}=" in env_example, key
