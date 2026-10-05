@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from sqlalchemy import text
+
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
@@ -24,15 +26,25 @@ logger = get_logger(__name__)
 # 최근 며칠을 다시 계산할지. 재무·배당이 늦게 들어와도 반영되도록 넉넉히 잡는다.
 DEFAULT_LOOKBACK_DAYS = 30
 
+FINANCIALS_UPDATED_AT_SQL = text("SELECT max(updated_at) FROM company_financials")
+FINANCIALS_STALE_AFTER = timedelta(hours=30)
+
 
 def run(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> None:
     """최근 구간의 밸류에이션과 수익률을 계산한다."""
 
-    start_date = now_kst().date() - timedelta(days=lookback_days)
+    now = now_kst()
+    start_date = now.date() - timedelta(days=lookback_days)
 
     with session_scope() as session:
+        financials_at = session.execute(FINANCIALS_UPDATED_AT_SQL).scalar()
         valuations = compute_valuations(session, start_date)
         returns = compute_returns(session, start_date)
+
+    if financials_at is None or now - financials_at > FINANCIALS_STALE_AFTER:
+        logger.warning(
+            "재무 갱신이 오래됐다: 마지막 갱신 %s — 06시 재무 수집 실패·지연 확인", financials_at
+        )
 
     logger.info(
         "파생 계산 완료 (%s 이후): 밸류에이션 %d행, 수익률 %d행",

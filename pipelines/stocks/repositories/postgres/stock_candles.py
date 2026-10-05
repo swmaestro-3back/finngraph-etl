@@ -18,10 +18,12 @@ from pipelines.stocks.types import DailyCandle, PeriodCandle, TradeDates
 UPSERT_DAILY_CANDLE_SQL = text(
     """
     INSERT INTO stock_candles_daily (
-      stock_id, trade_date, open, high, low, close, volume, trade_value, source, updated_at
+      stock_id, trade_date, open, high, low, close, volume, trade_value, base_price, source,
+      updated_at
     )
     VALUES (
-      :stock_id, :trade_date, :open, :high, :low, :close, :volume, :trade_value, :source, now()
+      :stock_id, :trade_date, :open, :high, :low, :close, :volume, :trade_value, :base_price,
+      :source, now()
     )
     ON CONFLICT (stock_id, trade_date) DO UPDATE SET
       open = EXCLUDED.open,
@@ -31,6 +33,7 @@ UPSERT_DAILY_CANDLE_SQL = text(
       volume = EXCLUDED.volume,
       -- 거래대금은 원천에 따라 없을 수 있다. NULL로 덮어써서 기존 값을 지우지 않는다.
       trade_value = COALESCE(EXCLUDED.trade_value, stock_candles_daily.trade_value),
+      base_price = EXCLUDED.base_price,
       source = EXCLUDED.source,
       updated_at = now()
     """
@@ -103,17 +106,19 @@ AGGREGATE_CURRENT_PERIOD_SQL = text(
 )
 
 
-# 등락률(change_rate)은 직전 봉 종가 대비 %다. upsert 문 안에서 계산하지 않고 적재 뒤 별도
-# 단계(jobs/calculate_change_rates)로 갱신한다 — 직전 봉이 배치 밖(DB)에 있을 수 있고, 수정주가
-# 반영으로 과거 종가가 바뀌면 그 뒤 봉의 등락률도 함께 바뀌기 때문이다. since 이후를 끝까지
-# 다시 계산하고 값이 달라진 행만 고친다. stock_ids 가 NULL 이면 전 종목이다.
+# 등락률(change_rate)은 기준가(없으면 직전 봉 종가) 대비 %다. upsert 문 안에서 계산하지 않고
+# 적재 뒤 별도 단계(jobs/calculate_change_rates)로 갱신한다 — 직전 봉이 배치 밖(DB)에 있을 수
+# 있고, 수정주가 반영으로 과거 종가가 바뀌면 그 뒤 봉의 등락률도 함께 바뀌기 때문이다. since
+# 이후를 끝까지 다시 계산하고 값이 달라진 행만 고친다. stock_ids 가 NULL 이면 전 종목이다.
 REFRESH_DAILY_CHANGE_RATE_SQL = text(
     """
     UPDATE stock_candles_daily AS c
        SET change_rate = r.change_rate
       FROM (
         SELECT d.stock_id, d.trade_date,
-               ROUND((d.close / NULLIF(prev.close, 0) - 1) * 100, 2) AS change_rate
+               ROUND(
+                 (d.close / NULLIF(COALESCE(d.base_price, prev.close), 0) - 1) * 100, 2
+               ) AS change_rate
           FROM stock_candles_daily AS d
           LEFT JOIN LATERAL (
                  SELECT p.close FROM stock_candles_daily AS p
@@ -218,6 +223,7 @@ def upsert_daily_candles(session: Session, candles: list[DailyCandle], source: s
             "close": candle.close,
             "volume": candle.volume,
             "trade_value": candle.trade_value,
+            "base_price": candle.base_price,
             "source": source,
         }
         for candle in candles
@@ -268,7 +274,7 @@ def aggregate_current_period_candles(session: Session, since: date) -> int:
 def refresh_daily_change_rates(
     session: Session, since: date, stock_ids: list[int] | None = None
 ) -> int:
-    """since 이후 일봉의 등락률(직전 거래일 종가 대비 %)을 다시 계산한다.
+    """since 이후 일봉의 등락률(기준가, 없으면 직전 거래일 종가 대비 %)을 다시 계산한다.
 
     Args:
         session (Session): DB 세션.

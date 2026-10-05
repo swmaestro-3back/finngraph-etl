@@ -27,6 +27,7 @@ class DailyCandle:
     close: Decimal
     volume: int
     trade_value: int | None = None
+    base_price: Decimal | None = None
 
 
 @dataclass(frozen=True)

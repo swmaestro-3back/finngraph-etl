@@ -11,7 +11,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from pipelines.stocks.extractors.kis import (
+    CHART_MARKET_CODE,
     fetch_daily_candles,
+    fetch_foreign_holding,
     fetch_period_candles,
     is_market_open,
 )
@@ -29,8 +31,10 @@ class FakeKisClient:
         return self._responses.pop(0) if self._responses else {"output2": []}
 
 
-def _chart_row(trade_date: str, close: str, volume: str = "100") -> dict:
-    return {
+def _chart_row(
+    trade_date: str, close: str, volume: str = "100", prdy_vrss: str | None = None
+) -> dict:
+    row = {
         "stck_bsop_date": trade_date,
         "stck_oprc": close,
         "stck_hgpr": close,
@@ -39,6 +43,9 @@ def _chart_row(trade_date: str, close: str, volume: str = "100") -> dict:
         "acml_vol": volume,
         "acml_tr_pbmn": "1000",
     }
+    if prdy_vrss is not None:
+        row["prdy_vrss"] = prdy_vrss
+    return row
 
 
 class ChartExtractorTest(unittest.TestCase):
@@ -101,6 +108,78 @@ class ChartExtractorTest(unittest.TestCase):
     def test_period_rejects_unknown_code(self) -> None:
         with self.assertRaises(ValueError):
             fetch_period_candles("005930", "D", date(2026, 1, 1), date(2026, 8, 7), client=None)
+
+
+class MarketCodeTest(unittest.TestCase):
+    def test_chart_market_code_is_integrated(self) -> None:
+        self.assertEqual(CHART_MARKET_CODE, "UN")
+
+    def test_daily_chart_requests_integrated_market(self) -> None:
+        client = FakeKisClient([{"output2": [_chart_row("20261001", "212000")]}])
+
+        fetch_daily_candles("066570", date(2026, 10, 1), date(2026, 10, 1), client=client)
+
+        self.assertEqual(client.calls[0]["params"]["FID_COND_MRKT_DIV_CODE"], "UN")
+
+    def test_period_chart_requests_integrated_market(self) -> None:
+        client = FakeKisClient([{"output2": [_chart_row("20261001", "212000")]}])
+
+        fetch_period_candles("066570", "W", date(2026, 9, 1), date(2026, 10, 1), client=client)
+
+        self.assertEqual(client.calls[0]["params"]["FID_COND_MRKT_DIV_CODE"], "UN")
+
+    def test_foreign_holding_keeps_krx_market(self) -> None:
+        client = FakeKisClient([{"output": {"frgn_hldn_qty": "10", "lstn_stcn": "100"}}])
+
+        fetch_foreign_holding("066570", client=client)
+
+        self.assertEqual(client.calls[0]["params"]["FID_COND_MRKT_DIV_CODE"], "J")
+
+
+class BasePriceTest(unittest.TestCase):
+    def _base_price(self, close: str, prdy_vrss: str | None) -> Decimal | None:
+        client = FakeKisClient([{"output2": [_chart_row("20261001", close, prdy_vrss=prdy_vrss)]}])
+        candles = fetch_daily_candles("066570", date(2026, 10, 1), date(2026, 10, 1), client=client)
+        self.assertEqual(len(candles), 1)
+        return candles[0].base_price
+
+    def test_base_price_is_close_minus_prdy_vrss(self) -> None:
+        self.assertEqual(self._base_price("212000", "-500"), Decimal("212500"))
+        self.assertEqual(self._base_price("215500", "4000"), Decimal("211500"))
+
+    def test_base_price_equals_close_when_unchanged(self) -> None:
+        self.assertEqual(self._base_price("213500", "0"), Decimal("213500"))
+
+    def test_base_price_is_none_without_prdy_vrss(self) -> None:
+        self.assertIsNone(self._base_price("212000", None))
+        self.assertIsNone(self._base_price("212000", ""))
+        self.assertIsNone(self._base_price("212000", "  "))
+
+    def test_base_price_is_none_when_prdy_vrss_is_unparseable(self) -> None:
+        self.assertIsNone(self._base_price("212000", "abc"))
+        self.assertIsNone(self._base_price("212000", "NaN"))
+
+    def test_base_price_is_none_when_not_positive(self) -> None:
+        self.assertIsNone(self._base_price("100", "100"))
+        self.assertIsNone(self._base_price("100", "150"))
+
+    def test_base_price_keeps_price_limit_boundaries(self) -> None:
+        self.assertEqual(self._base_price("13000", "3000"), Decimal("10000"))
+        self.assertEqual(self._base_price("7000", "-3000"), Decimal("10000"))
+
+    def test_base_price_is_none_outside_price_limit(self) -> None:
+        self.assertIsNone(self._base_price("13001", "3001"))
+        self.assertIsNone(self._base_price("6999", "-3001"))
+        self.assertIsNone(self._base_price("40000", "30000"))
+
+    def test_period_candles_do_not_carry_base_price(self) -> None:
+        client = FakeKisClient([{"output2": [_chart_row("20261001", "212000", prdy_vrss="-500")]}])
+
+        candles = fetch_period_candles(
+            "066570", "W", date(2026, 9, 1), date(2026, 10, 1), client=client
+        )
+
+        self.assertFalse(hasattr(candles[0], "base_price"))
 
 
 class MarketOpenTest(unittest.TestCase):

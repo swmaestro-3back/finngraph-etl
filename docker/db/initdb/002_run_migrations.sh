@@ -3,7 +3,7 @@
 # shebang과 실행 권한(755)이 둘 다 있어야 한다.
 set -e
 
-for migration in /migrations/versions/*.sql; do
+for migration in $(printf '%s\n' /migrations/versions/*.sql | sort -V); do
   if [ -f "$migration" ]; then
     echo "running migration $migration"
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -f "$migration"

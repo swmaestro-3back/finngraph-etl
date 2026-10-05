@@ -3,7 +3,7 @@
 종목당 6회 호출(재무제표 3종 × 연간·분기)이라 전 종목을 매일 돌 수 없다. job이 갱신
 오래된 순으로 배치 크기만큼만 처리하므로, 매일 돌리면 회차를 거듭하며 전체가 채워진다.
 
-19:00은 종목 파이프라인(18:00)이 끝난 뒤다. 같은 KIS 호출 한도를 나눠 쓰므로 겹치지
+06:00은 종목 파이프라인(20:30)이 끝난 뒤다. 같은 KIS 호출 한도를 나눠 쓰므로 겹치지
 않게 둔다.
 """
 
@@ -34,7 +34,7 @@ if dag and task:
     @dag(
         dag_id="companies_collect_kis_financials",
         start_date=datetime(2026, 1, 1),
-        schedule="0 19 * * 1-5",
+        schedule="0 6 * * 1-5",
         catchup=False,
         max_active_runs=1,
         tags=["companies"],

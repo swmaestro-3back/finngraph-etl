@@ -34,7 +34,7 @@ if dag and task:
         schedule=AssetOrTimeSchedule(
             timetable=MultipleCronTriggerTimetable(
                 "30 7 * * 1-5",
-                "0 18,21 * * 1-5",
+                "0 21 * * 1-5",
                 "0 9,15,21 * * 0,6",
                 timezone="Asia/Seoul",
             ),
