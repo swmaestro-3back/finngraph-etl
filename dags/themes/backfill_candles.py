@@ -10,7 +10,7 @@
 **알려진 한계.** theme_stocks 와 stocks.listed_shares 는 현재 값뿐이라 과거를 "지금의 구성·
 지금의 주식수"로 재구성한다(생존 편향).
 
-**실행 시각.** 장중(09~18시)에는 stocks_intraday_candles 가 같은 행을 갱신하므로 장외 시간에
+**실행 시각.** 장중(08~21시)에는 stocks_intraday_candles 가 같은 행을 갱신하므로 장외 시간에
 실행한다.
 """
 

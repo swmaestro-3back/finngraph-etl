@@ -33,7 +33,7 @@ if dag and task:
     @dag(
         dag_id="companies_dart_pipeline",
         start_date=datetime(2026, 1, 1),
-        # 09시. 앞선 사슬(03시 corpCode → 08시 종목 마스터 → 연결 → 수집 대상)이
+        # 09시. 앞선 사슬(03시 corpCode → 07:30 종목 마스터 → 연결 → 수집 대상)이
         # 끝난 뒤에 돈다. Asset 으로 걸지 않은 이유는 이 잡이 DART 일 한도의 큰 몫을
         # 쓰기 때문이다 — 하루 몇 번 도는지가 예측 가능해야 한다.
         schedule="0 9 * * *",
