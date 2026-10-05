@@ -91,7 +91,7 @@ stocks_daily_pipeline ───────► etl://stocks/daily ────�
 
 > **배포 순서(등락률).** `V6__candle_change_rate.sql`(컬럼만 추가)을 코드보다 먼저 적용한다. V6 없이 배포하면 등락률 태스크가 실패해 `etl://stocks/daily` 가 발행되지 않는다. 기존 행은 `themes_backfill_candles` 와, 종목은 `pipelines.stocks.jobs.calculate_change_rates` 의 `run_daily`·`run_period` 를 과거 `since` 로 한 번 실행해 채운다(KIS 재수집 불필요).
 
-> **배포 순서(기준가).** `V10__candle_base_price.sql`(컬럼만 추가)을 코드보다 먼저 적용한다. V10 없이 배포하면 일봉 적재가 실패한다. 기존 행의 기준가는 `stocks_backfill_daily_candles` 로 다시 받아 채운다(KIS 재수집 필요).
+> **배포 순서(기준가).** `V11__candle_base_price.sql`(컬럼만 추가)을 코드보다 먼저 적용한다. V11 없이 배포하면 일봉 적재가 실패한다. 기존 행의 기준가는 `stocks_backfill_daily_candles` 로 다시 받아 채운다(KIS 재수집 필요).
 
 ```
 themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
