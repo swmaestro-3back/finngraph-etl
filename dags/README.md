@@ -24,7 +24,7 @@ dags/
 | companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | Asset ← `etl://stocks/master` **＋** `etl://companies/corp_codes` |
 | companies | `companies/sync_dart_corp_codes.py` | `companies_sync_dart_corp_codes` | `companies` | `0 3 * * *` (03시) |
 | companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 9 * * *` (09시) |
-| companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 19 * * 1-5` (평일 19시) |
+| companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 6 * * 1-5` (평일 06시) |
 | companies | `companies/generate_descriptions.py` | `companies_generate_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
 | companies | `companies/sync_gazetteer.py` | `companies_sync_gazetteer` | `companies` | AssetAny ← `etl://companies/master_synced`, `etl://companies/us_loaded` |
@@ -34,13 +34,13 @@ dags/
 | market_calendar | `market_calendar/collect.py` | `market_calendar_collect` | `market_calendar` | `30 7 * * *` (매일 07:30) |
 | market_calendar | `market_calendar/backfill_market_days.py` | `market_calendar_backfill_market_days` | `market_calendar`, `backfill`, `manual` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
-| news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·18·21시, 주말 09·15·21시) |
+| news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·21시, 주말 09·15·21시) |
 | news | `news/summarize_articles.py` | `news_summarize_articles` | `news` | Asset ← `etl://triples/extracted` |
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
-| stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `0 8 * * 1-5` (평일 08시) |
-| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 9-17 * * 1-5` (평일 09~17시 매 정각), `etl://themes/hot` 발행 |
-| stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `0 18 * * 1-5` (평일 18시) |
-| stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` **＋** `etl://companies/financials` |
+| stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `30 7 * * 1-5` (평일 07:30) |
+| stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 8-20 * * 1-5` (평일 08~20시 매 정각), `etl://themes/hot` 발행 |
+| stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `30 20 * * 1-5` (평일 20:30) |
+| stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks` | 수동 |
 | stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks` | 수동 |
@@ -55,16 +55,19 @@ dags/
 
 ```
 stocks_sync_master ──────────► etl://stocks/master ──────► companies_sync_master
-                     (평일 08시)
+                     (평일 07:30)
 
-stocks_daily_pipeline ───────► etl://stocks/daily ───┐
-  (평일 18시, 일봉→[기간봉 ∥ 테마 일봉→테마 기간봉]→수급)  ├──► stocks_compute_derived
-companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
-  (평일 19시)
+companies_collect_kis_financials ─► etl://companies/financials
+  (평일 06시)
+
+stocks_daily_pipeline ───────► etl://stocks/daily ──────► stocks_compute_derived
+  (평일 20:30, 일봉→[기간봉 ∥ 테마 일봉→테마 기간봉]→수급)   (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
 ```
 
-`stocks_compute_derived`의 `schedule`은 **리스트라서 AND**다 — 두 Asset이 모두 갱신돼야
-기동한다. PER은 분기 EPS 4개를 더한 TTM으로 계산하므로 시세와 재무가 모두 필요하다.
+`stocks_compute_derived`는 `etl://stocks/daily` 하나만 구독한다. PER은 분기 EPS 4개를 더한 TTM이라
+재무도 필요하지만, 재무는 같은 날 06시에 먼저 갱신된다. 두 Asset을 AND로 묶으면 06시 재무가
+밤 시세보다 늦게 도착하는 순서가 한 번만 생겨도(배포 시각·재무 실패) 그 뒤 매일 파생 계산이
+다음 날 아침으로 밀린다.
 
 테마 지수 봉(`theme_candles_daily`·`theme_candles_period`)은 종목 일봉으로 계산하는 시총 가중
 지수다. 수급 태스크가 테마 봉 뒤에 있으므로 `etl://stocks/daily` 는 테마 봉까지 있는 상태에서
@@ -73,13 +76,16 @@ companies_collect_kis_financials ─► etl://companies/financials ┘  (PER·PB
 
 > **배포 순서(테마 봉).** `V5__theme_candles.sql` 을 먼저 적용하고 `themes_backfill_candles` 를 장외 시간에 한 번 실행한다. V5 없이 배포하면 `calculate_theme_daily` 가 실패해 `etl://stocks/daily` 가 발행되지 않고 파생·핫테마·브리핑이 그날 멈춘다.
 
-종목·테마 봉 네 테이블의 `change_rate` 는 직전 봉 종가 대비 등락률(%)이다. 일봉은 직전 거래일,
-주봉·월봉은 직전 주·월 봉이 기준이고 첫 봉은 NULL 이다. 봉 적재와 분리된 태스크
+종목·테마 봉 네 테이블의 `change_rate` 는 등락률(%)이다. 종목 일봉은 기준가(`base_price`, KIS 통합
+시세의 종가 − `prdy_vrss` = KRX 전일 종가)가 있으면 기준가, 없으면 직전 거래일 종가 대비다. 테마 일봉은
+직전 거래일, 주봉·월봉은 직전 주·월 봉 종가가 기준이고 기준이 없는 첫 봉은 NULL 이다. 봉 적재와 분리된 태스크
 (`calculate_stock_change_rates`·`calculate_theme_change_rates`, 백필 DAG 는 `calculate_change_rates`)가
 적재 뒤에 다시 받은 구간 전체를 재계산한다. 테마는 체인 지수라 지수 종가의 비가 곧 구성 종목
 등락률의 가중 평균이다.
 
 > **배포 순서(등락률).** `V6__candle_change_rate.sql`(컬럼만 추가)을 코드보다 먼저 적용한다. V6 없이 배포하면 등락률 태스크가 실패해 `etl://stocks/daily` 가 발행되지 않는다. 기존 행은 `themes_backfill_candles` 와, 종목은 `pipelines.stocks.jobs.calculate_change_rates` 의 `run_daily`·`run_period` 를 과거 `since` 로 한 번 실행해 채운다(KIS 재수집 불필요).
+
+> **배포 순서(기준가).** `V10__candle_base_price.sql`(컬럼만 추가)을 코드보다 먼저 적용한다. V10 없이 배포하면 일봉 적재가 실패한다. 기존 행의 기준가는 `stocks_backfill_daily_candles` 로 다시 받아 채운다(KIS 재수집 필요).
 
 ```
 themes_sync_master ──(load_postgres)──► etl://themes/stocks ────┐
@@ -111,7 +117,7 @@ triples·events 가 `pipelines/common/gazetteer.py` 로 읽는다. `etl://compan
 
 ```
 stocks_intraday_candles ──(publish_hot_themes)──► etl://themes/hot ──► news_collect_articles
-  (평일 09~17시 매 정각)                                  (또는 cron: 평일 07:30·18·21시, 주말 09·15·21시)
+  (평일 08~20시 매 정각)                                  (또는 cron: 평일 07:30·21시, 주말 09·15·21시)
 
 news_collect_articles ──┐                           ┌──► events_promote_clusters
   (위 Asset 또는 cron)    ├──► etl://news/clusters ───┤      (sync_events ∥ generate_events)
