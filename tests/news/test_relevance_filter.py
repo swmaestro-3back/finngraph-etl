@@ -38,7 +38,7 @@ def _verdict(
     return ArticleVerdict(
         id=article.id,
         companies=[
-            CompanyVerdict(name=name, valid=per_company.get(name, valid))
+            CompanyVerdict(is_company=True, name=name, valid=per_company.get(name, valid))
             for name in article.companies
         ],
     )
@@ -47,16 +47,16 @@ def _verdict(
 def test_build_relevance_input_numbers_articles_and_lists_companies():
     text = build_relevance_input(
         [
-            ArticleInput(0, "엘앤에프, 삼성SDI에 양극재 공급", "LFP", ("엘앤에프", "삼성SDI")),
-            ArticleInput(3, "코스피 마감", "", ("삼성전자",)),
+            ArticleInput(0, "엘앤에프, 삼성SDI에 양극재 공급", ("엘앤에프", "삼성SDI")),
+            ArticleInput(3, "코스피 마감", ("삼성전자",)),
         ]
     )
 
-    assert (
-        "[기사 0]\n제목: 엘앤에프, 삼성SDI에 양극재 공급\n스니펫: LFP\n판정 기업: 엘앤에프, 삼성SDI"
-        in text
+    # 스니펫은 보내지 않는다 — 제목과 판정 기업만
+    assert text == (
+        "[기사 0]\n제목: 엘앤에프, 삼성SDI에 양극재 공급\n판정 기업: 엘앤에프, 삼성SDI"
+        "\n\n[기사 3]\n제목: 코스피 마감\n판정 기업: 삼성전자"
     )
-    assert "[기사 3]\n제목: 코스피 마감\n스니펫: \n판정 기업: 삼성전자" in text
 
 
 def test_chunked():
@@ -212,10 +212,14 @@ def test_linked_companies_are_valid_title_companies_resolved_by_surface_or_name(
                 ArticleVerdict(
                     id=articles[0].id,
                     companies=[
-                        CompanyVerdict(name="두산밥캣", valid=True),
-                        CompanyVerdict(name="LG에너지솔루션", valid=True),  # 표기 대신 정식명
-                        CompanyVerdict(name=" 현대차 ", valid=False),
-                        CompanyVerdict(name="삼성전자", valid=True),  # 목록에 없음 — 무시
+                        CompanyVerdict(is_company=True, name="두산밥캣", valid=True),
+                        CompanyVerdict(
+                            is_company=True, name="LG에너지솔루션", valid=True
+                        ),  # 표기 대신 정식명
+                        CompanyVerdict(is_company=True, name=" 현대차 ", valid=False),
+                        CompanyVerdict(
+                            is_company=True, name="삼성전자", valid=True
+                        ),  # 목록에 없음 — 무시
                     ],  # SK하이닉스 판정 누락 — 연결하지 않는다
                 )
             ]
@@ -252,7 +256,7 @@ def test_missing_target_verdict_is_rejudged_then_failed():
     a = _item("A 기사", "엘앤에프", others=(_company(300, "삼성SDI"),))
     b = _item("B 기사", "에코프로", company_id=200)
     sizes: list[int] = []
-    other_only = [CompanyVerdict(name="삼성SDI", valid=True)]
+    other_only = [CompanyVerdict(is_company=True, name="삼성SDI", valid=True)]
 
     async def judge(articles):
         sizes.append(len(articles))
@@ -282,7 +286,8 @@ def test_verdict_names_match_ignoring_inner_whitespace():
         return BatchVerdict(
             verdicts=[
                 ArticleVerdict(
-                    id=articles[0].id, companies=[CompanyVerdict(name="LG엔솔", valid=True)]
+                    id=articles[0].id,
+                    companies=[CompanyVerdict(is_company=True, name="LG엔솔", valid=True)],
                 )
             ]
         )
@@ -314,7 +319,7 @@ def _judge_with(**valid_by_name):
                 ArticleVerdict(
                     id=article.id,
                     companies=[
-                        CompanyVerdict(name=name, valid=valid)
+                        CompanyVerdict(is_company=True, name=name, valid=valid)
                         for name, valid in valid_by_name.items()
                     ],
                 )
@@ -365,3 +370,52 @@ def test_one_valid_fetching_company_is_enough_even_if_another_is_missing():
 
     assert result.passed == [item]
     assert item["_linked_companies"] == [{"company_id": 200, "name": "SK하이닉스"}]
+
+
+def test_company_that_is_not_referred_to_is_not_linked_and_does_not_store_article():
+    # 제목의 '하이브' 는 폴로하이브머티리얼즈의 일부, '대상' 은 일반 명사다 — valid 여도 통과가 아니다
+    item = _item(
+        "폴로하이브머티리얼즈, 임직원 대상 성과급",
+        "하이브",
+        others=(_company(300, "대상"),),
+    )
+
+    async def judge(articles):
+        return BatchVerdict(
+            verdicts=[
+                ArticleVerdict(
+                    id=articles[0].id,
+                    companies=[
+                        CompanyVerdict(is_company=False, name="하이브", valid=True),
+                        CompanyVerdict(is_company=False, name="대상", valid=True),
+                    ],
+                )
+            ]
+        )
+
+    result = filter_relevant_news([item], judge, 1, 10)
+
+    assert result.invalid == [item]
+    assert "_linked_companies" not in item
+
+
+def test_only_companies_that_are_referred_to_and_valid_are_linked():
+    item = _item("삼성전자, 임직원 대상 성과급 지급", "삼성전자", others=(_company(300, "대상"),))
+
+    async def judge(articles):
+        return BatchVerdict(
+            verdicts=[
+                ArticleVerdict(
+                    id=articles[0].id,
+                    companies=[
+                        CompanyVerdict(is_company=True, name="삼성전자", valid=True),
+                        CompanyVerdict(is_company=False, name="대상", valid=True),
+                    ],
+                )
+            ]
+        )
+
+    result = filter_relevant_news([item], judge, 1, 10)
+
+    assert result.passed == [item]
+    assert item["_linked_companies"] == [{"company_id": 100, "name": "삼성전자"}]

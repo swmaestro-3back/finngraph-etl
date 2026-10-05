@@ -1,29 +1,15 @@
-import asyncio
-
 from langgraph.graph import END, StateGraph
 
 from pipelines.triples.models import Entity
-from pipelines.triples.nodes.entity_extractor import EntityExtractor
 from pipelines.triples.nodes.frame_annotator import FrameAnnotator
 from pipelines.triples.nodes.relation_extractor import RelationExtractor
 from pipelines.triples.nodes.triplet_builder import TripletBuilder
 from pipelines.triples.state import GraphState
 
-# A relation needs two endpoints, so fewer entities than this cannot yield a triplet.
-# Checked both before verification (skip the verifier) and after it (skip relation extraction).
-_MIN_ENTITIES = 2
-
-
-def route_after_extract(state: GraphState) -> str:
-    if len(state["gazetteer_entities"]) < _MIN_ENTITIES:
-        return END
-    return "verify_entities"
-
-
-def route_after_verify(state: GraphState) -> str:
-    if len(state["entities"]) < _MIN_ENTITIES:
-        return END
-    return "extract_relations"
+# A relation needs two endpoint companies, so fewer distinct companies than this cannot yield a
+# triplet. Counted by company, not by surface form: two spellings of one company are two entities
+# but still one endpoint. The job checks it before invoking the graph, so no LLM call is spent.
+MIN_COMPANIES = 2
 
 
 def merge_stats(triplet_stats: dict, annotation_stats: dict) -> dict:
@@ -41,12 +27,10 @@ def merge_stats(triplet_stats: dict, annotation_stats: dict) -> dict:
 
 class GraphRunner:
     def __init__(self):
-        self._entity_extractor = EntityExtractor()
         self._relation_extractor = RelationExtractor()
         self._frame_annotator = FrameAnnotator()
         self._triplet_builder = TripletBuilder()
         self._graph = self._compile_graph(
-            self._entity_extractor,
             self._relation_extractor,
             self._frame_annotator,
             self._triplet_builder,
@@ -54,37 +38,10 @@ class GraphRunner:
 
     def _compile_graph(
         self,
-        entity_extractor: EntityExtractor,
         relation_extractor: RelationExtractor,
         frame_annotator: FrameAnnotator,
         triplet_builder: TripletBuilder,
     ):
-
-        async def extract_entities(state: GraphState) -> dict:
-            """Extract entities based on pre-built knowledge base
-
-            The article is left as written: rewriting surface forms to canonical names before
-            verification would hide false hits ("삼전동" -> "삼성전자동") from the verifier.
-            Entities are deduped by surface form, so two spellings of one company stay separate
-            candidates and are verified on their own.
-            """
-            gazetteer_entities = await asyncio.to_thread(entity_extractor.extract, state["article"])
-
-            seen: set[str] = set()
-            deduped: list[Entity] = []
-            for entity in gazetteer_entities:
-                if entity.text in seen:
-                    continue
-                seen.add(entity.text)
-                deduped.append(entity)
-            return {"gazetteer_entities": deduped}
-
-        async def verify_entities(state: GraphState) -> dict:
-            """Keep only entities the article actually mentions as a participating company"""
-            verified_entities = await entity_extractor.verify(
-                state["article"], state["gazetteer_entities"]
-            )
-            return {"entities": verified_entities}
 
         async def extract_relations(state: GraphState) -> dict:
             """Extract relation frame candidates by refering to base ontology"""
@@ -113,33 +70,25 @@ class GraphRunner:
 
         workflow = StateGraph(GraphState)
 
-        workflow.add_node("extract_entities", extract_entities)
-        workflow.add_node("verify_entities", verify_entities)
         workflow.add_node("extract_relations", extract_relations)
         workflow.add_node("annotate_frames", annotate_frames)
         workflow.add_node("build_triplets", build_triplets)
 
-        workflow.set_entry_point("extract_entities")
-
-        # Skip the LLM calls when no relation is possible; triplets stay unset (job reads it as [])
-        workflow.add_conditional_edges(
-            "extract_entities", route_after_extract, ["verify_entities", END]
-        )
-        workflow.add_conditional_edges(
-            "verify_entities", route_after_verify, ["extract_relations", END]
-        )
+        # Entities arrive with the article: the news pipeline already matched and verified them
+        workflow.set_entry_point("extract_relations")
         workflow.add_edge("extract_relations", "annotate_frames")
         workflow.add_edge("annotate_frames", "build_triplets")
         workflow.add_edge("build_triplets", END)
 
         return workflow.compile()
 
-    async def ainvoke(self, news_id: str, article: str) -> GraphState:
+    async def ainvoke(self, news_id: str, article: str, entities: list[Entity]) -> GraphState:
 
         final_state = await self._graph.ainvoke(
             GraphState(
                 news_id=news_id,
                 article=article,
+                entities=entities,
             )
         )
         return final_state

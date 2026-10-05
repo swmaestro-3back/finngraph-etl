@@ -1,96 +1,40 @@
 """
 신규 EVENT 노드 생성
-후보 클러스터 중 Neo4j에 없는 클러스터를 EVENT 노드로 승격
-RDB에서 기사 조회 > Flashtext 기반 엔티티 추출 > LLM 당사자 검증 > Neo4j에 반영
-제목은 collect_articles 가 채운 news_clusters.title 을 그대로 쓴다. 아직 없으면 이번 런은 건너뛴다.
+승격된 클러스터(대표와 제목이 있는 것) 중 Neo4j 에 없는 것을 EVENT 노드로 올린다.
+제목은 cluster_articles 잡이 채운 news_clusters.title, 당사자는 클러스터 후보 기사 중
+NEWS_EVENT_COMPANY_MIN_ARTICLES 건 이상의 news_companies 에 든 기업이다. LLM 을 부르지 않는다.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from datetime import date, timedelta
-from typing import Any
+from datetime import timedelta
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
 from pipelines.events.config import get_event_settings
-from pipelines.events.models import ClusterCandidate, EventRecord, MemberArticle
+from pipelines.events.models import EventRecord
 from pipelines.events.repositories.neo4j.events import create_event
-from pipelines.events.repositories.postgres.news import fetch_cluster_members
-from pipelines.events.scan import scan_promotable
+from pipelines.events.repositories.postgres.news import fetch_cluster_company_ids
+from pipelines.events.scan import scan_new_events
 from pipelines.events.stats import check_total
-from pipelines.events.transformers.candidates import extract_company_candidates
-from pipelines.events.transformers.generator import validate_draft
-from pipelines.events.transformers.source_text import member_date, member_source_text
+from pipelines.news.config import get_news_settings
 
 logger = get_logger(__name__)
 
-STAT_KEYS = (
-    "scanned",
-    "created",
-    "created_without_edges",
-    "skipped_no_title",
-    "skipped_no_candidates",
-    "failed",
-)
-
-Factory = Callable[[], Any]
-DatedTexts = list[tuple[date | None, str]]
-# (클러스터, 멤버, LLM 입력, 후보)
-Prepared = tuple[ClusterCandidate, list[MemberArticle], DatedTexts, list[str]]
+STAT_KEYS = ("scanned", "created", "created_without_edges", "skipped_no_companies", "failed")
 
 
-def build_create_input(
-    members: list[MemberArticle], extractor: Any, lead_chars: int
-) -> tuple[DatedTexts, list[str]]:
-    """멤버 기사들을 (보도일, 정규화 텍스트) 목록과 후보 정규명으로 바꾼다."""
-
-    texts = [member_source_text(member, lead_chars) for member in members]
-    canonical_texts, candidates = extract_company_candidates(texts, extractor)
-    dates = [member_date(member) for member in members]
-    dated_texts = list(zip(dates, canonical_texts, strict=True))
-    return dated_texts, candidates
-
-
-def select_for_llm(prepared: list[Prepared]) -> tuple[list[Prepared], int]:
-    """후보 0 을 뺀다 — 고를 기업이 없으면 LLM 을 부를 이유가 없다. (선택, 후보0 수)."""
-
-    eligible = [item for item in prepared if item[3]]
-    return eligible, len(prepared) - len(eligible)
-
-
-async def create_one(
-    cluster: ClusterCandidate,
-    members: list[MemberArticle],
-    dated_texts: DatedTexts,
-    candidates: list[str],
-    generator: Any,
-    semaphore: asyncio.Semaphore,
-) -> str:
-    """LLM → 검증 → 쓰기. 제목은 클러스터의 것을 그대로 쓴다.
-
-    어느 단계든 실패하면 이 클러스터만 건너뛴다. 노드가 없으니 다음 런에 재시도된다.
-    """
+async def create_one(record: EventRecord) -> str:
+    """노드와 간선을 쓴다. 실패하면 이 클러스터만 건너뛴다 — 노드가 없으니 다음 런에 재시도된다."""
 
     try:
-        if not cluster.title:
-            raise ValueError("클러스터 제목 없음")
-        async with semaphore:
-            draft = await generator.draft(dated_texts, candidates)
-        draft = validate_draft(draft, candidates)
-        record = EventRecord(
-            **cluster.model_dump(exclude={"title"}),
-            news_ids=sorted(member.news_id for member in members),
-            title=cluster.title,
-            companies=draft.companies,
-        )
         edges = await create_event(record)
     except Exception as e:
         logger.warning(
             "Event 생성 실패(건너뜀): cluster_id=%s, %s: %s",
-            cluster.cluster_id,
+            record.cluster_id,
             type(e).__name__,
             e,
         )
@@ -102,58 +46,35 @@ async def create_one(
 def summarize_stats(stats: dict[str, int]) -> dict[str, int]:
     """created_without_edges 는 created 의 부분집합이라 합에 없다."""
 
-    return check_total(
-        stats,
-        "scanned",
-        ("created", "skipped_no_title", "skipped_no_candidates", "failed"),
-    )
+    return check_total(stats, "scanned", ("created", "skipped_no_companies", "failed"))
 
 
-async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[str, int]:
+async def _run() -> dict[str, int]:
     settings = get_event_settings()
+    promote_size = get_news_settings().cluster_promote_size
     stats = dict.fromkeys(STAT_KEYS, 0)
     since = now_kst() - timedelta(days=settings.scan_days)
 
     async with neo4j_database:
-        # 1. 후보 스캔 — Event 가 없는 클러스터만 이 task 의 몫이다
-        to_create, _ = await scan_promotable(settings.min_size, since)
-        stats["scanned"] = len(to_create)
-        # 제목은 collect_articles 가 짓는다. 아직 없는 클러스터는 다음 런에 다시 본다.
-        titled = [cluster for cluster in to_create if cluster.title]
-        stats["skipped_no_title"] = len(to_create) - len(titled)
-        to_create = titled
-        if not to_create:
+        # 1. 후보 스캔 — 승격되고 제목이 붙었는데 Event 가 없는 클러스터
+        clusters = await scan_new_events(promote_size, since)
+        stats["scanned"] = len(clusters)
+        if not clusters:
             return stats
 
-        # 2. 멤버 텍스트 → 후보 추출 (후보 0 은 LLM 전에 거른다)
-        extractor = extractor_factory()
-        members_by_cluster = fetch_cluster_members([c.cluster_id for c in to_create])
-        prepared: list[Prepared] = []
-        for cluster in to_create:
-            members = members_by_cluster.get(cluster.cluster_id, [])
-            dated_texts, candidates = build_create_input(members, extractor, settings.lead_chars)
-            prepared.append((cluster, members, dated_texts, candidates))
-        eligible, stats["skipped_no_candidates"] = select_for_llm(prepared)
-        if not eligible:
-            return stats
-
-        # 3. LLM → 검증 → 쓰기 (클러스터별 격리, 동시성 상한)
-        generator = generator_factory()
-        semaphore = asyncio.Semaphore(max(settings.llm_max_concurrency, 1))
-        outcomes = await asyncio.gather(
-            *(
-                create_one(
-                    cluster,
-                    members,
-                    dated_texts,
-                    candidates,
-                    generator,
-                    semaphore,
-                )
-                for cluster, members, dated_texts, candidates in eligible
-            )
+        # 2. 당사자 — 후보 기사 여러 건에 걸쳐 연결된 기업 (기업 0 은 노드를 만들지 않는다)
+        company_ids = fetch_cluster_company_ids(
+            [cluster.cluster_id for cluster in clusters], settings.company_min_articles
         )
-        for outcome in outcomes:
+
+        # 3. 쓰기 (클러스터별 격리)
+        for cluster in clusters:
+            ids = company_ids.get(cluster.cluster_id, [])
+            if not ids:
+                stats["skipped_no_companies"] += 1
+                continue
+
+            outcome = await create_one(EventRecord(**cluster.model_dump(), company_ids=ids))
             if outcome == "failed":
                 stats["failed"] += 1
                 continue
@@ -165,24 +86,17 @@ async def _run(extractor_factory: Factory, generator_factory: Factory) -> dict[s
 
 
 def run() -> dict[str, int]:
-    from pipelines.common.gazetteer import get_company_matcher
-    from pipelines.events.transformers.generator import EventGenerator
-
-    # 둘 다 인자 없는 호출이라 그대로 팩토리다. 생성은 _run 안에서 필요할 때 일어난다.
-    stats = summarize_stats(asyncio.run(_run(get_company_matcher, EventGenerator)))
+    stats = summarize_stats(asyncio.run(_run()))
 
     print("\n" + "=" * 70)
     print("Event 생성 결과 (generate_events)")
     print("=" * 70)
-    print(f"- Event 없는 후보 클러스터 {stats['scanned']}개")
+    print(f"- Event 없는 승격 클러스터 {stats['scanned']}개")
     print(
         f"- 생성 {stats['created']}개 (간선 없음 {stats['created_without_edges']}개), "
         f"실패 {stats['failed']}개"
     )
-    print(
-        f"- 건너뜀: 제목 없음 {stats['skipped_no_title']}개, "
-        f"후보 없음 {stats['skipped_no_candidates']}개"
-    )
+    print(f"- 건너뜀: 당사자 기업 없음 {stats['skipped_no_companies']}개")
     print("=" * 70)
 
     return stats

@@ -1,7 +1,7 @@
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 import requests
@@ -12,7 +12,41 @@ from pipelines.news.extractors.article_metadata import extract_anchor_published_
 from pipelines.news.utils.text_utils import (
     clean_article_body_for_storage,
     get_printable_text,
+    restore_truncated_title,
 )
+
+
+class FetchedPage(NamedTuple):
+    """기사 페이지 하나에서 뽑은 것. 실패한 항목은 빈 문자열이다."""
+
+    text: str = ""
+    title: str = ""
+    published_at: str = ""
+
+
+# 네이버 기사 헤드라인 → 언론사 공통 메타 순
+TITLE_SELECTORS_AND_ATTRIBUTES = [
+    ("h2#title_area", None),
+    ("h2.media_end_head_headline", None),
+    ("meta[property='og:title']", "content"),
+    ("meta[name='twitter:title']", "content"),
+]
+
+
+def extract_article_title(soup: BeautifulSoup) -> str:
+    """페이지의 기사 제목. 없으면 빈 문자열이다."""
+
+    for selector, attribute in TITLE_SELECTORS_AND_ATTRIBUTES:
+        element = soup.select_one(selector)
+        if not element:
+            continue
+
+        value = element.get(attribute, "") if attribute else element.get_text(" ", strip=True)
+        title = get_printable_text(str(value))
+        if title:
+            return title
+
+    return ""
 
 
 def is_anchor_link(url: str) -> bool:
@@ -57,13 +91,10 @@ def _get_session() -> requests.Session:
     return session
 
 
-def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
+def fetch_anchor_article_page(url: str) -> FetchedPage:
 
-    if not url:
-        return "", ""
-
-    if not is_anchor_link(url):
-        return "", ""
+    if not url or not is_anchor_link(url):
+        return FetchedPage()
 
     try:
         response = _get_session().get(url, timeout=10)
@@ -72,6 +103,7 @@ def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
 
         soup = BeautifulSoup(response.text, "html.parser")
         published_at = extract_anchor_published_at(soup)
+        title = extract_article_title(soup)
 
         for tag in soup(["script", "style", "nav", "footer", "aside", "iframe"]):
             tag.decompose()
@@ -89,7 +121,7 @@ def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
                     selector_candidates.append(text)
 
             if selector_candidates:
-                return max(selector_candidates, key=len), published_at
+                return FetchedPage(max(selector_candidates, key=len), title, published_at)
 
         paragraphs = [p.get_text(separator="\n", strip=True) for p in soup.find_all("p")]
 
@@ -98,32 +130,26 @@ def fetch_anchor_article_data_from_url(url: str) -> tuple[str, str]:
         fallback_text = "\n".join(paragraphs)
 
         if len(fallback_text) >= 100:
-            return fallback_text, published_at
+            return FetchedPage(fallback_text, title, published_at)
 
-        return "", published_at
+        return FetchedPage("", title, published_at)
 
     except requests.exceptions.RequestException as e:
         logging.debug(f"요청 실패: {type(e).__name__}")
-        return "", ""
+        return FetchedPage()
 
     except Exception as e:
         logging.debug(f"추출 실패: {type(e).__name__}")
-        return "", ""
+        return FetchedPage()
 
 
-def fetch_anchor_article_body_from_url(url: str) -> str:
-
-    text, _ = fetch_anchor_article_data_from_url(url)
-    return text
-
-
-def fetch_article_body_from_url(url: str) -> str:
+def fetch_article_page(url: str) -> FetchedPage:
 
     if not url:
-        return ""
+        return FetchedPage()
 
     if is_anchor_link(url):
-        return fetch_anchor_article_body_from_url(url)
+        return fetch_anchor_article_page(url)
 
     try:
         response = _get_session().get(url, timeout=10)
@@ -131,6 +157,7 @@ def fetch_article_body_from_url(url: str) -> str:
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
+        title = extract_article_title(soup)
 
         for tag in soup(["script", "style", "nav", "footer", "aside", "iframe", "form", "button"]):
             tag.decompose()
@@ -168,7 +195,7 @@ def fetch_article_body_from_url(url: str) -> str:
                     selector_candidates.append(text)
 
             if selector_candidates:
-                return max(selector_candidates, key=len)
+                return FetchedPage(max(selector_candidates, key=len), title)
 
         paragraphs = [p.get_text(separator="\n", strip=True) for p in soup.find_all("p")]
 
@@ -177,17 +204,17 @@ def fetch_article_body_from_url(url: str) -> str:
         fallback_text = "\n".join(paragraphs)
 
         if len(fallback_text) >= 100:
-            return fallback_text
+            return FetchedPage(fallback_text, title)
 
-        return ""
+        return FetchedPage("", title)
 
     except requests.exceptions.RequestException as e:
         logging.debug(f"요청 실패: {url} / {e}")
-        return ""
+        return FetchedPage()
 
     except Exception as e:
         logging.debug(f"추출 실패: {url} / {type(e).__name__}: {e}")
-        return ""
+        return FetchedPage()
 
 
 def _fetch_item_body(item: dict[str, Any]) -> dict[str, Any]:
@@ -223,18 +250,18 @@ def _fetch_item_body(item: dict[str, Any]) -> dict[str, Any]:
     published_at = ""
 
     for url in dict.fromkeys(urls):
-        if is_anchor_link(url):
-            raw_text, candidate_published_at = fetch_anchor_article_data_from_url(url)
-        else:
-            raw_text = fetch_article_body_from_url(url)
-            candidate_published_at = ""
+        page = fetch_article_page(url)
 
-        if candidate_published_at and not published_at:
-            published_at = candidate_published_at
+        if page.published_at and not published_at:
+            published_at = page.published_at
+
+        # 검색 API 가 말줄임으로 자른 제목은 페이지 제목으로 복원한다. 본문의 제목 줄 제거에도 쓴다
+        if page.title:
+            item["title"] = restore_truncated_title(item.get("title", ""), page.title)
 
         candidate_removed_noise = []
         candidate_text = clean_article_body_for_storage(
-            raw_text,
+            page.text,
             removed_noise=candidate_removed_noise,
             article_title=get_printable_text(item.get("title", "")),
         )

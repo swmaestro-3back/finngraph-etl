@@ -11,8 +11,7 @@ from pipelines.triples.models import (
 class GraphState(TypedDict, total=False):
     news_id: str
     article: str
-    gazetteer_entities: list[Entity]  # Result of EntityExtractor.extract (before verification)
-    entities: list[Entity]  # Result of EntityExtractor.verify
+    entities: list[Entity]  # Built by linked_entities from news_companies (no LLM)
     candidate_frames: list[CandidateFrame]  # Result of RelationExtractor
     annotated_frames: list[RelationFrame]  # Result of FrameAnnotator
     annotation_stats: dict

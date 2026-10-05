@@ -344,7 +344,8 @@ def log_triplet(index: int, triplet: Any) -> None:
 async def extract_triples(items: list[dict[str, Any]]) -> dict[str, int]:
     """extract_triples._process_item 에서 LangGraph 실행만. 원장 적재·그래프 동기화·마킹은 없다."""
 
-    from pipelines.triples.workflow import GraphRunner
+    from pipelines.triples.nodes.entity_extractor import linked_entities
+    from pipelines.triples.workflow import MIN_COMPANIES, GraphRunner
 
     stats = {"has_triples": 0, "no_triples": 0, "failed": 0, "triplets": 0}
     if not items:
@@ -358,36 +359,31 @@ async def extract_triples(items: list[dict[str, Any]]) -> dict[str, int]:
         log.info("    %s", item["title"])
         log.debug("    %s", item.get("link", ""))
 
+        entities = linked_entities(
+            item["_text"],
+            [company["company_id"] for company in item.get("_linked_companies") or []],
+        )
+        field(
+            "엔티티",
+            ", ".join(
+                e.text if e.text == e.canonical else f"{e.text}→{e.canonical}" for e in entities
+            )
+            or "(없음)",
+        )
+        if len({e.company_id for e in entities}) < MIN_COMPANIES:
+            field("관계 추출", "생략 — 본문에서 잡힌 연결 기업 2개 미만")
+            stats["no_triples"] += 1
+            continue
+
         try:
-            state = await runner.ainvoke(str(number), item["_text"])
+            state = await runner.ainvoke(str(number), item["_text"], entities)
         except Exception:
             log.exception("    추출 실패")
             stats["failed"] += 1
             continue
 
-        gazetteer_entities = state.get("gazetteer_entities") or []
-        field(
-            "사전 매치",
-            ", ".join(
-                e.text if e.text == e.canonical else f"{e.text}→{e.canonical}"
-                for e in gazetteer_entities
-            )
-            or "(없음)",
-        )
-        if "entities" in state:
-            kept = {e.text for e in state["entities"]}
-            field("검증 통과", ", ".join(e.text for e in state["entities"]) or "(없음)")
-            field(
-                "검증 탈락",
-                ", ".join(e.text for e in gazetteer_entities if e.text not in kept) or "(없음)",
-            )
-        else:
-            field("검증", "생략 — 사전 매치 엔티티 2개 미만")
-
         if "candidate_frames" in state:
             field("후보 프레임", f"{len(state['candidate_frames'])}개")
-        else:
-            field("관계 추출", "생략 — 검증 통과 엔티티 2개 미만")
         if "annotated_frames" in state:
             field("주석 프레임", f"{len(state['annotated_frames'])}개")
         if "triplet_stats" in state:

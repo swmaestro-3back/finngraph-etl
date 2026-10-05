@@ -141,3 +141,83 @@ def test_each_exclusion_rule_removes_on_its_own():
 
     assert kept == []
     assert [entry["excluded_by"] for entry in removed] == ["[ 표 ]", "단독", "분석"]
+
+
+def _listed(title: str, listing: int) -> dict:
+    # _title_listing 은 제목 기업 매치(match_title_companies)가 붙인다
+    return {**_item(title), "_title_listing": listing}
+
+
+def test_titles_listing_four_or_more_companies_are_filtered():
+    kept, removed = _filter(
+        [
+            _listed("삼성전자, 하이브, 계양전기, 이노진 강세", 4),
+            _listed("농심·동국제강·삼성화재·삼성생명·한화오션 '신고가'", 5),
+        ]
+    )
+
+    assert kept == []
+    assert [entry["excluded_by"] for entry in removed] == ["종목 나열 4개", "종목 나열 5개"]
+
+
+def test_three_company_listing_with_content_is_kept():
+    # 3개 나열은 다자 계약·협력 기사가 많다
+    kept, removed = _filter(
+        [
+            _listed("SKT·카카오·KT, 10월 전국민 무료 '모두의 AI' 첫선", 3),
+            _listed("마이크론, 퀄컴·현대모비스와 차량용 메모리 공급 장기계약", 3),
+            _listed("현대차·기아, 서울시 자율주행 시내버스 구축", 2),
+        ]
+    )
+
+    assert len(kept) == 3
+    assert removed == []
+
+
+def test_titles_that_are_nothing_but_a_listing_are_filtered():
+    # 공시·시황 모음 기사의 제목. 사전에 없는 이름이 섞여도(_title_listing 이 작아도) 걸린다
+    kept, removed = _filter(
+        [
+            _listed("삼성화재·삼성생명·LG 등", 3),
+            _listed("일동제약·LS전선·현대모비스 등", 1),
+            _listed("포스코인터내셔널ㆍ가온칩스 등", 2),
+            _listed("SKT·LGU+·KT", 3),
+            _listed("[공시] 한국콜마ㆍ한국타이어ㆍ코웨이 등", 3),
+        ]
+    )
+
+    assert kept == []
+    assert {entry["excluded_by"] for entry in removed} == {"나열뿐인 제목"}
+
+
+def test_listing_followed_by_words_is_not_a_list_only_title():
+    kept, removed = _filter(
+        [
+            _listed("삼성전기·LG이노텍 급등", 2),
+            _listed("삼성전자 실적 발표 등", 1),
+            _listed("KB금융·현대모비스·KT 등 코스피 38개사, 13일 자사주 매수", 3),
+        ]
+    )
+
+    assert len(kept) == 3
+    assert removed == []
+
+
+def test_restore_truncated_title():
+    from pipelines.news.utils.text_utils import restore_truncated_title
+
+    page = "[단독] LG엔솔, 북미 ESS 대규모 수주 성공 | 머니투데이"
+    assert restore_truncated_title("LG엔솔, 북미 ESS 대규모...", page) == (
+        "LG엔솔, 북미 ESS 대규모 수주 성공"
+    )
+    assert (
+        restore_truncated_title("LG엔솔, 북미 ESS 대규모…", page)
+        == "LG엔솔, 북미 ESS 대규모 수주 성공"
+    )
+    # 꼬리를 지우면 앞부분이 안 맞으면 꼬리째 쓴다
+    assert restore_truncated_title("A - B 합병...", "A - B 합병 완료") == "A - B 합병 완료"
+    # 잘리지 않은 제목, 앞부분이 다른 페이지 제목, 말줄임이 본래 문구인 제목은 그대로다
+    assert restore_truncated_title("삼성전자 실적 발표", page) == "삼성전자 실적 발표"
+    assert restore_truncated_title("삼성전자 실적...", page) == "삼성전자 실적..."
+    assert restore_truncated_title("삼성전자 결국...", "삼성전자 결국...") == "삼성전자 결국..."
+    assert restore_truncated_title("...", page) == "..."

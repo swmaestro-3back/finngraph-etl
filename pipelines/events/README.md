@@ -5,81 +5,65 @@
 
 ```cypher
 MATCH (c:Company {ticker: $ticker})-[:HAS_EVENT]->(e:Event)
-RETURN e ORDER BY e.last_published_at DESC LIMIT 20
+RETURN e ORDER BY e.first_published_at DESC LIMIT 20
 ```
 
-## 기동 (`dags/events/promote_clusters.py`, `events_promote_clusters`)
+## 기동 (`dags/news/cluster_articles.py`, `news_cluster_articles` 의 `generate_events` task)
 
-시각이 아니라 Asset 을 구독합니다. `news_collect_articles.collect_articles` 가 클러스터를 하나라도
-생성·갱신한 런에서만 `etl://news/clusters` 를 발행하고, 그 신호로 이 DAG 이 깨어납니다.
-클러스터 변경이 0건인 시간에는 `collect_articles` 가 skip 돼 발행이 없고, 이 DAG 도 돌지
-않습니다.
+별도 DAG 가 아니라 클러스터 DAG 의 task 입니다. `promote_clusters` 뒤에 `summarize_articles` 와
+나란히 돕니다. `promote_clusters` 가 Asset 발행을 건너뛰어도(삼중항 미처리 대표 0건) 이 task 는
+돕니다(`trigger_rule="none_failed"`).
 
 ```
-news_collect_articles.collect_articles ──► etl://news/clusters ──► events_promote_clusters
+news_collect_articles ──► etl://news/articles ──► news_cluster_articles
+                                                   assign_clusters → promote_clusters → generate_events
 ```
 
 ## 흐름
 
-두 task 가 병렬로 돕니다. 둘 다 `scan.py` 의 `scan_promotable` 로 후보 클러스터
-(`original_size >= NEWS_EVENT_MIN_SIZE`, 최근 `NEWS_EVENT_SCAN_DAYS` 안에 변경)를 읽고
-Neo4j 존재 여부로 **자기 몫만** 고르므로, task 사이에 XCom 이 없습니다. 각 task 의
-`scanned` 는 후보 전체가 아니라 자기 몫의 수입니다.
+task 하나(`generate_events`, `jobs/generate_events.py`)가 돕니다. LLM 을 부르지 않습니다.
 
-- **`sync_events`** (`jobs/sync_events.py`) — 이미 Event 가 있는 클러스터를 **매 런 전량
-  갱신**합니다. 카운터·시간 범위·대표·`news_ids`·`keywords` 를 RDB 값으로 덮어쓰고
-  `companies` 로 간선을 다시 MERGE 합니다. 제목·`companies` 는 불변이고 LLM 을 부르지
-  않습니다. 배치 하나라 실패하면 통째로 `refresh_failed` 로 셉니다.
-- **`generate_events`** (`jobs/generate_events.py`) — Event 가 없는 클러스터를 **생성**합니다.
-  멤버 기사(제목 + 요약 또는 리드)에서 gazetteer 로 후보 기업을 뽑고, LLM 이 후보 안에서
-  당사자와 우산 제목을 고르고, 코드가 검증한 뒤 노드와 간선을 씁니다. 후보 0 이면 LLM 을
-  부르지 않고 노드도 만들지 않습니다. 런당 상한 없이 대상 전량을 처리하고, LLM 동시 호출만
-  `NEWS_EVENT_LLM_MAX_CONCURRENCY` 로 묶습니다. 클러스터 하나가 실패 단위이고, 실패한 클러스터는 노드가 없으니 다음 런에 다시 시도됩니다. 처리할
-  클러스터가 없으면 gazetteer·Bedrock 클라이언트를 만들지 않습니다.
+1. **후보** — `news_clusters` 에서 대표와 제목이 있고 후보가 `NEWS_CLUSTER_PROMOTE_SIZE` 건 이상이며
+   최근 `NEWS_EVENT_SCAN_DAYS` 안에 갱신된 클러스터를 읽고, Neo4j 에 `Event {cluster_id}` 가 없는 것만
+   남깁니다(`scan.py` 의 `scan_new_events`).
+2. **당사자** — 클러스터 후보 기사 중 `NEWS_EVENT_COMPANY_MIN_ARTICLES`(기본 2)건 이상의
+   `news_companies` 에 든 기업입니다. 사건의 당사자는 후보 대부분에 나오고 지나가는 언급은 한두 건에만
+   나오므로, 한 기사의 오판정이 결과를 바꾸지 못합니다. 승격 후 기사의 연결은 세지 않습니다. 당사자가
+   0개면 노드를 만들지 않고(`skipped_no_companies`) 다음 런에 다시 봅니다.
+3. **쓰기** — `Event` 노드를 만들고 `Company.company_id`(Postgres `companies.id` 미러)로 `is_listed` 인
+   노드를 찾아 `HAS_EVENT` 로 잇습니다. 클러스터 하나가 실패 단위이고, 실패한 클러스터는 노드가 없으니
+   다음 런에 다시 시도됩니다.
 
-두 task 가 겹쳐도 데이터는 깨지지 않습니다. 둘 다 `cluster_id` 로 MERGE 하고, `sync_events`
-는 `generate_events` 가 쓰는 `title`·`companies` 를 건드리지 않습니다. 같은 클러스터에 LLM
-을 두 번 부르지 않도록 DAG 런끼리는 `max_active_runs=1` 로 직렬화합니다.
+기업 추출과 판정은 뉴스 수집(`collect_articles`)이 끝내 `news_companies` 에 저장했습니다 — 제목의
+기업은 관련성 필터가, 본문에만 나온 기업은 엔티티 필터가 판정합니다.
 
-RDB 에는 아무것도 쓰지 않습니다. 그래프가 유일한 저장소입니다.
+노드에는 `cluster_id`, `title`, `first_published_at`, `created_at` 만 있습니다. 키워드·기사 목록·기사
+수는 `cluster_id` 로 RDB 에서 읽습니다. 노드는 만든 뒤 바뀌지 않습니다 — 승격 이후에 들어오는 기사는
+RDB 에만 반영됩니다.
 
-Neo4j 를 유일한 저장소로 둔 데는 트레이드오프가 있습니다. 그래프에서 Event 가 사라지면
-(오작동, 수동 삭제 등) LLM 재실행 말고는 복구 경로가 없습니다 — RDB 에 별도 원장이 없기
-때문입니다. 또한 생성 시점에 해석되지 않은 당사자(미시드·비상장 기업)는 노드의
-`companies` 배열에 이름만 남고 간선은 생기지 않는데, 그 기업이 나중에 시드되면 다음 갱신이
-간선을 붙입니다 — 아래 "1회성 백필" 은 그 간극을 스캔 범위 밖 Event 에 대해 메웁니다.
+제목은 `news_clusters.title`, 당사자는 `news_companies` 에 있으므로 그래프에서 Event 가 사라져도 스캔
+범위 안이면 다음 런이 RDB 만으로 다시 만듭니다. 생성 시점에 `Company` 노드가 없던 기업은 간선이
+빠지는데, 노드를 지우고 다시 생성하면 붙습니다.
+
+DAG 런끼리는 `max_active_runs=1` 로 직렬화합니다. RDB 에는 아무것도 쓰지 않습니다.
 
 ## 배포 순서
 
 1. `0003_events.cypher` 가 neo4j-init 으로 적용돼 있을 것. neo4j-init 은 매 기동마다
    전체를 재실행하며 멱등입니다.
 2. `companies_sync_master.seed_graph` 가 한 번은 성공해 KRX `is_listed` 가 채워져 있을 것.
-3. US Company 노드는 `companies_load_us` DAG 의 `seed_graph_us_companies` job 이 동적으로
-   시드합니다 — 마이그레이션에 들어 있지 않으므로 `docker compose down -v` 뒤에는
+3. US Company 노드는 `companies_load_us` DAG 의 `load_neo4j` task(`jobs/load_us_neo4j.py`)가
+   동적으로 시드합니다 — 마이그레이션에 들어 있지 않으므로 `docker compose down -v` 뒤에는
    `companies_crawl_us` 를 한 번 수동 실행해야 합니다(뒤이어 `companies_load_us` 가 Asset 으로
    자동으로 따라붙어 US 기업 간선이 붙습니다).
-4. `dags/news/collect_articles.py`(outlet)와 `dags/events/promote_clusters.py`(구독) 사이에 배포 순서 제약은
+4. `dags/news/collect_articles.py`(outlet)와 `dags/news/cluster_articles.py`(구독) 사이에 배포 순서 제약은
    없습니다. 구독 DAG 만 있으면 Asset 이 발행될 때까지 기다리고, outlet 만 있으면 소비자
    없는 Asset 이벤트가 기록될 뿐입니다.
-
-## 1회성 백필
-
-스캔 범위(15일)를 벗어난 Event 는 갱신되지 않으므로, 그 뒤에 시드된 기업의 간선은 아래로
-한 번 붙입니다.
-
-```cypher
-MATCH (e:Event)
-UNWIND e.companies AS name
-MATCH (c:Company {name: name}) WHERE c.is_listed = true
-MERGE (c)-[:HAS_EVENT]->(e)
-```
 
 ## 로컬 실행
 
 ```bash
-uv run python scripts/run_job.py pipelines.events.jobs.sync_events:run
 uv run python scripts/run_job.py pipelines.events.jobs.generate_events:run
 ```
 
-`.env` 에 `BEDROCK_*`, `AWS_BEARER_TOKEN_BEDROCK`, `NEO4J_*`, `DATABASE_URL` 이 있어야 합니다.
-비공개 파일(`pipelines/triples/ontology/`, `pipelines/events/prompts/`)이 로컬에 있어야 합니다.
+`.env` 에 `NEO4J_*`, `DATABASE_URL` 이 있어야 합니다.

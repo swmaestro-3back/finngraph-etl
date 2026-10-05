@@ -1,11 +1,7 @@
-"""승격 후보 스캔 — RDB 후보 조회 → Neo4j 존재 조회 → 기존/신규 분기.
+"""새 Event 후보 스캔 — RDB 후보 조회 → Neo4j 존재 조회 → 노드가 없는 클러스터만.
 
-sync_events 와 generate_events 가 같은 조건·같은 순서로 후보를 골라야 하므로 한 곳에 둔다.
-두 job 이 각자 호출해 자기 몫(기존 Event = sync, 없는 클러스터 = generate)만 취한다 —
-task 사이에 XCom 을 두지 않기 위한 선택이다.
-
-두 저장소 조회(repositories/)와 순수 분기(plan_actions)를 합성하므로 저장소 계층이 아니라
-파이프라인 루트에 둔다 — repositories/ 는 한 저장소의 쿼리만 갖는다.
+두 저장소 조회(repositories/)를 합성하므로 저장소 계층이 아니라 파이프라인 루트에 둔다 —
+repositories/ 는 한 저장소의 쿼리만 갖는다.
 
 호출자는 `async with neo4j_database:` 를 열고 있어야 한다.
 """
@@ -16,18 +12,18 @@ from datetime import datetime
 
 from pipelines.events.models import ClusterCandidate
 from pipelines.events.repositories.neo4j.events import fetch_existing_event_ids
-from pipelines.events.repositories.postgres.news_clusters import fetch_promotable_clusters
-from pipelines.events.transformers.planner import plan_actions
+from pipelines.events.repositories.postgres.news_clusters import fetch_promoted_clusters
 
 
-async def scan_promotable(
-    min_size: int, since: datetime
-) -> tuple[list[ClusterCandidate], list[ClusterCandidate]]:
-    """(to_create, to_refresh). RDB 후보가 없으면 Neo4j 를 조회하지 않고 ([], []) 다."""
+async def scan_new_events(promote_size: int, since: datetime) -> list[ClusterCandidate]:
+    """승격되고 제목이 붙었는데 Event 노드가 없는 클러스터.
 
-    clusters = fetch_promotable_clusters(min_size, since)
+    RDB 후보가 없으면 Neo4j 를 조회하지 않는다.
+    """
+
+    clusters = fetch_promoted_clusters(promote_size, since)
     if not clusters:
-        return [], []
+        return []
 
-    existing = await fetch_existing_event_ids([c.cluster_id for c in clusters])
-    return plan_actions(clusters, existing)
+    existing = await fetch_existing_event_ids([cluster.cluster_id for cluster in clusters])
+    return [cluster for cluster in clusters if cluster.cluster_id not in existing]

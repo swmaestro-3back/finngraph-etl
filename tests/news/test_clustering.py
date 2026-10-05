@@ -4,71 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import numpy as np
-
-from pipelines.news.transformers.clustering.cluster import (
-    Cluster,
-    build_clusters,
-    select_top_members,
-)
-from pipelines.news.transformers.clustering.vectorize import build_tfidf
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
-
-
-def _unit(*components: float) -> list[float]:
-    vector = np.array(components, dtype=np.float64)
-    return list(vector / np.linalg.norm(vector))
-
-
-def _angle(degrees: float) -> list[float]:
-    """xy 평면에서 x 축과 degrees 를 이루는 단위 벡터. 두 벡터의 코사인 = cos(각도 차)."""
-    radians = np.radians(degrees)
-    return [float(np.cos(radians)), float(np.sin(radians)), 0.0]
-
-
-def _vectors(*rows: list[float]) -> np.ndarray:
-    return np.array(rows, dtype=np.float64)
-
-
-def test_select_top_members_caps_and_prefers_similar_to_representative():
-    # 대표(0번)와의 유사도: 1번=0.9, 2번=0.5, 3번=0.8, 4번=0.3
-    similarity = np.array(
-        [
-            [1.0, 0.9, 0.5, 0.8, 0.3],
-            [0.9, 1.0, 0.4, 0.7, 0.2],
-            [0.5, 0.4, 1.0, 0.4, 0.2],
-            [0.8, 0.7, 0.4, 1.0, 0.2],
-            [0.3, 0.2, 0.2, 0.2, 1.0],
-        ]
-    )
-    cluster = Cluster(members=[0, 1, 2, 3, 4], representative=0, cohesion=0.5)
-
-    selected = select_top_members(cluster, similarity, cap=3)
-
-    # 대표 우선 + 대표와 유사도 높은 순 2개
-    assert selected == [0, 1, 3]
-
-
-def test_select_top_members_returns_all_when_under_cap():
-    similarity = np.identity(2)
-    cluster = Cluster(members=[0, 1], representative=1, cohesion=0.4)
-
-    # 군집이 cap 이하여도 반환 목록의 첫 번째는 항상 대표(메도이드)여야 한다
-    assert select_top_members(cluster, similarity, cap=3) == [1, 0]
-
-
-def test_build_clusters_groups_similar_documents():
-    # 문서 0·1은 같은 토큰, 문서 2는 전혀 다른 토큰 → 2개 군집
-    documents = [
-        [("삼성전자", 3.0), ("유상증자", 1.0)],
-        [("삼성전자", 3.0), ("유상증자", 1.0)],
-        [("현대차", 3.0), ("리콜", 1.0)],
-    ]
-    tfidf = build_tfidf(documents)
-    clusters = build_clusters(tfidf.matrix, threshold=0.35)
-
-    sizes = sorted(len(c.members) for c in clusters)
-    assert sizes == [1, 2]
 
 
 def test_document_terms_builds_compound_nouns():
@@ -121,123 +57,34 @@ def test_document_terms_keeps_two_letter_abbreviations():
     assert terms.get("sk하이닉스") == 3.0
 
 
-def test_agglomerative_defaults_match_size_one_and_no_seeds():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    vectors = _vectors(_angle(0), _angle(20), _angle(90))
-
-    plain = agglomerative(vectors, threshold=0.35)
-    explicit = agglomerative(
-        vectors, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[False, False, False]
-    )
-
-    assert plain == explicit == [[0, 1], [2]]
-
-
-def test_agglomerative_never_merges_two_seeds():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    # 시드 0·1 은 서로 매우 비슷하지만(0.95) 합쳐지면 안 된다. 새 문서 2 는 더 가까운 시드 0 에 붙는다.
-    vectors = _vectors(_unit(1, 0, 0), _unit(0.95, 0.31, 0), _unit(0.8, 0, 0.6))
-
-    groups = agglomerative(
-        vectors, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[True, True, False]
-    )
-
-    assert groups == [[0, 2], [1]]
-
-
-def test_agglomerative_seed_absorbing_group_stays_blocked_from_other_seeds():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    # 새 문서 2 가 시드 0 에 붙은 뒤, 그 군집과 시드 1 의 중심 유사도가 threshold 를 넘어도
-    # 시드를 흡수한 군집은 계속 시드로 취급돼 시드 1 과 합쳐지지 않는다.
-    vectors = _vectors(_unit(1, 0, 0), _unit(0, 1, 0), _unit(1, 1, 0))
-
-    groups = agglomerative(
-        vectors, threshold=0.35, initial_sizes=[1, 1, 1], seed_flags=[True, True, False]
-    )
-
-    assert sorted(groups) == [[0, 2], [1]] or sorted(groups) == [[0], [1, 2]]
-    assert not any(0 in group and 1 in group for group in groups)
-
-
-def test_agglomerative_seed_size_weights_centroid():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    # 시드 0(0°)에 문서 2(30°)가 붙으면 중심은 크기 가중 평균 방향으로 움직인다.
-    # 시드 크기 3 이면 중심이 약 7.4° → 문서 3(80°)과 cos(72.6°)≈0.30 < threshold 라 따로 남는다.
-    # 시드 크기 1 이면 중심이 15° → cos(65°)≈0.42 로 합쳐진다. 시드 1 은 다른 축이라 무관하다.
-    vectors = _vectors(_angle(0), [0.0, 0.0, 1.0], _angle(30), _angle(80))
-
-    weighted = agglomerative(
-        vectors,
-        threshold=0.35,
-        initial_sizes=[3, 1, 1, 1],
-        seed_flags=[True, True, False, False],
-    )
-    unweighted = agglomerative(
-        vectors,
-        threshold=0.35,
-        initial_sizes=[1, 1, 1, 1],
-        seed_flags=[True, True, False, False],
-    )
-
-    assert weighted == [[0, 2], [1], [3]]
-    assert unweighted == [[0, 2, 3], [1]]
-
-
-def test_agglomerative_large_group_still_absorbs_near_duplicate():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    # 같은 사건을 다르게 쓴 기사 6건이 한 군집을 이룬다(서로 ±25° 안, 중심은 0°).
-    # 마지막 문서(35°)는 군집 멤버 하나(25°)와는 거의 같지만 반대쪽 멤버(-25°)와는 cos 60°=0.5.
-    # 군집 중심과는 cos 35°≈0.82 라 합류해야 한다 — 군집이 커져도 합류 문턱이 올라가지 않는다.
-    vectors = _vectors(
-        _angle(-25), _angle(-15), _angle(-5), _angle(5), _angle(15), _angle(25), _angle(35)
-    )
-
-    assert agglomerative(vectors, threshold=0.8) == [[0, 1, 2, 3, 4, 5, 6]]
-
-
-def test_medoid_and_cohesion_matches_build_clusters():
-    from pipelines.news.transformers.clustering.cluster import build_clusters, medoid_and_cohesion
-
-    vectors = _vectors(_angle(0), _angle(20), _angle(40), [0.0, 0.0, 1.0])
-    similarity = vectors @ vectors.T
-
-    [cluster, singleton] = build_clusters(vectors, threshold=0.35)
-    representative, cohesion = medoid_and_cohesion(similarity, [0, 1, 2])
-
-    assert (cluster.representative, cluster.cohesion) == (representative, cohesion)
-    assert representative == 1  # 0·2 모두와 가장 가까운 문서
-    assert singleton.cohesion == 1.0
-
-
 # ── batch.py: 기사 → 문서 변환, 시드 창 ──────────────────────────
 
 
-def test_batch_documents_parses_pub_date_and_falls_back():
-    from pipelines.news.transformers.clustering import batch_documents
+def test_row_documents_use_title_and_body_lead():
+    from pipelines.news.transformers.clustering import row_documents
 
-    fallback = datetime(2026, 9, 4, 10, tzinfo=SEOUL_TIMEZONE)
-    items = [
+    published = datetime(2026, 9, 2, 9, tzinfo=SEOUL_TIMEZONE)
+    rows = [
         {
             "title": "삼성전자 유상증자 결정",
-            "description": "삼성전자가 유상증자를 결정했다",
-            "pubDate": "Tue, 02 Sep 2026 09:00:00 +0900",
+            "text": "삼성전자가 유상증자를 결정했다. " + "현대차 리콜 " * 50,
+            "published_at": published,
         },
-        {"title": "현대차 미국 리콜 확대", "description": "", "pubDate": "not-a-date"},
+        {
+            "title": "현대차 미국 리콜 확대",
+            "text": "",
+            "published_at": published + timedelta(hours=1),
+        },
     ]
 
-    documents, published_ats = batch_documents(
-        items, description_weight=0.4, fallback_time=fallback
-    )
+    documents, published_ats = row_documents(rows, lead_chars=20, description_weight=0.4)
 
     assert len(documents) == 2
-    assert dict(documents[0])["삼성전자"] > dict(documents[1]).get("삼성전자", 0.0)
-    assert published_ats[0] == datetime(2026, 9, 2, 9, tzinfo=SEOUL_TIMEZONE)
-    assert published_ats[1] == fallback  # 파싱 실패는 실행 시각으로 본다
+    assert dict(documents[0])["삼성전자"] > 0
+    # 리드 20자 밖의 본문 토큰은 들지 않는다
+    assert "리콜" not in dict(documents[0])
+    assert "리콜" in dict(documents[1])
+    assert published_ats == [published, published + timedelta(hours=1)]
 
 
 def test_seed_window_spans_batch_publish_range_minus_window():
@@ -248,52 +95,8 @@ def test_seed_window_spans_batch_publish_range_minus_window():
 
     # 가장 이른 기사가 붙을 수 있는 가장 오래된 시드부터, 가장 늦은 기사 시각까지
     assert seed_window([late, early], 7) == (early - timedelta(days=7), late)
-
-
-# ── 발행일 창 제약 ──────────────────────────────────────────────
-
-
-def test_agglomerative_never_merges_pairs_wider_than_max_span():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    vectors = _vectors(_angle(0), _angle(10))
-
-    within = agglomerative(vectors, 0.35, spans=[(0.0, 0.0), (5.0, 5.0)], max_span=7.0)
-    beyond = agglomerative(vectors, 0.35, spans=[(0.0, 0.0), (8.0, 8.0)], max_span=7.0)
-
-    assert within == [[0, 1]]
-    assert beyond == [[0], [1]]
-
-
-def test_agglomerative_span_is_checked_on_the_merged_group():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    # 0-1 (0일·5일) 은 합쳐지지만, 그 군집에 2 (10일) 를 더하면 0~10일이라 막힌다.
-    # 1-2 만 보면 5일 차라 허용이지만 군집 전체 범위로 판단해야 한다.
-    vectors = _vectors(_angle(0), _angle(15), _angle(35))
-
-    groups = agglomerative(
-        vectors, 0.35, spans=[(0.0, 0.0), (5.0, 5.0), (10.0, 10.0)], max_span=7.0
-    )
-
-    assert groups == [[0, 1], [2]]
-
-
-def test_agglomerative_seed_anchor_rejects_articles_before_seed_start():
-    from pipelines.news.transformers.clustering.cluster import agglomerative
-
-    # 시드(0) 는 5일에 시작. 기사 1 은 3일(이전), 기사 2 는 9일(창 안). 둘 다 시드와 cos 45°.
-    vectors = _vectors(_angle(45), _angle(0), _angle(90))
-
-    groups = agglomerative(
-        vectors,
-        0.35,
-        seed_flags=[True, False, False],
-        spans=[(5.0, 5.0), (3.0, 3.0), (9.0, 9.0)],
-        max_span=7.0,
-    )
-
-    assert groups == [[0, 2], [1]]
+    # 뒤쪽 여유를 주면 가장 늦은 기사보다 그만큼 늦게 시작한 시드까지 읽는다
+    assert seed_window([late, early], 7, 1) == (early - timedelta(days=7), late + timedelta(days=1))
 
 
 def test_document_terms_normalizes_compatibility_characters():
@@ -301,3 +104,32 @@ def test_document_terms_normalizes_compatibility_characters():
 
     # "㎿" 같은 호환 문자는 NFKC 로 "MW" 가 돼 같은 토큰으로 모인다
     assert document_terms("500㎿급 해상변전소") == document_terms("500MW급 해상변전소")
+
+
+def test_add_batch_frequency_counts_each_document_once_on_top_of_table():
+    from pipelines.news.transformers.clustering.batch import add_batch_frequency
+    from pipelines.news.transformers.clustering.vectorize import IdfTable
+
+    table = IdfTable(document_frequency={"삼성전자": 90, "해상변전소": 2}, document_count=100)
+    documents = [
+        [("삼성전자", 3.0), ("삼성전자", 1.0), ("파운드리", 1.0)],
+        [("삼성전자", 3.0), ("해상변전소", 1.0)],
+    ]
+
+    merged = add_batch_frequency(table, documents)
+
+    # 한 문서에 같은 토큰이 여러 번 나와도 문서 수는 1 만 오른다
+    assert merged.document_frequency == {"삼성전자": 92, "해상변전소": 3, "파운드리": 1}
+    assert merged.document_count == 102
+    # 원래 표는 바뀌지 않는다
+    assert table.document_frequency == {"삼성전자": 90, "해상변전소": 2}
+
+
+def test_add_batch_frequency_on_empty_table_is_batch_count():
+    from pipelines.news.transformers.clustering.batch import add_batch_frequency
+    from pipelines.news.transformers.clustering.vectorize import IdfTable
+
+    merged = add_batch_frequency(IdfTable(), [[("엘앤에프", 3.0)], [("엘앤에프", 1.0)], []])
+
+    assert merged.document_frequency == {"엘앤에프": 2}
+    assert merged.document_count == 3

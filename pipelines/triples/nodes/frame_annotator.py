@@ -120,7 +120,7 @@ class FrameAnnotator:
         ensure_bedrock_token()
         settings = get_settings()
         self._model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("triples"),
             region_name=settings.bedrock_region,
             temperature=0,
         )

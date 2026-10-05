@@ -1,221 +1,24 @@
-"""generate_events — 신규 Event 생성 job. 스텁 generator/loader 로 실패 격리와 집계."""
+"""generate_events job 단위 테스트. RDB·Neo4j 는 갈아끼운다. LLM 은 부르지 않는다."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
-from pipelines.common.gazetteer import CompanyMatcher, GazetteerEntry
 from pipelines.events.jobs import generate_events as job
-from pipelines.events.models import ClusterCandidate, EventDraft, MemberArticle
+from pipelines.events.models import ClusterCandidate
 
-T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)  # KST 9/1 09:00
-
-
-def _matcher() -> CompanyMatcher:
-    """DB 대신 인라인 사전으로 만든 공통 매처."""
-
-    samsung = GazetteerEntry(company_id=1, stock_id=1, ticker="005930", canonical="삼성전자")
-    kia = GazetteerEntry(company_id=2, stock_id=2, ticker="000270", canonical="기아")
-    return CompanyMatcher({"삼성전자": samsung, "삼전": samsung, "기아": kia})
-
-
-class StubGenerator:
-    def __init__(self, draft: EventDraft | Exception):
-        self._draft = draft
-        self.calls = 0
-
-    async def draft(self, dated_texts, candidates) -> EventDraft:
-        self.calls += 1
-        if isinstance(self._draft, Exception):
-            raise self._draft
-        return self._draft
-
-
-class CountingFactory:
-    """팩토리 호출 횟수를 센다 — 지연 생성(조용한 런에서 안 만듦) 검증용."""
-
-    def __init__(self, instance):
-        self.instance = instance
-        self.calls = 0
-
-    def __call__(self):
-        self.calls += 1
-        return self.instance
-
-
-def _cluster(cluster_id: int = 1, title: str | None = "유상증자 결정") -> ClusterCandidate:
-    return ClusterCandidate(
-        cluster_id=cluster_id,
-        representative_news_id=11,
-        keywords=["삼성전자"],
-        original_size=6,
-        member_count=2,
-        first_published_at=T0,
-        last_published_at=T0 + timedelta(hours=1),
-        title=title,
-    )
-
-
-def _members() -> list[MemberArticle]:
-    return [
-        MemberArticle(
-            news_id=11,
-            title="삼전 유상증자 결정",
-            summary="삼전이 결의했다.",
-            text="x",
-            published_at=T0,
-        ),
-        MemberArticle(
-            news_id=12,
-            title="삼성전자 주가 급락",
-            summary=None,
-            text="유증 소식에 급락. 기아 언급",
-            published_at=None,
-        ),
-    ]
-
-
-def _no_candidate_members() -> list[MemberArticle]:
-    """gazetteer 에 없는 이름만 담은 멤버 — 후보 0 케이스용."""
-
-    return [
-        MemberArticle(
-            news_id=901,
-            title="무관 발표",
-            summary="이 사건과는 관련 없는 내용이다.",
-            text="x",
-            published_at=T0,
-        )
-    ]
-
-
-# ---- 순수 헬퍼 ------------------------------------------------------------------
-
-
-def test_build_create_input_dates_and_candidates():
-    dated_texts, candidates = job.build_create_input(_members(), _matcher(), lead_chars=600)
-
-    assert dated_texts == [
-        (date(2026, 9, 1), "삼성전자 유상증자 결정\n삼성전자이 결의했다."),
-        (None, "삼성전자 주가 급락\n유증 소식에 급락. 기아 언급"),
-    ]
-    assert candidates == ["삼성전자", "기아"]
-
-
-def test_select_for_llm_drops_only_clusters_without_candidates():
-    prepared = [
-        (_cluster(1), _members(), [(None, "t\nb")], ["삼성전자"]),
-        (_cluster(2), _members(), [(None, "t\nb")], []),  # 후보 0 → 제외
-        (_cluster(3), _members(), [(None, "t\nb")], ["기아"]),
-        (_cluster(4), _members(), [(None, "t\nb")], ["삼성전자"]),
-    ]
-
-    eligible, skipped_no_candidates = job.select_for_llm(prepared)
-
-    assert [item[0].cluster_id for item in eligible] == [1, 3, 4]
-    assert skipped_no_candidates == 1
-
-
-def test_summarize_stats_invariant():
-    stats = {
-        "scanned": 5,
-        "created": 2,
-        "created_without_edges": 1,
-        "skipped_no_title": 1,
-        "skipped_no_candidates": 1,
-        "failed": 1,
-    }
-    assert job.summarize_stats(dict(stats)) == stats
-
-    with pytest.raises(ValueError):
-        job.summarize_stats({**stats, "failed": 0})
-
-
-# ---- create_one --------------------------------------------------------------------
-
-
-def _create_one(monkeypatch, generator, fake_create_event, candidates=("삼성전자",), cluster=None):
-    monkeypatch.setattr(job, "create_event", fake_create_event)
-    return asyncio.run(
-        job.create_one(
-            cluster or _cluster(),
-            _members(),
-            [(None, "t\nb")],
-            list(candidates),
-            generator,
-            asyncio.Semaphore(1),
-        )
-    )
-
-
-def test_create_one_success_records_edges(monkeypatch):
-    captured = {}
-
-    async def fake_create_event(record):
-        captured["record"] = record
-        return 1
-
-    generator = StubGenerator(EventDraft(companies=["삼성전자", "엔비디아"]))
-
-    outcome = _create_one(monkeypatch, generator, fake_create_event, ("삼성전자", "기아"))
-
-    assert outcome == "created"
-    record = captured["record"]
-    assert record.cluster_id == 1
-    assert record.title == "유상증자 결정"  # news_clusters.title 그대로
-    assert record.companies == ["삼성전자"]  # 후보 밖 엔비디아 제거
-    assert record.news_ids == [11, 12]
-    assert record.keywords == ["삼성전자"]
-
-
-def test_create_one_without_edges(monkeypatch):
-    async def fake_create_event(record):
-        return 0
-
-    generator = StubGenerator(EventDraft(companies=[]))
-
-    assert _create_one(monkeypatch, generator, fake_create_event) == "created_without_edges"
-
-
-def test_create_one_failure_is_isolated(monkeypatch):
-    called = {"n": 0}
-
-    async def fake_create_event(record):
-        called["n"] += 1
-        return 1
-
-    generator = StubGenerator(RuntimeError("bedrock down"))
-
-    assert _create_one(monkeypatch, generator, fake_create_event) == "failed"
-    assert called["n"] == 0
-
-
-def test_create_one_without_cluster_title_fails_before_llm(monkeypatch):
-    async def fake_create_event(record):  # pragma: no cover
-        raise AssertionError("쓰기가 일어나면 안 된다")
-
-    generator = StubGenerator(EventDraft(companies=["삼성전자"]))
-
-    outcome = _create_one(monkeypatch, generator, fake_create_event, cluster=_cluster(title=None))
-
-    assert outcome == "failed"
-    assert generator.calls == 0
-
-
-def test_create_one_loader_failure(monkeypatch):
-    async def fake_create_event(record):
-        raise RuntimeError("neo4j down")
-
-    generator = StubGenerator(EventDraft(companies=["삼성전자"]))
-
-    assert _create_one(monkeypatch, generator, fake_create_event) == "failed"
-
-
-# ---- _run 통합 (모든 I/O 시임을 스텁으로 대체) --------------------------------
+T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
+ZERO = {
+    "scanned": 0,
+    "created": 0,
+    "created_without_edges": 0,
+    "skipped_no_companies": 0,
+    "failed": 0,
+}
 
 
 class _StubNeo4jDatabase:
@@ -226,115 +29,113 @@ class _StubNeo4jDatabase:
         return False
 
 
-def _event_settings(**overrides) -> SimpleNamespace:
-    base = dict(
-        min_size=5,
-        scan_days=15,
-        llm_max_concurrency=2,
-        lead_chars=600,
+def _cluster(cluster_id: int) -> ClusterCandidate:
+    return ClusterCandidate(
+        cluster_id=cluster_id, title=f"사건 {cluster_id}", first_published_at=T0
     )
-    base.update(overrides)
-    return SimpleNamespace(**base)
 
 
-def _patch_common(monkeypatch, to_create, to_refresh, members_by_cluster, settings=None):
-    async def fake_scan(min_size, since):
-        return to_create, to_refresh
+def _patch_common(monkeypatch, clusters, company_ids):
+    seen = {}
 
-    monkeypatch.setattr(job, "get_event_settings", lambda: settings or _event_settings())
+    async def fake_scan(promote_size, since):
+        seen["promote_size"] = promote_size
+        return clusters
+
+    def fake_company_ids(cluster_ids, min_articles):
+        seen["company_args"] = (cluster_ids, min_articles)
+        return company_ids
+
+    monkeypatch.setattr(
+        job, "get_event_settings", lambda: SimpleNamespace(scan_days=15, company_min_articles=3)
+    )
+    monkeypatch.setattr(job, "get_news_settings", lambda: SimpleNamespace(cluster_promote_size=10))
     monkeypatch.setattr(job, "neo4j_database", _StubNeo4jDatabase())
-    monkeypatch.setattr(job, "scan_promotable", fake_scan)
-    monkeypatch.setattr(job, "fetch_cluster_members", lambda ids: members_by_cluster)
+    monkeypatch.setattr(job, "scan_new_events", fake_scan)
+    monkeypatch.setattr(job, "fetch_cluster_company_ids", fake_company_ids)
+    return seen
 
 
-def test_run_creates_only_own_half(monkeypatch):
-    """기존 몫(to_refresh)은 무시. 신규 4(제목 없음 1, 후보0 1, 유효 2 → 간선1/간선0)."""
-
-    edges_by_cluster = {4: 0, 5: 1}
-
-    async def fake_create_event(record):
-        return edges_by_cluster[record.cluster_id]
-
-    _patch_common(
-        monkeypatch,
-        to_create=[_cluster(3), _cluster(4), _cluster(5), _cluster(6, title=None)],
-        to_refresh=[_cluster(1), _cluster(2)],
-        members_by_cluster={
-            3: _no_candidate_members(),
-            4: _members(),
-            5: _members(),
-            6: _members(),
-        },
+def test_run_without_candidates_reads_nothing_else(monkeypatch):
+    seen = _patch_common(monkeypatch, [], {})
+    monkeypatch.setattr(
+        job,
+        "fetch_cluster_company_ids",
+        lambda ids, min_articles: (_ for _ in ()).throw(
+            AssertionError("후보가 없는데 당사자를 조회함")
+        ),
     )
-    monkeypatch.setattr(job, "create_event", fake_create_event)
-    extractor_factory = CountingFactory(_matcher())
-    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=["삼성전자"])))
 
-    stats = asyncio.run(job._run(extractor_factory, generator_factory))
-
-    assert stats == {
-        "scanned": 4,
-        "created": 2,
-        "created_without_edges": 1,
-        "skipped_no_title": 1,
-        "skipped_no_candidates": 1,
-        "failed": 0,
-    }
-    assert job.summarize_stats(stats) == stats
-    assert (extractor_factory.calls, generator_factory.calls) == (1, 1)
+    assert asyncio.run(job._run()) == ZERO
+    assert seen["promote_size"] == 10
 
 
-def test_run_creates_every_eligible_cluster_in_one_run(monkeypatch):
-    """런당 상한이 없다 — 후보가 있는 신규 4개 모두 LLM 을 부른다."""
+def test_run_creates_events_with_company_ids_from_news_companies(monkeypatch):
+    records = []
 
     async def fake_create_event(record):
+        records.append(record)
+        return len(record.company_ids)
+
+    seen = _patch_common(monkeypatch, [_cluster(1), _cluster(2)], {1: [100, 300], 2: [500]})
+    monkeypatch.setattr(job, "create_event", fake_create_event)
+
+    stats = asyncio.run(job._run())
+
+    assert stats == dict(ZERO, scanned=2, created=2)
+    assert [(r.cluster_id, r.title, r.company_ids) for r in records] == [
+        (1, "사건 1", [100, 300]),
+        (2, "사건 2", [500]),
+    ]
+    assert records[0].first_published_at == T0
+    # 당사자 기준(후보 중 3건 이상)이 조회까지 내려간다
+    assert seen["company_args"] == ([1, 2], 3)
+
+
+def test_run_skips_clusters_without_companies(monkeypatch):
+    """당사자가 0개면 노드를 만들지 않는다 — 다음 런에 다시 본다."""
+    records = []
+
+    async def fake_create_event(record):
+        records.append(record)
         return 1
 
-    _patch_common(
-        monkeypatch,
-        to_create=[_cluster(cid) for cid in (1, 2, 3, 4)],
-        to_refresh=[],
-        members_by_cluster={cid: _members() for cid in (1, 2, 3, 4)},
-        settings=_event_settings(),
-    )
+    _patch_common(monkeypatch, [_cluster(1), _cluster(2)], {2: [500]})
     monkeypatch.setattr(job, "create_event", fake_create_event)
-    generator = StubGenerator(EventDraft(companies=["삼성전자"]))
 
-    stats = asyncio.run(job._run(lambda: _matcher(), lambda: generator))
+    stats = asyncio.run(job._run())
 
-    assert stats["created"] == 4
-    assert generator.calls == 4
+    assert stats == dict(ZERO, scanned=2, created=1, skipped_no_companies=1)
+    assert [r.cluster_id for r in records] == [2]
+
+
+def test_run_counts_created_without_edges(monkeypatch):
+    """기업은 있지만 그래프에 Company 노드가 없으면 Event 노드만 생긴다."""
+
+    async def fake_create_event(record):
+        return 0
+
+    _patch_common(monkeypatch, [_cluster(1)], {1: [999]})
+    monkeypatch.setattr(job, "create_event", fake_create_event)
+
+    assert asyncio.run(job._run()) == dict(ZERO, scanned=1, created=1, created_without_edges=1)
+
+
+def test_run_isolates_failures(monkeypatch):
+    async def fake_create_event(record):
+        if record.cluster_id == 1:
+            raise RuntimeError("neo4j down")
+        return 1
+
+    _patch_common(monkeypatch, [_cluster(1), _cluster(2)], {1: [100], 2: [500]})
+    monkeypatch.setattr(job, "create_event", fake_create_event)
+
+    stats = asyncio.run(job._run())
+
+    assert stats == dict(ZERO, scanned=2, created=1, failed=1)
     assert job.summarize_stats(stats) == stats
 
 
-def test_run_empty_scan_returns_zero_stats_without_building_anything(monkeypatch):
-    """신규 몫이 없으면 extractor·generator 를 만들지 않고 all-zero 로 반환한다."""
-
-    _patch_common(monkeypatch, to_create=[], to_refresh=[_cluster(1)], members_by_cluster={})
-    extractor_factory = CountingFactory(_matcher())
-    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
-
-    stats = asyncio.run(job._run(extractor_factory, generator_factory))
-
-    assert stats == dict.fromkeys(job.STAT_KEYS, 0)
-    assert (extractor_factory.calls, generator_factory.calls) == (0, 0)
-
-
-def test_run_no_eligible_builds_extractor_but_not_generator(monkeypatch):
-    """후보가 전부 0 이면 gazetteer 는 돌지만 Bedrock 클라이언트(generator)는 만들지 않는다."""
-
-    _patch_common(
-        monkeypatch,
-        to_create=[_cluster(3)],
-        to_refresh=[],
-        members_by_cluster={3: _no_candidate_members()},
-    )
-    extractor_factory = CountingFactory(_matcher())
-    generator_factory = CountingFactory(StubGenerator(EventDraft(companies=[])))
-
-    stats = asyncio.run(job._run(extractor_factory, generator_factory))
-
-    assert stats["scanned"] == 1
-    assert stats["skipped_no_candidates"] == 1
-    assert (extractor_factory.calls, generator_factory.calls) == (1, 0)
-    assert job.summarize_stats(stats) == stats
+def test_summarize_stats_rejects_inconsistent_totals():
+    with pytest.raises(ValueError):
+        job.summarize_stats(dict(ZERO, scanned=3, created=1, failed=1))
