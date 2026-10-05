@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 
 CHART_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
 CHART_TR_ID = "FHKST03010100"
+CHART_MARKET_CODE = "UN"
 
 DIVIDEND_PATH = "/uapi/domestic-stock/v1/ksdinfo/dividend"
 DIVIDEND_TR_ID = "HHKDB669102C0"
@@ -36,6 +37,10 @@ HOLIDAY_TR_ID = "CTCA0903R"
 
 # 기간 조회 1회 최대 건수. 이 수만큼 돌아오면 더 있을 수 있다는 신호다.
 CHART_PAGE_SIZE = 100
+
+BASE_PRICE_LIMIT = Decimal("0.30")
+
+ChartRecord = tuple[date, Decimal, Decimal, Decimal, Decimal, int, int | None, Decimal | None]
 
 
 def fetch_daily_candles(
@@ -57,8 +62,9 @@ def fetch_daily_candles(
             close=close,
             volume=volume,
             trade_value=trade_value,
+            base_price=base_price,
         )
-        for parsed_date, open_, high, low, close, volume, trade_value in rows
+        for parsed_date, open_, high, low, close, volume, trade_value, base_price in rows
     ]
     return sorted(candles, key=lambda candle: candle.trade_date)
 
@@ -99,7 +105,7 @@ def fetch_period_candles(
             volume=volume,
             trade_value=trade_value,
         )
-        for parsed_date, open_, high, low, close, volume, trade_value in rows
+        for parsed_date, open_, high, low, close, volume, trade_value, _ in rows
     ]
     return sorted(candles, key=lambda candle: candle.base_date)
 
@@ -221,11 +227,11 @@ def _fetch_chart_rows(
     start: date,
     end: date,
     client: KisClient | None,
-) -> list[tuple[date, Decimal, Decimal, Decimal, Decimal, int, int | None]]:
+) -> list[ChartRecord]:
     """기간별시세를 100건 페이지 단위로 끝까지 읽는다."""
 
     client = client or get_kis_client()
-    parsed: dict[date, tuple[date, Decimal, Decimal, Decimal, Decimal, int, int | None]] = {}
+    parsed: dict[date, ChartRecord] = {}
     cursor_end = end
 
     while cursor_end >= start:
@@ -233,7 +239,7 @@ def _fetch_chart_rows(
             CHART_PATH,
             CHART_TR_ID,
             {
-                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_MRKT_DIV_CODE": CHART_MARKET_CODE,
                 "FID_INPUT_ISCD": ticker,
                 "FID_INPUT_DATE_1": start.strftime("%Y%m%d"),
                 "FID_INPUT_DATE_2": cursor_end.strftime("%Y%m%d"),
@@ -244,7 +250,7 @@ def _fetch_chart_rows(
         )
 
         rows = data.get("output2") or []
-        page: list[tuple[date, Decimal, Decimal, Decimal, Decimal, int, int | None]] = []
+        page: list[ChartRecord] = []
         for row in rows:
             record = _parse_chart_row(row)
             if record is not None:
@@ -266,9 +272,7 @@ def _fetch_chart_rows(
     return sorted(parsed.values(), key=lambda record: record[0])
 
 
-def _parse_chart_row(
-    row: dict[str, Any],
-) -> tuple[date, Decimal, Decimal, Decimal, Decimal, int, int | None] | None:
+def _parse_chart_row(row: dict[str, Any]) -> ChartRecord | None:
     trade_date = _parse_date(row.get("stck_bsop_date"))
     open_ = _parse_decimal(row.get("stck_oprc"))
     high = _parse_decimal(row.get("stck_hgpr"))
@@ -279,7 +283,25 @@ def _parse_chart_row(
     if trade_date is None or None in (open_, high, low, close) or volume is None:
         return None
 
-    return (trade_date, open_, high, low, close, volume, _parse_int(row.get("acml_tr_pbmn")))
+    return (
+        trade_date,
+        open_,
+        high,
+        low,
+        close,
+        volume,
+        _parse_int(row.get("acml_tr_pbmn")),
+        _base_price(close, _parse_decimal(row.get("prdy_vrss"))),
+    )
+
+
+def _base_price(close: Decimal, change: Decimal | None) -> Decimal | None:
+    if change is None or not change.is_finite():
+        return None
+    base = close - change
+    if base <= 0 or abs(close / base - 1) > BASE_PRICE_LIMIT:
+        return None
+    return base
 
 
 def _parse_date(value: object) -> date | None:
