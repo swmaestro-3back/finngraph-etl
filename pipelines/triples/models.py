@@ -37,7 +37,7 @@ Impact = Literal[
 
 
 # ==============================================================================
-# EntityExtractor
+# Entity (built by nodes/entity_extractor.linked_entities)
 # ==============================================================================
 
 
@@ -54,38 +54,6 @@ class Entity(BaseModel):
     company_id: int = Field(description="companies.id")
     stock_id: int = Field(description="stocks.id")
     ticker: str = Field(description="종목 단축코드 또는 미국 티커 — 원장 code")
-
-
-class RawEntityJudgement(BaseModel):
-    # The field declaration is intended, like RawRelation model
-    # first quotes the mention, then reasons, finally decides keep
-    entity: str = Field(description="Copy the candidate entity back EXACTLY as given.")
-    mention: str = Field(
-        description=(
-            "The sentence from the article where this surface form appears, copied verbatim. "
-            "Pick the occurrence that best shows how the article uses the entity."
-        )
-    )
-    reason: str = Field(
-        description=(
-            "One short sentence: does the surface form refer to the company here, and does the "
-            "company take part in a concrete business action or fact in the article?"
-        )
-    )
-    keep: bool = Field(
-        description=(
-            "True if the surface form refers to the company AND the company is a participant "
-            "in a concrete business action or fact. When unsure, true."
-        )
-    )
-
-
-class RawEntityJudgementList(BaseModel):
-    # List of RawEntityJudgements above
-    # Just for `structured_output` since it requires pydantic BaseModel type
-    judgements: list[RawEntityJudgement] = Field(
-        description="One judgement per candidate entity, in the same order as the input list."
-    )
 
 
 # ==============================================================================

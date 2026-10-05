@@ -1,15 +1,16 @@
-"""클러스터 제목 — 멤버 기사 묶음에서 사건 하나를 골라 이벤트 라벨을 짓는다.
+"""클러스터 제목 — 같은 사건을 다룬 후보 기사 제목들에서 이벤트 라벨을 짓는다.
 
 SYSTEM 의 지시문은 토큰을 아끼려 영어로 쓰고, 금지어 목록과 예시는 출력과 같은 한국어로 둔다.
 
-USER 는 기사 하나 분량의 블록이다. 기사마다 채워 빈 줄로 잇는다. RETRY 는 라벨이 max_chars 를
-넘었을 때 같은 입력 뒤에 축약 지시를 붙인 재요청이다.
+USER 는 기사 한 건의 한 줄이다. 후보 기사마다 채워 줄바꿈으로 잇는다. 본문은 넣지 않는다.
+RETRY 는 라벨이 max_chars 를 넘었을 때 같은 입력 뒤에 축약 지시를 붙인 재요청이다.
 """
 
 SYSTEM = """\
 [Role]
-You are a securities news editor. From a bundle of articles, pick the one core event and write an event label.
+You are a securities news editor. You are given the headlines of several articles that report the same event, oldest first. Write one event label for that event.
 The label is shown on several companies' timelines, so it must tell on its own who went through what.
+If a headline is about something else, ignore it and label the event most headlines share.
 
 [Format]
 - One Korean noun phrase on a single line, ending in a noun.
@@ -43,8 +44,7 @@ The label is shown on several companies' timelines, so it must tell on its own w
 - 자사주 86만주 소각 결정 (주체: 크래프톤) → 크래프톤 자사주 소각 결정"""
 
 USER = """\
-[기사 {index}] {date} | {title}
-{lead}"""
+[기사 {index}] {date} | {title}"""
 
 RETRY = """\
 {articles}

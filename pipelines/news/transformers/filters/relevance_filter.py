@@ -1,6 +1,7 @@
 """
-LLM 필터 - 기사 제목에 나온 기업마다 그 기업 페이지에 보여줄 기사인지(GATE 1~3) 판정한다.
-저장 여부는 검색 대상 종목의 판정으로 정하고, 통과한 기업은 모두 news_companies 에 연결된다.
+LLM 필터 - 기사 제목만 보고, 제목에 나온 기업마다 그 표기가 실제로 그 기업을 가리키는지
+(is_company)와 그 기업 페이지에 보여줄 기사인지(GATE 1~3, valid)를 판정한다.
+저장 여부는 검색 대상 종목의 판정으로 정하고, 둘 다 통과한 기업은 모두 news_companies 에 연결된다.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ class CompanyVerdict(BaseModel):
     """판정 기업 하나의 판정."""
 
     name: str = Field(description="입력의 '판정 기업' 목록에 있는 표기 그대로.")
+    is_company: bool = Field(description="제목의 이 표기가 그 상장사를 가리키면 true.")
     valid: bool = Field(description="이 기업이 GATE 1~3 중 하나를 통과하면 true.")
 
 
@@ -49,7 +51,6 @@ class BatchVerdict(BaseModel):
 class ArticleInput:
     id: int
     title: str
-    description: str
     # 판정 기업의 제목 표기. 검색 종목이 첫 번째다.
     companies: tuple[str, ...]
 
@@ -75,7 +76,6 @@ def build_relevance_input(articles: list[ArticleInput]) -> str:
         relevance_prompt.USER.format(
             id=article.id,
             title=article.title,
-            description=article.description,
             companies=", ".join(article.companies),
         )
         for article in articles
@@ -134,6 +134,7 @@ def resolve_verdict(
     기사는 search_ids(이 기사를 가져온 검색 종목, 기본은 첫 번째 기업) 중 하나라도 통과하면 통과다.
     통과한 검색 종목이 없는데 판정이 빠진 검색 종목이 있으면 통과 여부는 None — 그 종목이 통과일 수
     있으니 호출자가 누락으로 보고 다시 판정한다.
+    기업은 is_company 와 valid 가 모두 true 일 때만 통과다.
     목록에 없는 이름은 버린다(LLM 이 기업을 더하지 못한다). 표기 대신 정식명으로 답해도 받는다.
     이름은 공백을 빼고 비교한다 — 'LG 엔솔' 을 'LG엔솔' 로 붙여 답해도 같은 기업이다.
     같은 기업의 판정이 여러 번이면 첫 판정이 이긴다. 판정이 빠진 다른 기업은 연결하지 않는다.
@@ -149,7 +150,7 @@ def resolve_verdict(
         company = lookup.get(_name_key(company_verdict.name))
         if company is None or company["company_id"] in judged:
             continue
-        judged[company["company_id"]] = company_verdict.valid
+        judged[company["company_id"]] = company_verdict.is_company and company_verdict.valid
 
     linked = [
         {"company_id": company["company_id"], "name": company["name"]}
@@ -189,7 +190,7 @@ class RelevanceJudge:
             max_tokens = max(DEFAULT_MAX_TOKENS, 128 * get_news_settings().news_llm_batch_size)
 
         model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("relevance"),
             region_name=settings.bedrock_region,
             temperature=0,
             max_tokens=max_tokens,
@@ -232,7 +233,6 @@ async def judge_items(
             ArticleInput(
                 id=index,
                 title=item.get("title", ""),
-                description=item.get("description", ""),
                 companies=tuple(company["surface"] for company in companies),
             )
         )

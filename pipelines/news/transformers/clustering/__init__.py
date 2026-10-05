@@ -1,44 +1,35 @@
 from pipelines.news.transformers.clustering.batch import (
-    batch_documents,
+    add_batch_frequency,
+    row_documents,
     seed_window,
 )
-from pipelines.news.transformers.clustering.cluster import (
-    DEFAULT_THRESHOLD,
-    Cluster,
-    build_clusters,
-    medoid_and_cohesion,
-    select_top_members,
-)
-from pipelines.news.transformers.clustering.incremental import (
+from pipelines.news.transformers.clustering.online import (
     ClusterAssignment,
     ClusterSeed,
     Terms,
-    assign_batch,
-    merge_term_weights,
-    pick_representative,
+    assign_online,
+    profile_vector,
     sum_terms,
     top_keywords,
 )
 from pipelines.news.transformers.clustering.preprocess import document_terms
-from pipelines.news.transformers.clustering.vectorize import TfidfMatrix, build_tfidf
+from pipelines.news.transformers.clustering.representative import pick_representative
+from pipelines.news.transformers.clustering.vectorize import IdfTable, cosine, vectorize
 
 __all__ = [
-    "DEFAULT_THRESHOLD",
-    "Cluster",
     "ClusterAssignment",
     "ClusterSeed",
+    "IdfTable",
     "Terms",
-    "TfidfMatrix",
-    "assign_batch",
-    "batch_documents",
-    "build_clusters",
-    "build_tfidf",
+    "add_batch_frequency",
+    "assign_online",
+    "cosine",
     "document_terms",
-    "medoid_and_cohesion",
-    "merge_term_weights",
     "pick_representative",
+    "profile_vector",
+    "row_documents",
     "seed_window",
-    "select_top_members",
     "sum_terms",
     "top_keywords",
+    "vectorize",
 ]

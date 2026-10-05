@@ -3,27 +3,21 @@ from __future__ import annotations
 from typing import Any
 
 from pipelines.common.logging import get_logger
+from pipelines.news.config import get_news_settings
 from pipelines.news.repositories.postgres.news import (
     fetch_unsummarized_news_items,
     save_news_summaries,
 )
-from pipelines.news.transformers.summarizer import summarize_news_items
+from pipelines.news.transformers.summarizer import SummaryRow, summarize_news_items
 
 logger = get_logger(__name__)
 
 
-def summarize_unsummarized_news(
-    mode: str = "async",
-    max_concurrency: int | None = None,
-) -> dict[str, Any]:
+def summarize_unsummarized_news(max_concurrency: int | None = None) -> dict[str, Any]:
 
-    source_news = fetch_unsummarized_news_items()
+    source_news = fetch_unsummarized_news_items(get_news_settings().cluster_promote_size)
 
-    results = summarize_news_items(
-        items=source_news,
-        mode=mode,
-        max_concurrency=max_concurrency,
-    )
+    results = summarize_news_items(items=source_news, max_concurrency=max_concurrency)
 
     return {
         "rows": results,
@@ -32,21 +26,14 @@ def summarize_unsummarized_news(
     }
 
 
-def save_summaries(rows: list[tuple[int, str]]) -> dict[str, int]:
+def save_summaries(rows: list[SummaryRow]) -> dict[str, int]:
 
     return save_news_summaries(rows=rows)
 
 
-def run(
-    apply: bool = True,
-    mode: str = "async",
-    max_concurrency: int | None = None,
-) -> dict[str, Any]:
+def run(apply: bool = True, max_concurrency: int | None = None) -> dict[str, Any]:
 
-    result = summarize_unsummarized_news(
-        mode=mode,
-        max_concurrency=max_concurrency,
-    )
+    result = summarize_unsummarized_news(max_concurrency=max_concurrency)
 
     rows = result["rows"]
 

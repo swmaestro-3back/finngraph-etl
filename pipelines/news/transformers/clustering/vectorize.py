@@ -1,58 +1,54 @@
 """
-가중치가 붙은 토큰 목록을 TF-IDF 행렬로 바꾼다.
+가중치가 붙은 토큰 목록을 전역 IDF 기반 TF-IDF 희소 벡터로 바꾼다.
 
-scikit-learn 의존성을 늘리지 않으려고 numpy 로 직접 계산한다. 문서 수가
-수백~수천 건 규모라 밀집 행렬로 충분하다.
+문서 하나를 그때그때 벡터로 만들어 클러스터 프로필과 비교하므로 행렬을 만들지 않는다.
+벡터는 토큰 → 값 dict 이고, 코사인 유사도는 겹치는 토큰의 곱을 더한 값이다.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
-
-import numpy as np
-
-
-class TfidfMatrix:
-    """L2 정규화된 TF-IDF 행렬과 어휘 사전을 함께 들고 다닌다."""
-
-    def __init__(self, matrix: np.ndarray, vocabulary: list[str]) -> None:
-        self.matrix = matrix
-        self.vocabulary = vocabulary
-
-    def cosine_similarity(self) -> np.ndarray:
-        """행 벡터가 L2 정규화돼 있으므로 내적이 곧 코사인 유사도다."""
-        return np.clip(self.matrix @ self.matrix.T, 0.0, 1.0)
+import math
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 
-def build_tfidf(documents: list[list[tuple[str, float]]], min_df: int = 1) -> TfidfMatrix:
-    """(토큰, 가중치) 목록들로부터 TF-IDF 행렬을 만든다."""
-    document_frequency: dict[str, int] = defaultdict(int)
-    for terms in documents:
-        for term in {term for term, _ in terms}:
-            document_frequency[term] += 1
+@dataclass(frozen=True, slots=True)
+class IdfTable:
+    """토큰별 문서 수(df)와 전체 문서 수. 런 시작 때 DB 에서 한 번 읽어 런 내내 고정한다.
 
-    vocabulary = sorted(term for term, df in document_frequency.items() if df >= min_df)
-    index = {term: i for i, term in enumerate(vocabulary)}
+    배치 안에서 df 를 세면 한 사건이 배치를 채울 때 그 사건의 핵심 토큰이 가장 흔한 토큰이 돼
+    같은 사건이 갈라진다. 누적 df 를 쓰면 문서 하나의 벡터가 배치 구성과 무관해진다.
+    """
 
-    n_docs = len(documents)
-    matrix = np.zeros((n_docs, len(vocabulary)), dtype=np.float32)
-    if not vocabulary:
-        return TfidfMatrix(matrix, vocabulary)
+    document_frequency: dict[str, int] = field(default_factory=dict)
+    document_count: int = 0
 
-    for row, terms in enumerate(documents):
-        for term, weight in terms:
-            col = index.get(term)
-            if col is not None:
-                matrix[row, col] += weight
+    def idf(self, token: str) -> float:
+        """처음 보는 토큰은 df=0 으로 본다 — 가장 큰 값이다."""
+        df = self.document_frequency.get(token, 0)
+        return math.log((1.0 + self.document_count) / (1.0 + df)) + 1.0
 
-    # 빈도가 높은 단어의 영향을 눌러주는 sublinear TF.
-    np.log1p(matrix, out=matrix)
 
-    df = np.array([document_frequency[term] for term in vocabulary], dtype=np.float32)
-    idf = np.log((1.0 + n_docs) / (1.0 + df)) + 1.0
-    matrix *= idf
+def vectorize(terms: Iterable[tuple[str, float]], idf: IdfTable) -> dict[str, float]:
+    """(토큰, 가중치) 목록을 L2 정규화된 희소 TF-IDF 벡터로 바꾼다. 토큰이 없으면 빈 dict 다.
 
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    np.divide(matrix, norms, out=matrix, where=norms > 0)
+    같은 토큰의 가중치를 더한 뒤 sublinear TF(log1p)를 걸고 IDF 를 곱한다.
+    """
+    summed: dict[str, float] = {}
+    for token, weight in terms:
+        summed[token] = summed.get(token, 0.0) + weight
 
-    return TfidfMatrix(matrix, vocabulary)
+    vector = {
+        token: math.log1p(weight) * idf.idf(token) for token, weight in summed.items() if weight > 0
+    }
+    norm = math.sqrt(sum(value * value for value in vector.values()))
+    if norm == 0:
+        return {}
+    return {token: value / norm for token, value in vector.items()}
+
+
+def cosine(left: dict[str, float], right: dict[str, float]) -> float:
+    """정규화된 두 희소 벡터의 코사인 유사도(내적). 빈 벡터는 무엇과도 0 이다."""
+    if len(left) > len(right):
+        left, right = right, left
+    return sum(value * right.get(token, 0.0) for token, value in left.items())

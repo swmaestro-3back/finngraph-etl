@@ -7,25 +7,29 @@
 ```text
 finngraph-etl/
 ├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
-│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드 · 개체 사전 생성
+│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드 · 개체 사전 생성 · 미국 상장사 크롤링
 │   ├── disclosures/      # DART 공시(단일판매ㆍ공급계약체결) 수집
+│   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
 │   ├── health/           # 운영 헬스체크
+│   ├── market_calendar/  # 휴장일 · 예탁원 일정 · 공모주 · DART 공모 신고서 수집
 │   ├── news/             # 뉴스 수집 · 필터 · 요약
-│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계
-│   ├── themes/           # 테마 크롤링
+│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계 · 파생지표
+│   ├── themes/           # 테마 크롤링 · 테마 지수 봉 백필
 │   └── triples/          # 트리플(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
-│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
+│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis · dart)
 │   │   ├── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
 │   │   └── gazetteer.py  # 개체 사전 매처 — 본문 기업 표기 → company_id·stock_id·ticker
+│   ├── briefings/        # 백엔드 브리핑 발행 트리거
 │   ├── companies/        # 법인 ETL
 │   ├── disclosures/      # DART 공시 ETL
-│   ├── stocks/           # 주식 및 주가 ETL
+│   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
+│   ├── market_calendar/  # 증시 일정 ETL (휴장일 · 배당 · 증자 · 주총 · 공모)
 │   ├── news/             # 뉴스 ETL
+│   ├── stocks/           # 주식 및 주가 ETL
 │   ├── themes/           # 테마 ETL
-│   ├── triples/          # 트리플관계 ETL
-│   └── events/           # 뉴스 클러스터 → Neo4j Event 승격
+│   └── triples/          # 트리플관계 ETL
 ├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
@@ -60,9 +64,15 @@ finngraph-etl/
 | 동사 | 의미 |
 |------|------|
 | `collect` | 외부 API/크롤링 → RDB 적재 |
+| `crawl` | 웹 크롤링 → 파일 산출 (적재는 별도 `load`) |
 | `sync` | 원천 마스터 데이터 최신화 (멱등, 전체 갱신) |
 | `backfill` | 과거분 소급 수집 (주로 수동) |
-| `compute` | 기존 데이터에서 파생값 계산 |
+| `compute` / `calculate` | 기존 데이터에서 파생값 계산 (종목 파생지표는 `compute`, 봉·등락률은 `calculate`) |
+| `aggregate` | 하위 주기 데이터를 상위 주기로 집계 (일봉 → 주·월봉) |
+| `select` | 이번 런의 처리 대상 선정 |
+| `resolve` | 앞 단계 산출물 위치 등 실행 입력 확정 |
+| `publish` | 외부 시스템(백엔드 API·Redis)에 결과 발행을 트리거 |
+| `promote` | 한 저장소의 데이터를 상위 개념으로 승격 (클러스터 → Event) |
 | `generate` | LLM 생성 |
 | `embed` | 벡터 임베딩 생성·적재 |
 | `extract` / `merge` / `load` | 단계 분리형 파이프라인의 ETL 각 단계 |

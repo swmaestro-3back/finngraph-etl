@@ -1,8 +1,9 @@
 """핫테마 편입 기업 뉴스 수집 (핫테마 발행 직후 + 장외 시간 cron).
 
-수집·군집화까지만 한다. 삼중항 추출과 요약은 이 DAG 이 발행하는 `etl://news/clusters` Asset 을
-따라 `triples_extract_triples` → `news_summarize_articles` 가 이어서 돈다 — LLM 처리가 길어져도
-다음 수집을 막지 않고, 백필(`news_backfill_krx100`)과 하류를 공유하기 위해서다.
+수집·필터·본문 크롤링·기업 판정·저장까지만 한다. 클러스터 판정은 이 DAG 이 발행하는
+`etl://news/articles` Asset 을 따라 `news_cluster_articles` 가, 삼중항 추출은 그 뒤
+`triples_extract_triples` 가 이어서 돈다 — LLM 처리가 길어져도 다음 수집을 막지 않기 위해서다.
+백필(`news_backfill_krx100`)은 클러스터 DAG 를 따로 둔다(`news_backfill_cluster_articles`).
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ except ImportError:
 
 
 if dag and task:
-    news_clusters_updated = Asset("etl://news/clusters")
+    news_articles_saved = Asset("etl://news/articles")
 
     @dag(
         dag_id="news_collect_articles",
@@ -55,16 +56,15 @@ if dag and task:
             selection = run([int(theme_id) for theme_id in (params or {}).get("theme_ids") or []])
             return {"theme_ids": selection.theme_ids, "tickers": selection.tickers}
 
-        @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
+        @task(retries=2, retry_delay=timedelta(minutes=5), outlets=[news_articles_saved])
         def collect_articles(selection: dict[str, list]) -> dict[str, Any]:
             from pipelines.news.jobs.collect_articles import run
 
             result = run(theme_ids=selection["theme_ids"], tickers=selection["tickers"])
-            if result["created"] + result["updated"] == 0:
+            if result["saved"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "할 일이 없었다"다.
-                # 새 기사도 갱신할 카운터도 없는 시간이라 하류(삼중항 추출·Event 승격)를 깨울
-                # 이유가 없다.
-                raise AirflowSkipException("클러스터 생성·갱신 0건 — 하류를 깨우지 않는다")
+                # 클러스터 DAG 가 할 일은 새로 저장된 기사가 있을 때 생긴다.
+                raise AirflowSkipException("신규 저장 0건 — 클러스터 DAG 를 깨우지 않는다")
             return result
 
         collect_articles(select_themes())
