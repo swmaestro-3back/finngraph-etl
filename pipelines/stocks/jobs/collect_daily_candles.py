@@ -9,7 +9,7 @@ lookback을 하루가 아니라 열흘로 잡는 이유는 정정·수정주가 
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from pipelines.common.clients.kis import get_kis_client
 from pipelines.common.clients.postgres import session_scope
@@ -23,6 +23,7 @@ from pipelines.stocks.repositories.postgres.stock_candles import (
     upsert_period_candles,
 )
 from pipelines.stocks.repositories.postgres.stocks import fetch_serviceable_stocks
+from pipelines.stocks.types import DailyCandle
 
 logger = get_logger(__name__)
 
@@ -30,12 +31,22 @@ CHUNK_SIZE = 100
 
 PERIODS = ("W", "M")
 
+REGULAR_OPEN = time(9, 0)
+
+
+def drop_preopen_placeholders(candles: list[DailyCandle], now: datetime) -> list[DailyCandle]:
+    if now.time() >= REGULAR_OPEN:
+        return candles
+    today = now.date()
+    return [c for c in candles if not (c.trade_date == today and c.volume == 0)]
+
 
 def run(limit: int | None = None) -> None:
     """최근 구간의 일봉을 KIS에서 받아 갱신한다."""
 
     settings = get_settings()
-    today = now_kst().date()
+    now = now_kst()
+    today = now.date()
     start = today - timedelta(days=settings.stock_daily_lookback_days)
 
     client = get_kis_client()
@@ -51,7 +62,8 @@ def run(limit: int | None = None) -> None:
         candles = []
         for _, ticker in chunk:
             try:
-                candles.extend(fetch_daily_candles(ticker, start, today, client=client))
+                fetched = fetch_daily_candles(ticker, start, today, client=client)
+                candles.extend(drop_preopen_placeholders(fetched, now))
             except Exception:
                 logger.exception("일봉 갱신 실패: ticker=%s", ticker)
                 failed.append(ticker)
