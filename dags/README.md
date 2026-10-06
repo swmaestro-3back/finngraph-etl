@@ -81,6 +81,8 @@ stocks_daily_pipeline ───────► etl://stocks/daily ────�
 발행되고, `stocks_compute_derived` 의 핫테마 발행이 테마 봉을 읽을 수 있다. 장중에는
 `stocks_intraday_candles` 가 매시간 같은 lookback 구간을 다시 계산한다.
 
+`collect_daily_candles` 직후의 `repair_adjusted_history` 태스크는 분할·병합으로 수정주가가 어긋난 종목을 감지해 전체 이력(일·주·월봉·등락률·편입 테마 지수)을 다시 받고, 실패해도 삼켜 뒤의 집계·발행·브리핑을 막지 않는다.
+
 > **배포 순서(테마 봉).** `V5__theme_candles.sql` 을 먼저 적용하고 `themes_backfill_candles` 를 장외 시간에 한 번 실행한다. V5 없이 배포하면 `calculate_theme_daily` 가 실패해 `etl://stocks/daily` 가 발행되지 않고 파생·핫테마·브리핑이 그날 멈춘다.
 
 종목·테마 봉 네 테이블의 `change_rate` 는 등락률(%)이다. 종목 일봉은 기준가(`base_price`, KIS 통합

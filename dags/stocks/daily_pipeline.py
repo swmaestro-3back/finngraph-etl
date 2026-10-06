@@ -64,10 +64,22 @@ if dag and task:
                 raise AirflowSkipException(f"{today} 휴장일 — 수집을 건너뛴다")
 
         @task(retries=2)
-        def collect_daily_candles() -> None:
+        def collect_daily_candles() -> list[str]:
             from pipelines.stocks.jobs.collect_daily_candles import run
 
-            run()
+            return run()
+
+        @task(retries=1)
+        def repair_adjusted_history(tickers: list[str]) -> int:
+            from pipelines.stocks.jobs.repair_adjusted_history import run
+
+            try:
+                return run(tickers)
+            except Exception:
+                from pipelines.common.logging import get_logger
+
+                get_logger(__name__).exception("수정주가 복구 태스크 실패: tickers=%s", tickers)
+                return 0
 
         @task(retries=1)
         def aggregate_period_candles() -> int:
@@ -111,10 +123,11 @@ if dag and task:
             run()
 
         candles = check_market_open() >> collect_daily_candles()
+        repaired = repair_adjusted_history(candles)
         flows = collect_investor_flows()
-        candles >> aggregate_period_candles() >> calculate_stock_change_rates() >> flows
+        repaired >> aggregate_period_candles() >> calculate_stock_change_rates() >> flows
         (
-            candles
+            repaired
             >> calculate_theme_daily()
             >> calculate_theme_period()
             >> calculate_theme_change_rates()

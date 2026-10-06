@@ -17,6 +17,10 @@ from pipelines.themes.types import ConstituentCandle
 
 FETCH_THEME_IDS_SQL = text("SELECT DISTINCT theme_id FROM theme_stocks ORDER BY theme_id")
 
+FETCH_THEME_IDS_FOR_STOCKS_SQL = text(
+    "SELECT DISTINCT theme_id FROM theme_stocks WHERE stock_id = ANY(:stock_ids) ORDER BY theme_id"
+)
+
 FETCH_CONSTITUENT_CANDLES_SQL = text(
     """
     SELECT c.stock_id, c.trade_date, c.open, c.high, c.low, c.close,
@@ -35,6 +39,13 @@ def fetch_theme_ids(session: Session) -> list[int]:
     """편입 종목이 하나라도 있는 테마 id."""
 
     return [row[0] for row in session.execute(FETCH_THEME_IDS_SQL)]
+
+
+def fetch_theme_ids_for_stocks(session: Session, stock_ids: list[int]) -> list[int]:
+    if not stock_ids:
+        return []
+    rows = session.execute(FETCH_THEME_IDS_FOR_STOCKS_SQL, {"stock_ids": stock_ids})
+    return [row[0] for row in rows]
 
 
 def fetch_constituent_candles(
