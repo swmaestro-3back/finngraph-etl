@@ -44,6 +44,7 @@ dags/
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `30 20 * * 1-5` (평일 20:30) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
+| stocks | `stocks/weekly_period_candles.py` | `stocks_weekly_period_candles` | `stocks` | `0 9 * * 6` (토 09시, KIS 주·월봉 120일 재수집으로 수정주가 보정) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/backfill_period_candles.py` | `stocks_backfill_period_candles` | `stocks`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks`, `backfill`, `manual` | 수동 |
@@ -67,7 +68,7 @@ companies_collect_kis_financials ─► etl://companies/financials
   (평일 06시)
 
 stocks_daily_pipeline ───────► etl://stocks/daily ──────► stocks_compute_derived
-  (평일 20:30, 일봉→[기간봉 ∥ 테마 일봉→테마 기간봉]→수급)   (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
+  (평일 20:30, 일봉→[기간봉 집계 ∥ 테마 일봉→테마 기간봉]→수급)   (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
 ```
 
 `stocks_compute_derived`는 `etl://stocks/daily` 하나만 구독한다. PER은 분기 EPS 4개를 더한 TTM이라
