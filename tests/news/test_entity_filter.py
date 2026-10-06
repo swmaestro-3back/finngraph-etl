@@ -325,7 +325,7 @@ def test_prompt_examples_cover_the_common_false_hits():
     assert "only in the body" in entity._SYSTEM
     assert "share buttons" in entity._SYSTEM
     assert "parent or group company's plan" in entity._SYSTEM
-    assert "Affiliate label" in entity._SYSTEM
+    assert "Affiliate or group label" in entity._SYSTEM
 
     roles: dict[str, set[str]] = {}
     for _, judgements in _example_judgements():
@@ -334,12 +334,12 @@ def test_prompt_examples_cover_the_common_false_hits():
     roles = {entity: role for entity, (role,) in roles.items()}  # 같은 표기는 예시마다 같은 역할
     assert roles["카카오"] == "not_company"  # 공유 버튼("카카오톡"), "카카오 계열사" 소속 표기
     assert roles["한화"] == "not_company"  # 원화 표기
-    assert roles["하이브"] == "not_company"  # 긴 단어의 일부("하이브리드")
+    assert roles["레이"] == "not_company"  # 긴 단어의 일부("인플레이션")
     assert roles["키움증권"] == "source"  # 목표주가를 낸 증권사
     assert roles["포스코퓨처엠"] == "listed"  # 함께 오른 종목
     # 삼성SDS 수혜 기사의 삼성전자(그룹사 계획)와 SK텔레콤(다른 기업 실적)은 배경이다
     assert roles["삼성전자"] == "background"
     assert roles["SK텔레콤"] == "background"
-    # 남기는 것: 계약 상대방, 승계되는 계약의 고객사, 수주의 발주처
-    for party in ("삼성SDI", "LG에너지솔루션", "삼성바이오로직스"):
+    # 남기는 것: 계약 상대방, 수주의 발주처, 주가 급등 뒤 사건의 공동 취득자
+    for party in ("삼성SDI", "삼성바이오로직스", "삼성카드"):
         assert roles[party] == "party"
