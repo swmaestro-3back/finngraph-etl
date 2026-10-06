@@ -2,29 +2,33 @@
 
 from __future__ import annotations
 
+import json
+
 from pipelines.news.transformers.filters import entity_filter
 from pipelines.news.transformers.filters.entity_filter import (
+    KEPT_ROLES,
     EntityJudgement,
     EntityJudgementList,
     filter_body_entities,
     merge_linked,
     resolve_judgements,
 )
+from pipelines.news.transformers.prompts import entity
 
 
 def _company(company_id: int, name: str, surface: str | None = None) -> dict:
     return {"company_id": company_id, "name": name, "surface": surface or name}
 
 
-def _judgement(entity: str, keep: bool, mention: str | None = None) -> EntityJudgement:
-    # 기본 mention 은 그 표기를 담은 문장이다 — 표기가 없는 mention 은 유지 판정을 무효로 만든다
+def _judgement(entity: str, role: str, mention: str | None = None) -> EntityJudgement:
+    # 기본 mention 은 그 표기를 담은 문장이다 — 표기가 없는 mention 은 통과 판정을 무효로 만든다
     if mention is None:
         mention = f"{entity.strip()} 이 나오는 원문 문장"
-    return EntityJudgement(entity=entity, mention=mention, reason="근거", keep=keep)
+    return EntityJudgement(entity=entity, mention=mention, reason="근거", role=role)
 
 
-def _verdict(*pairs: tuple[str, bool]) -> EntityJudgementList:
-    return EntityJudgementList(judgements=[_judgement(entity, keep) for entity, keep in pairs])
+def _verdict(*pairs: tuple[str, str]) -> EntityJudgementList:
+    return EntityJudgementList(judgements=[_judgement(entity, role) for entity, role in pairs])
 
 
 def _item(body_companies: list[dict], linked: list[dict] | None = None, text: str = "본문") -> dict:
@@ -41,10 +45,29 @@ def _item(body_companies: list[dict], linked: list[dict] | None = None, text: st
 # ── resolve_judgements ───────────────────────────────────────────────────────
 
 
-def test_resolve_keeps_only_companies_with_a_kept_surface():
-    companies = [_company(300, "삼성SDI"), _company(400, "대상")]
+def test_only_party_is_linked():
+    assert KEPT_ROLES == {"party"}
 
-    passed = resolve_judgements(companies, [_judgement("삼성SDI", True), _judgement("대상", False)])
+
+def test_resolve_keeps_only_companies_with_a_party_surface():
+    companies = [
+        _company(300, "삼성SDI"),
+        _company(400, "대상"),
+        _company(500, "삼성전자"),
+        _company(600, "포스코퓨처엠"),
+        _company(700, "키움증권"),
+    ]
+
+    passed = resolve_judgements(
+        companies,
+        [
+            _judgement("삼성SDI", "party"),
+            _judgement("대상", "not_company"),
+            _judgement("삼성전자", "background"),
+            _judgement("포스코퓨처엠", "listed"),
+            _judgement("키움증권", "source"),
+        ],
+    )
 
     assert passed == [{"company_id": 300, "name": "삼성SDI"}]
 
@@ -53,7 +76,7 @@ def test_resolve_drops_surfaces_the_llm_skipped():
     companies = [_company(300, "삼성SDI"), _company(400, "포스코퓨처엠")]
 
     # 포스코퓨처엠의 판정이 빠졌다 — 애매하면 버린다
-    assert resolve_judgements(companies, [_judgement("삼성SDI", True)]) == [
+    assert resolve_judgements(companies, [_judgement("삼성SDI", "party")]) == [
         {"company_id": 300, "name": "삼성SDI"}
     ]
 
@@ -62,20 +85,20 @@ def test_resolve_ignores_names_outside_input():
     companies = [_company(300, "삼성SDI")]
 
     passed = resolve_judgements(
-        companies, [_judgement("삼성SDI", True), _judgement("테슬라", True)]
+        companies, [_judgement("삼성SDI", "party"), _judgement("테슬라", "party")]
     )
 
     assert passed == [{"company_id": 300, "name": "삼성SDI"}]
 
 
-def test_resolve_passes_company_once_when_any_spelling_is_kept():
+def test_resolve_passes_company_once_when_any_spelling_is_party():
     companies = [
         _company(300, "LG에너지솔루션", "LG엔솔"),
         _company(300, "LG에너지솔루션", "LG에너지솔루션"),
     ]
 
     passed = resolve_judgements(
-        companies, [_judgement("LG엔솔", False), _judgement("LG에너지솔루션", True)]
+        companies, [_judgement("LG엔솔", "listed"), _judgement("LG에너지솔루션", "party")]
     )
 
     assert passed == [{"company_id": 300, "name": "LG에너지솔루션"}]
@@ -85,28 +108,28 @@ def test_resolve_uses_first_judgement_and_strips_echo():
     companies = [_company(300, "삼성SDI")]
 
     passed = resolve_judgements(
-        companies, [_judgement(" 삼성SDI ", False), _judgement("삼성SDI", True)]
+        companies, [_judgement(" 삼성SDI ", "background"), _judgement("삼성SDI", "party")]
     )
 
     assert passed == []
 
 
-def test_resolve_drops_kept_surface_missing_from_its_mention():
+def test_resolve_drops_party_surface_missing_from_its_mention():
     companies = [_company(300, "삼성SDI"), _company(400, "레이")]
 
-    # 모델이 '오퍼레이터' 속 '레이'의 위치를 못 찾고 다른 문장을 인용했다 — 근거 없는 유지는 버린다
+    # 모델이 '오퍼레이터' 속 '레이'의 위치를 못 찾고 다른 문장을 인용했다 — 근거 없는 통과는 버린다
     passed = resolve_judgements(
         companies,
         [
-            _judgement("삼성SDI", True, mention="엘앤에프가 삼성SDI에 양극재를 공급한다."),
-            _judgement("레이", True, mention="엘앤에프가 삼성SDI에 양극재를 공급한다."),
+            _judgement("삼성SDI", "party", mention="엘앤에프가 삼성SDI에 양극재를 공급한다."),
+            _judgement("레이", "party", mention="엘앤에프가 삼성SDI에 양극재를 공급한다."),
         ],
     )
 
     assert passed == [{"company_id": 300, "name": "삼성SDI"}]
 
 
-def test_resolve_passes_company_when_another_spelling_has_a_grounded_keep():
+def test_resolve_passes_company_when_another_spelling_has_a_grounded_party():
     companies = [
         _company(300, "LG에너지솔루션", "LG엔솔"),
         _company(300, "LG에너지솔루션", "LG에너지솔루션"),
@@ -115,8 +138,8 @@ def test_resolve_passes_company_when_another_spelling_has_a_grounded_keep():
     passed = resolve_judgements(
         companies,
         [
-            _judgement("LG엔솔", True, mention="배터리 업계가 주목했다."),
-            _judgement("LG에너지솔루션", True, mention="LG에너지솔루션이 ESS 를 공급한다."),
+            _judgement("LG엔솔", "party", mention="배터리 업계가 주목했다."),
+            _judgement("LG에너지솔루션", "party", mention="LG에너지솔루션이 ESS 를 공급한다."),
         ],
     )
 
@@ -136,12 +159,12 @@ def test_merge_linked_keeps_title_companies_first_without_duplicates():
 # ── filter_body_entities ─────────────────────────────────────────────────────
 
 
-def test_filter_adds_kept_body_companies_to_linked_companies():
-    seen: list[tuple[str, list[str]]] = []
+def test_filter_gives_judge_headline_and_adds_party_companies_to_linked():
+    seen: list[tuple] = []
 
-    async def judge(text, surfaces):
-        seen.append((text, surfaces))
-        return _verdict(("삼성SDI", True), ("대상", False))
+    async def judge(title, headline_companies, text, surfaces):
+        seen.append((title, headline_companies, text, surfaces))
+        return _verdict(("삼성SDI", "party"), ("대상", "not_company"))
 
     item = _item(
         [_company(300, "삼성SDI"), _company(400, "대상")], text="엘앤에프가 삼성SDI에 공급한다."
@@ -154,12 +177,51 @@ def test_filter_adds_kept_body_companies_to_linked_companies():
         {"company_id": 300, "name": "삼성SDI"},
     ]
     assert (result.judged, result.failed, result.kept) == (1, 0, 1)
-    # 후보 표기가 본문 등장 순서 그대로 간다
-    assert seen == [("엘앤에프가 삼성SDI에 공급한다.", ["삼성SDI", "대상"])]
+    # 제목과 제목 통과 기업의 이름이 가고, 후보 표기는 본문 등장 순서 그대로 간다
+    assert seen == [
+        (
+            "엘앤에프, 양극재 공급",
+            ["엘앤에프"],
+            "엘앤에프가 삼성SDI에 공급한다.",
+            ["삼성SDI", "대상"],
+        )
+    ]
+
+
+def test_filter_drops_background_company_cited_to_explain_the_headline():
+    """삼성SDS 급등 기사에서 수혜의 근거로 인용된 삼성전자는 연결하지 않는다."""
+
+    async def judge(title, headline_companies, text, surfaces):
+        return _verdict(("삼성전자", "background"))
+
+    item = _item(
+        [_company(500, "삼성전자")], linked=[{"company_id": 200, "name": "삼성에스디에스"}]
+    )
+
+    result = filter_body_entities([item], judge=judge, max_concurrency=1, body_limit=12000)
+
+    assert item["_linked_companies"] == [{"company_id": 200, "name": "삼성에스디에스"}]
+    assert result.kept == 0
+
+
+def test_filter_counts_roles_of_judged_candidates_only():
+    async def judge(title, headline_companies, text, surfaces):
+        return _verdict(
+            ("삼성SDI", "party"),
+            ("삼성전자", "background"),
+            ("키움증권", "source"),
+            ("테슬라", "party"),  # 입력에 없는 이름은 세지 않는다
+        )
+
+    item = _item([_company(300, "삼성SDI"), _company(500, "삼성전자"), _company(700, "키움증권")])
+
+    result = filter_body_entities([item], judge=judge, max_concurrency=1, body_limit=12000)
+
+    assert dict(result.roles) == {"party": 1, "background": 1, "source": 1}
 
 
 def test_filter_skips_llm_for_articles_without_body_companies():
-    async def judge(text, surfaces):  # pragma: no cover
+    async def judge(title, headline_companies, text, surfaces):  # pragma: no cover
         raise AssertionError("호출되면 안 된다")
 
     item = _item([])
@@ -173,9 +235,9 @@ def test_filter_skips_llm_for_articles_without_body_companies():
 def test_filter_truncates_body_to_limit():
     seen: list[str] = []
 
-    async def judge(text, surfaces):
+    async def judge(title, headline_companies, text, surfaces):
         seen.append(text)
-        return _verdict(("삼성SDI", True))
+        return _verdict(("삼성SDI", "party"))
 
     item = _item([_company(300, "삼성SDI")], text="가" * 50)
 
@@ -185,10 +247,10 @@ def test_filter_truncates_body_to_limit():
 
 
 def test_filter_isolates_failures_and_counts_them():
-    async def judge(text, surfaces):
+    async def judge(title, headline_companies, text, surfaces):
         if "실패" in text:
             raise RuntimeError("bedrock down")
-        return _verdict(("삼성SDI", True))
+        return _verdict(("삼성SDI", "party"))
 
     failed = _item([_company(300, "삼성SDI")], text="실패하는 본문")
     passed = _item([_company(300, "삼성SDI")], text="정상 본문")
@@ -214,20 +276,29 @@ def test_filter_without_targets_does_not_build_a_judge(monkeypatch):
     assert (result.judged, result.failed, result.kept) == (0, 0, 0)
 
 
-def test_prompt_drops_candidates_when_unsure():
-    from pipelines.news.transformers.prompts import entity
-
-    assert "a wrong keep is worse than a miss" in entity._SYSTEM
-    # triples 용 프롬프트의 "애매하면 keep" 문장이 남아 있으면 안 된다
-    assert "only its weight is in doubt, keep it" not in entity._SYSTEM
+# ── 프롬프트 ─────────────────────────────────────────────────────────────────
 
 
 def _example_judgements() -> list[tuple[dict, list[dict]]]:
-    import json
-
-    from pipelines.news.transformers.prompts import entity
-
     return [(example, json.loads(example["output"])["judgements"]) for example in entity._EXAMPLES]
+
+
+def test_prompt_judges_role_against_the_headline_and_drops_when_unsure():
+    assert "a wrong party is worse than a miss" in entity._SYSTEM
+    assert 'the role is not "party"' in entity._SYSTEM
+    # 제목과 제목 기업을 받아 주된 뉴스를 먼저 정한다
+    assert "First name the main news" in entity._SYSTEM
+    for variable in ("{title}", "{headline_companies}", "{text}", "{entities}"):
+        assert variable in entity._HUMAN
+    assert set(entity.PROMPT.input_variables) == {"title", "headline_companies", "text", "entities"}
+
+
+def test_prompt_roles_match_the_schema():
+    """프롬프트가 설명하는 역할 이름과 구조화 출력의 Literal 이 같다."""
+    schema_roles = set(EntityJudgement.model_json_schema()["properties"]["role"]["enum"])
+    for role in schema_roles:
+        assert f'"{role}"' in entity._SYSTEM
+    assert {j["role"] for _, js in _example_judgements() for j in js} == schema_roles
 
 
 def test_prompt_examples_follow_the_hard_rules():
@@ -242,30 +313,33 @@ def test_prompt_examples_follow_the_hard_rules():
             assert judgement["mention"] in example["text"]
             assert judgement["entity"] in judgement["mention"]
             assert judgement["reason"]
-        # 남기는 경우와 버리는 경우를 둘 다 보여 준다
-        assert {judgement["keep"] for judgement in judgements} == {True, False}
+        # 제목 기업은 후보에 없다
+        for headline_company in example["headline_companies"].split(", "):
+            assert headline_company not in candidates
 
 
-def test_prompt_is_written_for_body_only_candidates():
-    """후보는 본문에만 나온 기업이다(제목 기업은 관련성 필터가 판정했다). 프롬프트와 예시가 그 상황을
-    다루고, 실제 본문에서 가장 흔한 오탐(공유 버튼·저작권 문구, 원화 표기, 긴 단어의 일부,
-    증권사·주가 나열)을 보여 준다."""
-    from pipelines.news.transformers.prompts import entity
-
+def test_prompt_examples_cover_the_common_false_hits():
+    """후보는 본문에만 나온 기업이다(제목 기업은 관련성 필터가 판정했다). 예시가 실제 본문에서 가장
+    흔한 오탐(공유 버튼·저작권 문구, 원화 표기, 긴 단어의 일부, 증권사·주가 나열)과 주인공 기업의
+    뉴스를 설명하려고 인용된 다른 기업(그룹사 계획·다른 기업 실적)을 보여 준다."""
     assert "only in the body" in entity._SYSTEM
     assert "share buttons" in entity._SYSTEM
-    assert "securities firm" in entity._SYSTEM
-    assert "FULL article text" not in entity._SYSTEM
+    assert "parent or group company's plan" in entity._SYSTEM
+    assert "Affiliate or group label" in entity._SYSTEM
 
-    verdicts = {
-        judgement["entity"]: judgement["keep"]
-        for _, judgements in _example_judgements()
-        for judgement in judgements
-    }
-    # 버리는 것: 공유 버튼("카카오톡"), 원화 표기("한화 약 …원"), 긴 단어의 일부("하이브리드"),
-    # 목표주가를 낸 증권사, 주가가 함께 오른 종목
-    for dropped in ("카카오", "한화", "하이브", "키움증권", "포스코퓨처엠"):
-        assert verdicts[dropped] is False
-    # 남기는 것: 본문에만 나온 계약 상대방과 고객사
-    for kept in ("삼성SDI", "LG에너지솔루션"):
-        assert verdicts[kept] is True
+    roles: dict[str, set[str]] = {}
+    for _, judgements in _example_judgements():
+        for judgement in judgements:
+            roles.setdefault(judgement["entity"], set()).add(judgement["role"])
+    roles = {entity: role for entity, (role,) in roles.items()}  # 같은 표기는 예시마다 같은 역할
+    assert roles["카카오"] == "not_company"  # 공유 버튼("카카오톡"), "카카오 계열사" 소속 표기
+    assert roles["한화"] == "not_company"  # 원화 표기
+    assert roles["레이"] == "not_company"  # 긴 단어의 일부("인플레이션")
+    assert roles["키움증권"] == "source"  # 목표주가를 낸 증권사
+    assert roles["포스코퓨처엠"] == "listed"  # 함께 오른 종목
+    # 삼성SDS 수혜 기사의 삼성전자(그룹사 계획)와 SK텔레콤(다른 기업 실적)은 배경이다
+    assert roles["삼성전자"] == "background"
+    assert roles["SK텔레콤"] == "background"
+    # 남기는 것: 계약 상대방, 수주의 발주처, 주가 급등 뒤 사건의 공동 취득자
+    for party in ("삼성SDI", "삼성바이오로직스", "삼성카드"):
+        assert roles[party] == "party"

@@ -52,7 +52,7 @@ def _keep_all(surfaces: list[str]) -> EntityJudgementList:
     return EntityJudgementList(
         judgements=[
             EntityJudgement(
-                entity=surface, mention=f"{surface} 원문 문장", reason="근거", keep=True
+                entity=surface, mention=f"{surface} 원문 문장", reason="근거", role="party"
             )
             for surface in surfaces
         ]
@@ -160,7 +160,7 @@ def wired(monkeypatch):
             ]
         )
 
-    async def entity_judge(text, surfaces):
+    async def entity_judge(title, headline_companies, text, surfaces):
         calls["entity_judged"].append(list(surfaces))
         return _keep_all(surfaces)
 
@@ -258,7 +258,7 @@ def test_dropping_every_article_for_too_many_candidates_is_not_an_llm_outage(wir
     monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "0")
     config.get_news_settings.cache_clear()
 
-    async def boom(text, surfaces):
+    async def boom(title, headline_companies, text, surfaces):
         raise RuntimeError("bedrock down")
 
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: boom)
@@ -290,10 +290,12 @@ def test_listing_title_is_dropped_before_relevance_and_crawl(wired, monkeypatch)
 def test_body_company_rejected_by_entity_filter_is_not_linked(wired, monkeypatch):
     job, calls, _ = wired
 
-    async def reject(text, surfaces):
+    async def reject(title, headline_companies, text, surfaces):
         return EntityJudgementList(
             judgements=[
-                EntityJudgement(entity=surface, mention="문장", reason="배경 언급", keep=False)
+                EntityJudgement(
+                    entity=surface, mention="문장", reason="배경 언급", role="background"
+                )
                 for surface in surfaces
             ]
         )
@@ -346,7 +348,7 @@ def test_entity_failure_on_one_article_links_only_its_title_companies(wired, mon
         lambda queries, now, lookback, pages, templates: ([fresh, second], []),
     )
 
-    async def flaky(text, surfaces):
+    async def flaky(title, headline_companies, text, surfaces):
         if "미국" in text:
             raise RuntimeError("bedrock down")
         return _keep_all(surfaces)
@@ -363,7 +365,7 @@ def test_entity_failure_on_one_article_links_only_its_title_companies(wired, mon
 def test_run_raises_before_saving_when_all_entity_judgments_fail(wired, monkeypatch):
     job, calls, _ = wired
 
-    async def always_failing(text, surfaces):
+    async def always_failing(title, headline_companies, text, surfaces):
         raise RuntimeError("bedrock down")
 
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: always_failing)
