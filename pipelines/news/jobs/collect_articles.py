@@ -267,13 +267,14 @@ def _judge_body_companies(items: list[dict]) -> list[dict]:
         )
     logger.info(
         "[collect_articles] 본문 기업: 후보 %d개 초과 %d건(버림) / 후보 표기 %d개 (기사 %d건) "
-        "→ 통과 %d개 / 호출 실패 %d건",
+        "→ 통과 %d개 / 호출 실패 %d건 / 역할 %s",
         settings.news_body_candidate_max,
         len(items) - len(kept),
         sum(len(item["_body_companies"]) for item in kept),
         outcome.judged,
         outcome.kept,
         outcome.failed,
+        dict(outcome.roles),
     )
 
     return kept
