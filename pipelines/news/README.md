@@ -98,7 +98,7 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
   문서는 제목 + 본문 앞 `NEWS_CLUSTER_LEAD_CHARS` 자입니다. 유사도가 `NEWS_CLUSTER_THRESHOLD` 이상이면
   가장 가까운 클러스터에 편입하고, 아니면 새 클러스터를 만듭니다. 기록에 실패한 기사는 다음 런에
   다시 판정됩니다.
-- **후보와 대표**: 클러스터는 후보를 `NEWS_CLUSTER_PROMOTE_SIZE`(기본 5)건까지만 받습니다. 후보가 다
+- **후보와 대표**: 클러스터는 후보를 `NEWS_CLUSTER_PROMOTE_SIZE`(기본 3)건까지만 받습니다. 후보가 다
   차면 저장된 본문으로 대표 1건을 고릅니다(`transformers/clustering/representative.py`). 크롤링하지
   않습니다. 그 뒤에 붙는 기사는 `cluster_id` 만 받고 `original_size` 를 올립니다.
 - **제목**: 후보 기사 전부의 제목을 LLM 에 넣어 사건 이름을 짓습니다(`transformers/cluster_titler.py`,

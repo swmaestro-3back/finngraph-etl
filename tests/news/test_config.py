@@ -56,7 +56,7 @@ def test_cluster_promotion_defaults(monkeypatch):
 
     assert settings.cluster_backward_days == 1
     assert settings.cluster_idf_days == 90
-    assert settings.cluster_promote_size == 5
+    assert settings.cluster_promote_size == 3
     assert settings.cluster_promote_retry_days == 3
     assert settings.cluster_representative_min_chars == 200
     assert settings.cluster_lead_chars == 200
