@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Parameter Store 의 값으로 .env.dev 를 만든다. 기본값을 두지 않아 누락은 기동 실패로 드러난다.
+# Parameter Store 의 값으로 deploy/dev/.env 를 만든다. 기본값을 두지 않아 누락은 기동 실패로 드러난다.
 set -euo pipefail
 
 REGION=${AWS_REGION:-ap-northeast-2}
 PREFIX=${PARAM_PREFIX:-/finngraph/dev}
-OUT=${1:-.env.dev}
+OUT=${1:-deploy/dev/.env}
 
 command -v aws >/dev/null || { echo "aws CLI 가 없습니다" >&2; exit 1; }
 

@@ -1,8 +1,10 @@
+name: finngraph-etl
+
 # dev 서버용 스택. 로컬 compose 와 파일을 나눈 이유는 override 로는 서비스를 제거할 수 없고,
 # 실수로 로컬 postgres 가 뜨면 앱이 조용히 잘못된 DB 를 쓰기 때문이다.
 #
-#   scripts/dev-env.sh
-#   docker compose --env-file .env.dev -f docker-compose.dev.yml up -d
+#   scripts/dev-env.sh deploy/dev/.env
+#   docker compose -f deploy/dev/compose.yaml up -d
 
 x-airflow-common:
   &airflow-common # 서버에서 빌드하지 않는다. CI 가 ECR 에 올린 것을 받는다.
@@ -11,7 +13,7 @@ x-airflow-common:
   restart: unless-stopped
 
   env_file:
-    - path: .env.dev
+    - path: .env
       required: true
 
   environment: &airflow-common-env
@@ -40,17 +42,17 @@ services:
       -user=${DB_USER} -password=${DB_PASSWORD}
       -baselineOnMigrate=true -baselineVersion=1
       migrate
-    volumes: [./migrations/versions:/flyway/sql:ro]
+    volumes: [../../migrations/versions:/flyway/sql:ro]
 
   # cypher-shell 을 쓰려고 neo4j 이미지를 빌린다. 대상은 원격 인스턴스다.
   neo4j-init:
     image: neo4j:5
     restart: "no"
     env_file:
-      - path: .env.dev
+      - path: .env
         required: true
     volumes:
-      - ./migrations/neo4j:/migrations:ro
+      - ../../migrations/neo4j:/migrations:ro
     entrypoint:
       - bash
       - -c
@@ -77,7 +79,7 @@ services:
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:?Parameter Store 에 AIRFLOW_ADMIN_USER 가 없습니다}
-      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD 가 .env.dev 에 없습니다}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD 가 .env 에 없습니다}
 
   airflow-apiserver:
     <<: *airflow-common

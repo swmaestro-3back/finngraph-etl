@@ -1,3 +1,5 @@
+name: finngraph-etl
+
 # Airflow 스택 전체 기동: `docker compose --profile airflow up -d` (README "Running Airflow locally")
 x-airflow-common: &airflow-common
   build:
@@ -28,7 +30,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # 컨테이너 안에서는 호스트 포트(localhost:15432)가 아니라 compose 네트워크의 db:5432로 접속한다.
     DATABASE_URL: postgresql+psycopg://${ETL_DB_USER:-threeback}:${ETL_DB_PASSWORD:-12345678}@db:5432/${ETL_DB_NAME:-finngraph}
-    HOT_THEMES_REDIS_URL: ${HOT_THEMES_REDIS_URL:-redis://host.docker.internal:16379/0}
+    HOT_THEMES_REDIS_URL: redis://redis:6379/0
     DB_HOST: db
     DB_PORT: "5432"
     DB_NAME: ${ETL_DB_NAME:-finngraph}
@@ -36,10 +38,13 @@ x-airflow-common: &airflow-common
     DB_PASSWORD: ${ETL_DB_PASSWORD:-12345678}
     # 컨테이너 안에서는 호스트 포트(localhost:7687)가 아니라 compose 네트워크의 neo4j:7687로 접속한다.
     NEO4J_URI: bolt://neo4j:7687
+    NEO4J_USERNAME: ${NEO4J_USERNAME:?NEO4J_USERNAME 을 .env 에 설정하세요}
+    NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 를 .env 에 설정하세요}
+    NEO4J_DATABASE: ${NEO4J_DATABASE:?NEO4J_DATABASE 를 .env 에 설정하세요}
     BEDROCK_REGION: ${BEDROCK_REGION:-}
     BEDROCK_CHAT_MODEL: ${BEDROCK_CHAT_MODEL:-}
     # 백엔드 내부 API 트리거(핫테마 발행·브리핑 생성). 토큰이 비면 이 두 태스크만 실패한다.
-    BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://host.docker.internal:8081}
+    BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8080}
     INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
   volumes:
     - ./dags:/opt/airflow/dags
@@ -50,76 +55,8 @@ x-airflow-common: &airflow-common
   depends_on: &airflow-common-depends-on
     airflow-db:
       condition: service_healthy
-    db:
-      condition: service_healthy
-    neo4j:
-      condition: service_healthy
-    neo4j-init:
-      condition: service_completed_successfully
 
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: ${ETL_DB_USER:-threeback}
-      POSTGRES_PASSWORD: ${ETL_DB_PASSWORD:-12345678}
-      POSTGRES_DB: ${ETL_DB_NAME:-finngraph}
-    ports:
-      - "${ETL_DB_PORT:-15432}:5432"
-    volumes:
-      - etl_pgdata:/var/lib/postgresql/data
-      - ./docker/db/initdb:/docker-entrypoint-initdb.d:ro
-      - ./migrations/versions:/migrations/versions:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${ETL_DB_USER:-threeback} -d ${ETL_DB_NAME:-finngraph}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-  
-  neo4j:
-    image: neo4j:5
-    environment:
-      NEO4J_AUTH: "${NEO4J_USERNAME:?NEO4J_USERNAME 을 .env 에 설정하세요}/${NEO4J_PASSWORD:?NEO4J_PASSWORD 를 .env 에 설정하세요}"
-      NEO4J_initial_dbms_default__database: "${NEO4J_DATABASE:?NEO4J_DATABASE 를 .env 에 설정하세요}"
-    ports:
-      # port mapping
-      - "7474:7474" # HTTP Neo4j Browser (http://localhost:7474)
-      - "7687:7687" # Bolt Driver (app.core.db)
-    volumes:
-      - etl_neo4j_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:?} -p ${NEO4J_PASSWORD:?} 'RETURN 1' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  neo4j-init:
-    image: neo4j:5
-    depends_on:
-      neo4j:
-        condition: service_healthy
-    environment:
-      NEO4J_USERNAME: ${NEO4J_USERNAME:?NEO4J_USERNAME 을 .env 에 설정하세요}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD 를 .env 에 설정하세요}
-      NEO4J_DATABASE: ${NEO4J_DATABASE:?NEO4J_DATABASE 를 .env 에 설정하세요}
-    volumes:
-      - ./migrations/neo4j:/migrations:ro
-    # $$는 compose가 자기 변수로 해석하지 않고 컨테이너 셸에 넘기라는 이스케이프다.
-    # 비밀번호를 argv가 아닌 환경변수로 넘겨 `ps`·compose 로그에 노출되지 않게 한다.
-    entrypoint:
-      - bash
-      - -c
-      - |
-        set -e
-        for migration in /migrations/*.cypher; do
-          echo "running migration $$migration"
-          cypher-shell -a bolt://neo4j:7687 \
-            -u "$$NEO4J_USERNAME" -p "$$NEO4J_PASSWORD" -d "$$NEO4J_DATABASE" \
-            -f "$$migration"
-        done
-    restart: "no"
-
   # Airflow 메타데이터 전용 DB. ETL 데이터(db)와 수명주기/백업 정책을 분리한다.
   airflow-db:
     image: postgres:16
@@ -201,7 +138,5 @@ services:
         condition: service_completed_successfully
 
 volumes:
-  etl_pgdata:
-  etl_neo4j_data:
   etl_airflow_pgdata:
   etl_airflow_logs:
