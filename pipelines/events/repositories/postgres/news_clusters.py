@@ -13,7 +13,7 @@ from pipelines.events.models import ClusterCandidate
 # 후보 수가 승격 기준 미만)를 뺀다.
 SELECT_PROMOTED_SQL = text(
     """
-    SELECT id, title, first_published_at
+    SELECT id, title, first_published_at, last_published_at
       FROM news_clusters
      WHERE representative_news_id IS NOT NULL
        AND title IS NOT NULL
@@ -34,7 +34,10 @@ def fetch_promoted_clusters(promote_size: int, since: datetime) -> list[ClusterC
 
     return [
         ClusterCandidate(
-            cluster_id=int(row.id), title=row.title, first_published_at=row.first_published_at
+            cluster_id=int(row.id),
+            title=row.title,
+            first_published_at=row.first_published_at,
+            last_published_at=row.last_published_at,
         )
         for row in rows
     ]

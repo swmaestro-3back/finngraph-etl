@@ -24,8 +24,9 @@ news_collect_articles ──► etl://news/articles ──► news_cluster_artic
 task 하나(`generate_events`, `jobs/generate_events.py`)가 돕니다. LLM 을 부르지 않습니다.
 
 1. **후보** — `news_clusters` 에서 대표와 제목이 있고 후보가 `NEWS_CLUSTER_PROMOTE_SIZE` 건 이상이며
-   최근 `NEWS_EVENT_SCAN_DAYS` 안에 갱신된 클러스터를 읽고, Neo4j 에 `Event {cluster_id}` 가 없는 것만
-   남깁니다(`scan.py` 의 `scan_new_events`).
+   최근 `NEWS_EVENT_SCAN_DAYS` 안에 갱신된 클러스터를 읽고, Neo4j 에 `Event {cluster_id}` 가 있는지로
+   나눕니다(`scan.py` 의 `scan_events`). 노드가 있는 클러스터는 `last_published_at` 만 갱신하고(아래),
+   없는 클러스터가 2·3 단계로 갑니다.
 2. **당사자** — 클러스터 후보 기사 중 `NEWS_EVENT_COMPANY_MIN_ARTICLES`(기본 2)건 이상의
    `news_companies` 에 든 기업입니다. 사건의 당사자는 후보 대부분에 나오고 지나가는 언급은 한두 건에만
    나오므로, 한 기사의 오판정이 결과를 바꾸지 못합니다. 승격 후 기사의 연결은 세지 않습니다. 당사자가
@@ -37,9 +38,19 @@ task 하나(`generate_events`, `jobs/generate_events.py`)가 돕니다. LLM 을 
 기업 추출과 판정은 뉴스 수집(`collect_articles`)이 끝내 `news_companies` 에 저장했습니다 — 제목의
 기업은 관련성 필터가, 본문에만 나온 기업은 엔티티 필터가 판정합니다.
 
-노드에는 `cluster_id`, `title`, `first_published_at`, `created_at` 만 있습니다. 키워드·기사 목록·기사
-수는 `cluster_id` 로 RDB 에서 읽습니다. 노드는 만든 뒤 바뀌지 않습니다 — 승격 이후에 들어오는 기사는
-RDB 에만 반영됩니다.
+노드에는 `cluster_id`, `title`, `first_published_at`, `last_published_at`, `created_at` 만 있습니다.
+키워드·기사 목록·기사 수는 `cluster_id` 로 RDB 에서 읽습니다. 만든 뒤 바뀌는 값은 `last_published_at`
+하나입니다. 승격 이후에 기사가 붙으면 `news_clusters.last_published_at` 과 `updated_at` 이 갱신되고,
+같은 런의 이 task 가 노드의 값을 커지는 방향으로만 올립니다(`update_last_published`). 갱신이 실패해도
+생성은 계속 돌고, 스캔 범위 안이면 다음 런이 다시 올립니다.
+
+기간 [start, end] 에 걸친 사건은 두 시각의 구간 겹침으로 찾습니다. 두 속성 모두 인덱스가 있습니다.
+
+```cypher
+MATCH (e:Event)
+WHERE e.first_published_at <= $end AND e.last_published_at >= $start
+RETURN e
+```
 
 제목은 `news_clusters.title`, 당사자는 `news_companies` 에 있으므로 그래프에서 Event 가 사라져도 스캔
 범위 안이면 다음 런이 RDB 만으로 다시 만듭니다. 생성 시점에 `Company` 노드가 없던 기업은 간선이

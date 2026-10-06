@@ -222,18 +222,18 @@ def test_promote_with_news_outside_the_cluster_raises(clusters):
 
 
 def test_untitled_promoted_lists_cluster_until_titled(clusters):
-    assert clusters["full"] not in fetch_untitled_promoted(2, SINCE)  # 아직 대표가 없다
+    assert clusters["full"] not in fetch_untitled_promoted(2)  # 아직 대표가 없다
 
     promote_cluster(clusters["full"], clusters["first"])
     # 옛 로직의 클러스터처럼 대표는 있지만 후보 수가 기준에 못 미치면 빠진다
     promote_cluster(clusters["small"], clusters["lone"])
 
-    untitled = fetch_untitled_promoted(2, SINCE)
+    untitled = fetch_untitled_promoted(2)
     assert clusters["full"] in untitled
     assert clusters["small"] not in untitled
 
     update_cluster_title(clusters["full"], "엘앤에프 삼성SDI 양극재 공급계약")
-    assert clusters["full"] not in fetch_untitled_promoted(2, SINCE)
+    assert clusters["full"] not in fetch_untitled_promoted(2)
 
 
 def test_pending_representatives_count_only_unextracted_representatives(clusters):

@@ -63,7 +63,7 @@ class NewsSettings(BaseSettings):
     cluster_idf_days: int = Field(default=90, validation_alias="NEWS_CLUSTER_IDF_DAYS")
     # 후보 기사가 이 수에 이르면 대표 기사를 정한다(승격). 클러스터는 이 수까지만 후보를 받는다.
     cluster_promote_size: int = Field(default=3, validation_alias="NEWS_CLUSTER_PROMOTE_SIZE")
-    # 승격·제목 생성을 다시 시도하는 범위(일). updated_at 이 이 안인 클러스터만 본다.
+    # 승격을 다시 시도하는 범위(일). updated_at 이 이 안인 클러스터만 본다.
     cluster_promote_retry_days: int = Field(
         default=3, validation_alias="NEWS_CLUSTER_PROMOTE_RETRY_DAYS"
     )

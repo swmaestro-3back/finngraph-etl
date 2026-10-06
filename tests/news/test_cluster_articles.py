@@ -108,7 +108,7 @@ class FakeStore:
         self.clusters[cluster_id]["representative"] = news_id
         return True
 
-    def untitled(self, promote_size, since):
+    def untitled(self, promote_size):
         return [
             cluster_id
             for cluster_id, cluster in self.clusters.items()

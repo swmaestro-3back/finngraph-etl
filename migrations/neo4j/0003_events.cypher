@@ -2,7 +2,11 @@
 CREATE CONSTRAINT event_cluster_id_unique IF NOT EXISTS
 FOR (e:Event) REQUIRE e.cluster_id IS UNIQUE;
 
-// 타임라인 정렬 키
+// 타임라인 정렬과 기간 필터 키. 기간 [start, end] 에 걸친 사건은
+// e.first_published_at <= end AND e.last_published_at >= start 로 찾는다.
+CREATE INDEX event_first_published_at IF NOT EXISTS
+FOR (e:Event) ON (e.first_published_at);
+
 CREATE INDEX event_last_published_at IF NOT EXISTS
 FOR (e:Event) ON (e.last_published_at);
 

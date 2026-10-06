@@ -363,7 +363,7 @@ SELECT_CLUSTER_MEMBER_SQL = text(
 )
 
 # 승격됐는데 제목이 없는 클러스터. member_count 조건은 옛 로직이 만든 작은 클러스터(대표는
-# 있지만 후보 수가 기준 미만)를 뺀다.
+# 있지만 후보 수가 기준 미만)를 뺀다. 기간 제한이 없어 실패한 클러스터는 언제든 다시 시도된다.
 SELECT_UNTITLED_PROMOTED_SQL = text(
     """
     SELECT id
@@ -371,7 +371,6 @@ SELECT_UNTITLED_PROMOTED_SQL = text(
      WHERE representative_news_id IS NOT NULL
        AND title IS NULL
        AND member_count >= :promote_size
-       AND updated_at >= :since
      ORDER BY id;
     """
 )
@@ -446,12 +445,12 @@ def promote_cluster(cluster_id: int, news_id: int) -> bool:
     return bool(claimed)
 
 
-def fetch_untitled_promoted(promote_size: int, since: datetime) -> list[int]:
+def fetch_untitled_promoted(promote_size: int) -> list[int]:
     """승격됐는데 제목이 없는 클러스터. 제목 입력은 fetch_cluster_candidates 로 읽는다."""
 
     with session_scope() as session:
         rows = session.execute(
-            SELECT_UNTITLED_PROMOTED_SQL, {"promote_size": promote_size, "since": since}
+            SELECT_UNTITLED_PROMOTED_SQL, {"promote_size": promote_size}
         ).fetchall()
 
     return [int(row[0]) for row in rows]

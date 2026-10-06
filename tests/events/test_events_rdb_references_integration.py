@@ -20,6 +20,7 @@ from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 pytestmark = pytest.mark.integration
 
 PUBLISHED = datetime(2026, 9, 2, 9, 0, tzinfo=SEOUL_TIMEZONE)
+LAST_PUBLISHED = PUBLISHED + timedelta(days=3)
 SINCE = datetime(2026, 1, 1, tzinfo=SEOUL_TIMEZONE)
 
 
@@ -54,7 +55,7 @@ def _insert_cluster(
                     representative_news_id, title, original_size, member_count,
                     first_published_at, last_published_at
                 )
-                VALUES (:representative, :title, :members, :members, :published, :published)
+                VALUES (:representative, :title, :members, :members, :published, :last)
                 RETURNING id;
                 """
             ),
@@ -63,6 +64,7 @@ def _insert_cluster(
                 "title": title,
                 "members": members,
                 "published": PUBLISHED,
+                "last": LAST_PUBLISHED,
             },
         ).scalar_one()
     )
@@ -144,6 +146,7 @@ def test_fetch_promoted_clusters_needs_representative_title_and_enough_candidate
     assert fixture_rows["promoted"] in by_id
     assert by_id[fixture_rows["promoted"]].title == "엘앤에프 공급계약"
     assert by_id[fixture_rows["promoted"]].first_published_at == PUBLISHED
+    assert by_id[fixture_rows["promoted"]].last_published_at == LAST_PUBLISHED
     for excluded in ("untitled", "collecting", "legacy"):
         assert fixture_rows[excluded] not in by_id
 

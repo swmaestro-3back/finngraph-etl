@@ -14,6 +14,8 @@ class ClusterCandidate(BaseModel):
     # cluster_articles 잡이 후보 기사 제목들로 지은 사건 이름 (news_clusters.title)
     title: str
     first_published_at: datetime
+    # 클러스터에 붙은 기사 중 가장 늦은 발행 시각. 승격 뒤 기사가 붙으면 늘어난다.
+    last_published_at: datetime
 
 
 class EventRecord(ClusterCandidate):

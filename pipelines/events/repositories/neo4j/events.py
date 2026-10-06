@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.utils.time import now_kst
-from pipelines.events.models import EventRecord
+from pipelines.events.models import ClusterCandidate, EventRecord
 
 
 def _bolt_datetime(value: datetime) -> datetime:
@@ -26,10 +26,12 @@ def _bolt_params(payload: dict) -> dict:
 
 # 노드에는 그래프에 보여 줄 값만 둔다. 키워드·기사 목록·기사 수는 cluster_id 로 RDB 에서 읽는다.
 # ON CREATE 라 다시 실행해도 값이 바뀌지 않고, 간선만 그 사이 시드된 기업에 새로 붙는다.
+# 생성 뒤 바뀌는 값은 last_published_at 하나이고 UPDATE_LAST_PUBLISHED_CYPHER 가 갱신한다.
 CREATE_EVENT_CYPHER = """
 MERGE (e:Event {cluster_id: $cluster_id})
 ON CREATE SET e.title = $title,
               e.first_published_at = $first_published_at,
+              e.last_published_at = $last_published_at,
               e.created_at = $now
 WITH e
 CALL {
@@ -41,6 +43,17 @@ CALL {
     RETURN count(c) AS edges
 }
 RETURN edges
+"""
+
+
+# 승격 뒤 기사가 붙어 늘어난 last_published_at 만 반영한다. 값이 커질 때만 쓴다 — 늦게 돈 런이
+# 옛 값으로 되돌리지 않는다. 노드가 없는 cluster_id 는 건너뛴다.
+UPDATE_LAST_PUBLISHED_CYPHER = """
+UNWIND $rows AS row
+MATCH (e:Event {cluster_id: row.cluster_id})
+WHERE e.last_published_at IS NULL OR e.last_published_at < row.last_published_at
+SET e.last_published_at = row.last_published_at
+RETURN count(e) AS updated
 """
 
 
@@ -68,3 +81,24 @@ async def create_event(record: EventRecord) -> int:
         CREATE_EVENT_CYPHER, _bolt_params({**record.model_dump(), "now": now_kst()})
     )
     return int(records[0]["edges"]) if records else 0
+
+
+async def update_last_published(clusters: list[ClusterCandidate]) -> int:
+    """기존 Event 노드의 last_published_at 을 RDB 값으로 올린다. 실제로 바뀐 노드 수를 돌려준다."""
+
+    if not clusters:
+        return 0
+
+    records = await neo4j_database.execute(
+        UPDATE_LAST_PUBLISHED_CYPHER,
+        {
+            "rows": [
+                {
+                    "cluster_id": cluster.cluster_id,
+                    "last_published_at": _bolt_datetime(cluster.last_published_at),
+                }
+                for cluster in clusters
+            ]
+        },
+    )
+    return int(records[0]["updated"]) if records else 0

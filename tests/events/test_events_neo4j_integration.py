@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.config import get_settings
 from pipelines.events.models import EventRecord
-from pipelines.events.repositories.neo4j.events import create_event, fetch_existing_event_ids
+from pipelines.events.repositories.neo4j.events import (
+    create_event,
+    fetch_existing_event_ids,
+    update_last_published,
+)
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
 pytestmark = [
@@ -26,6 +30,7 @@ pytestmark = [
 ]
 
 T0 = datetime(2026, 9, 1, 9, 0, tzinfo=SEOUL_TIMEZONE)
+T_LAST = T0 + timedelta(days=2)
 
 
 def _record(cluster_id: int, company_ids: list[int], **overrides) -> EventRecord:
@@ -33,6 +38,7 @@ def _record(cluster_id: int, company_ids: list[int], **overrides) -> EventRecord
         cluster_id=cluster_id,
         title="삼성전자 4조원 유상증자",
         first_published_at=T0,
+        last_published_at=T_LAST,
         company_ids=company_ids,
     )
     base.update(overrides)
@@ -45,7 +51,7 @@ async def _read_event(cluster_id: int) -> dict:
         MATCH (e:Event {cluster_id: $cluster_id})
         OPTIONAL MATCH (c:Company)-[:HAS_EVENT]->(e)
         RETURN e.title AS title, e.first_published_at AS first_published_at,
-               e.created_at AS created_at, keys(e) AS keys, collect(c.name) AS linked
+               e.last_published_at AS last_published_at, e.created_at AS created_at, keys(e) AS keys, collect(c.name) AS linked
         """,
         {"cluster_id": cluster_id},
     )
@@ -86,11 +92,13 @@ def test_create_and_lookup():
                 assert row["title"] == "삼성전자 4조원 유상증자"
                 assert row["linked"] == [listed]
                 assert row["first_published_at"].to_native() == T0
+                assert row["last_published_at"].to_native() == T_LAST
                 # 노드에는 그래프에 보여 줄 값만 있다
                 assert sorted(row["keys"]) == [
                     "cluster_id",
                     "created_at",
                     "first_published_at",
+                    "last_published_at",
                     "title",
                 ]
                 created_at = row["created_at"]
@@ -104,6 +112,8 @@ def test_create_and_lookup():
                 row = await _read_event(cluster_id)
                 assert row["title"] == "삼성전자 4조원 유상증자"
                 assert row["created_at"] == created_at
+                # 재생성은 last_published_at 도 바꾸지 않는다 — 갱신은 update_last_published 몫이다
+                assert row["last_published_at"].to_native() == T_LAST
                 assert sorted(row["linked"]) == sorted([listed, late])
                 count = await neo4j_database.execute(
                     "MATCH (e:Event {cluster_id: $id}) RETURN count(e) AS n", {"id": cluster_id}
@@ -124,6 +134,47 @@ def test_create_and_lookup():
                 await neo4j_database.execute(
                     "MATCH (c:Company) WHERE c.name IN $names DETACH DELETE c",
                     {"names": [listed, unlisted, late]},
+                )
+
+    asyncio.run(_run())
+
+
+def test_update_last_published_only_moves_forward():
+    marker = uuid.uuid4().hex[:8]
+    cluster_id = 2 * 10**9 + int(marker[:6], 16)
+    later = T_LAST + timedelta(days=3)
+
+    def candidate(cluster: int, last: datetime) -> EventRecord:
+        return _record(cluster, [], last_published_at=last)
+
+    async def _last(cluster: int) -> datetime:
+        return (await _read_event(cluster))["last_published_at"].to_native()
+
+    async def _run() -> None:
+        async with neo4j_database:
+            try:
+                await create_event(_record(cluster_id, []))
+                assert await update_last_published([]) == 0
+
+                # 늦은 값은 반영한다. 다른 속성은 그대로다
+                assert await update_last_published([candidate(cluster_id, later)]) == 1
+                row = await _read_event(cluster_id)
+                assert row["last_published_at"].to_native() == later
+                assert row["title"] == "삼성전자 4조원 유상증자"
+                assert row["first_published_at"].to_native() == T0
+
+                # 같거나 이른 값은 쓰지 않는다
+                assert await update_last_published([candidate(cluster_id, later)]) == 0
+                assert await update_last_published([candidate(cluster_id, T_LAST)]) == 0
+                assert await _last(cluster_id) == later
+
+                # 노드가 없는 cluster_id 는 만들지 않고 건너뛴다
+                assert await update_last_published([candidate(cluster_id + 1, later)]) == 0
+                assert await fetch_existing_event_ids([cluster_id + 1]) == set()
+            finally:
+                await neo4j_database.execute(
+                    "MATCH (e:Event) WHERE e.cluster_id IN $ids DETACH DELETE e",
+                    {"ids": [cluster_id, cluster_id + 1]},
                 )
 
     asyncio.run(_run())

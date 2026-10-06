@@ -1,4 +1,4 @@
-"""scan_new_events — RDB 후보 조회 → Neo4j 존재 조회 → 없는 것만."""
+"""scan_events — RDB 후보 조회 → Neo4j 존재 조회 → 노드 없는 것과 있는 것으로 나눈다."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ T0 = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
 
 def _cluster(cluster_id: int) -> ClusterCandidate:
     return ClusterCandidate(
-        cluster_id=cluster_id, title=f"사건 {cluster_id}", first_published_at=T0
+        cluster_id=cluster_id,
+        title=f"사건 {cluster_id}",
+        first_published_at=T0,
+        last_published_at=T0,
     )
 
 
@@ -27,11 +30,11 @@ def test_empty_scan_skips_neo4j_lookup(monkeypatch):
     monkeypatch.setattr(scan, "fetch_promoted_clusters", lambda promote_size, since: [])
     monkeypatch.setattr(scan, "fetch_existing_event_ids", fake_existing)
 
-    assert asyncio.run(scan.scan_new_events(10, T0)) == []
+    assert asyncio.run(scan.scan_events(10, T0)) == ([], [])
     assert called["existing"] is False
 
 
-def test_returns_only_clusters_without_event(monkeypatch):
+def test_splits_clusters_by_event_existence(monkeypatch):
     seen = {}
 
     async def fake_existing(cluster_ids):
@@ -45,7 +48,8 @@ def test_returns_only_clusters_without_event(monkeypatch):
     monkeypatch.setattr(scan, "fetch_promoted_clusters", fake_promoted)
     monkeypatch.setattr(scan, "fetch_existing_event_ids", fake_existing)
 
-    new = asyncio.run(scan.scan_new_events(10, T0))
+    new, existing = asyncio.run(scan.scan_events(10, T0))
 
     assert [cluster.cluster_id for cluster in new] == [1, 3]
+    assert [cluster.cluster_id for cluster in existing] == [2]
     assert seen == {"ids": [1, 2, 3], "args": (10, T0)}

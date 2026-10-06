@@ -114,7 +114,7 @@ def promote() -> dict[str, int]:
     started_at = datetime.now(SEOUL_TIMEZONE)
 
     promoted = _pick_representatives(started_at)
-    titled = _title_clusters(started_at)
+    titled = _title_clusters()
     pending = count_pending_representatives(get_news_settings().cluster_promote_size)
 
     logger.info(
@@ -187,12 +187,15 @@ def _pick_representatives(started_at: datetime) -> int:
     return promoted
 
 
-def _title_clusters(started_at: datetime) -> int:
-    """승격됐는데 이름이 없는 클러스터에 후보 기사 제목들로 이름을 짓는다. 지은 수를 돌려준다."""
+def _title_clusters() -> int:
+    """승격됐는데 이름이 없는 클러스터에 후보 기사 제목들로 이름을 짓는다. 지은 수를 돌려준다.
+
+    요약·삼중항처럼 기간 제한 없이 이름이 없는 클러스터 전부가 대상이다 — 실패한 클러스터는
+    다음 런에 다시 시도된다.
+    """
 
     settings = get_news_settings()
-    since = started_at - timedelta(days=settings.cluster_promote_retry_days)
-    cluster_ids = fetch_untitled_promoted(settings.cluster_promote_size, since)
+    cluster_ids = fetch_untitled_promoted(settings.cluster_promote_size)
     if not cluster_ids:
         return 0
 
