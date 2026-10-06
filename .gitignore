@@ -13,7 +13,6 @@ __pycache__/
 build/
 dist/
 
-# Docker / local database
 *.log
 
 # Airflow local state
