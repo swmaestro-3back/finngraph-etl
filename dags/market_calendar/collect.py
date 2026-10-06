@@ -18,7 +18,7 @@ if dag and task:
     @dag(
         dag_id="market_calendar_collect",
         start_date=datetime(2026, 1, 1),
-        schedule="30 7 * * *",
+        schedule="0 7 * * 1-5",
         catchup=False,
         max_active_runs=1,
         tags=["market_calendar"],
