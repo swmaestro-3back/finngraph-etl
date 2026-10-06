@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.companies.loaders.service import (
+from pipelines.companies.repositories.postgres.service_companies import (
     count_service_companies,
     sync_service_companies,
 )

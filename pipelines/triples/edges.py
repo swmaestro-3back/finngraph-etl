@@ -13,13 +13,14 @@ from __future__ import annotations
 from pipelines.triples.models import Triplet
 from pipelines.triples.ontology.predicate_dict import PREDICATE_DICT
 
-# 모든 엔드포인트는 gazetteer 정규명이다. 본문은 치환하지 않으므로 Triplet 의 Entity.text 는
-# 본문 표기 그대로이고, 그래프·원장으로 나갈 때 여기서 Entity.canonical 로 바꾼다.
 NODE_LABEL = "Company"
 
 
 def edge_of(triplet: Triplet) -> tuple[str, str, str] | None:
     """Triplet을 (subject_name, predicate, object_name) 엣지로 변환한다.
+
+    엔드포인트는 gazetteer 정식명(companies.name)이다. 본문은 치환하지 않으므로 Entity.text 는
+    본문 표기 그대로이고, 그래프·원장으로 나갈 때 여기서 Entity.canonical 로 바꾼다.
 
     predicate는 TripletBuilder가 PREDICATE_DICT에 등록된 술어만 통과시키므로 항상
     화이트리스트 안이지만, 관계 타입으로 직접 삽입되는 값이라 한 번 더 방어적으로
@@ -31,13 +32,12 @@ def edge_of(triplet: Triplet) -> tuple[str, str, str] | None:
     return (triplet.subject.canonical, triplet.predicate, triplet.object.canonical)
 
 
-def source_row_of(triplet: Triplet, name_to_ticker: dict[str, str]) -> dict | None:
+def source_row_of(triplet: Triplet) -> dict | None:
     """Triplet을 relation_sources(근거 원장) 뉴스 행으로 변환한다.
 
-    엔드포인트 식별은 정규명이 기본이고 code(ticker)는 보조 키다 — 매핑에 없는
-    미상장/미시드 기업은 code가 NULL로 남았다가 상장 시 백필된다. 간선 자연키
-    (subject_name, relation, object_name)는 edge_of와 같은 규칙에서 나오므로
-    Neo4j 간선과 1:1로 대응한다.
+    엔드포인트 식별은 정규명이 기본이고 code(ticker)는 보조 키다. gazetteer 가 상장사만
+    담으므로 뉴스 행의 code 는 항상 채워진다. 간선 자연키 (subject_name, relation,
+    object_name)는 edge_of와 같은 규칙에서 나오므로 Neo4j 간선과 1:1로 대응한다.
     """
 
     edge = edge_of(triplet)
@@ -49,11 +49,11 @@ def source_row_of(triplet: Triplet, name_to_ticker: dict[str, str]) -> dict | No
     return {
         "subject_name": subject_name,
         "subject_type": "COMPANY",
-        "subject_code": name_to_ticker.get(subject_name),
+        "subject_code": triplet.subject.ticker,
         "relation": relation,
         "object_name": object_name,
         "object_type": "COMPANY",
-        "object_code": name_to_ticker.get(object_name),
+        "object_code": triplet.object.ticker,
         "evidence": triplet.evidence,
         "source_sentence": triplet.source_sentence,
         "polarity": triplet.polarity,

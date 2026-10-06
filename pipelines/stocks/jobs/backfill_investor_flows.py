@@ -17,10 +17,16 @@ from __future__ import annotations
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.companies.loaders.diagnostics import describe_universe
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 from pipelines.stocks.extractors.naver import BlockSuspectedError, fetch_investor_trends
-from pipelines.stocks.loaders.flows import fetch_investor_flow_counts, upsert_investor_flows
-from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks, fetch_stocks_by_tickers
+from pipelines.stocks.repositories.postgres.stock_investor_flows import (
+    fetch_investor_flow_counts,
+    upsert_investor_flows,
+)
+from pipelines.stocks.repositories.postgres.stocks import (
+    fetch_serviceable_stocks,
+    fetch_stocks_by_tickers,
+)
 
 logger = get_logger(__name__)
 

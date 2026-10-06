@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from pipelines.common.logging import get_logger
-from pipelines.themes.loaders.postgres import load_themes
+from pipelines.themes.repositories.postgres.themes import load_themes
 
 logger = get_logger(__name__)
 

@@ -14,7 +14,7 @@ import pytest
 
 from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.config import get_settings
-from pipelines.triples.loaders.neo4j import sync_edge_summaries
+from pipelines.triples.repositories.neo4j.relations import sync_edge_summaries
 
 pytestmark = [
     pytest.mark.integration,

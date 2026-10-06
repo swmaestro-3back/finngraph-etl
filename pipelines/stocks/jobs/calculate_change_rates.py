@@ -1,7 +1,7 @@
 """종목 봉 등락률 계산.
 
-등락률(change_rate)은 직전 봉 종가 대비 %다. 일봉은 직전 거래일, 주봉·월봉은 직전 주·월 봉이
-기준이고 직전 봉이 없는 첫 봉은 NULL 이다.
+등락률(change_rate)은 일봉은 기준가(없으면 직전 거래일 종가), 주봉·월봉은 직전 주·월 봉 종가
+대비 %다. 기준이 없는 첫 봉은 NULL 이다.
 
 봉 적재와 분리된 단계로, 봉을 쓰는 DAG 가 적재 뒤에 같은 구간으로 부른다. 수집이 최근 구간을
 수정주가로 다시 받아 과거 종가가 바뀌므로, 당일 행만이 아니라 구간 전체를 다시 계산한다.
@@ -19,11 +19,11 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.config import get_settings
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.time import now_kst
-from pipelines.stocks.loaders.candles import (
+from pipelines.stocks.repositories.postgres.stock_candles import (
     refresh_daily_change_rates,
     refresh_period_change_rates,
 )
-from pipelines.stocks.loaders.tickers import fetch_stocks_by_tickers
+from pipelines.stocks.repositories.postgres.stocks import fetch_stocks_by_tickers
 
 logger = get_logger(__name__)
 

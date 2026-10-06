@@ -58,11 +58,11 @@ class TripletBuilder:
         """
         True if the predicate is marked irreflexive in the ontology and subject == object
 
-        Compared by canonical name, so two spellings of one company ("삼전", "삼성전자") count
+        Compared by company id, so two spellings of one company ("삼전", "삼성전자") count
         as the same endpoint.
         """
         spec = self._predicate_dict.get(frame.predicate, {})
-        return bool(spec.get("irreflexive")) and frame.subject.canonical == frame.object.canonical
+        return bool(spec.get("irreflexive")) and frame.subject.company_id == frame.object.company_id
 
     def stats(self, relation_frames: list[RelationFrame]) -> dict:
         """

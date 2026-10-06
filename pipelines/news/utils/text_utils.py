@@ -964,6 +964,41 @@ def remove_leading_title_brackets(title: str) -> str:
     return TITLE_LEADING_BRACKET_PATTERN.sub("", title).strip()
 
 
+TITLE_TRUNCATION_SUFFIXES = ("...", "…")
+
+# 페이지 제목 끝의 언론사 꼬리 (" - 한국경제", " | 머니투데이")
+TITLE_PRESS_SUFFIX_PATTERN = re.compile(r"\s+[-|]\s+[^-|]{1,20}$")
+
+
+def _collapse_spaces(text: str) -> str:
+    return " ".join(text.split())
+
+
+def restore_truncated_title(title: str, page_title: str) -> str:
+    """검색 API 가 말줄임(…)으로 자른 제목을 기사 페이지의 제목으로 복원한다.
+
+    페이지 제목은 선두 브라켓과 언론사 꼬리를 지운 뒤, 잘린 제목의 앞부분으로 시작하고 더 길 때만
+    쓴다. 잘리지 않았거나 페이지 제목이 맞지 않으면 원래 제목을 그대로 돌려준다.
+    """
+
+    stripped = title.rstrip()
+    suffix = next((s for s in TITLE_TRUNCATION_SUFFIXES if stripped.endswith(s)), None)
+    if suffix is None:
+        return title
+
+    prefix = _collapse_spaces(stripped[: -len(suffix)])
+    if not prefix:
+        return title
+
+    page = remove_leading_title_brackets(_collapse_spaces(get_printable_text(page_title)))
+    # 꼬리를 지우면 앞부분이 안 맞는 제목(꼬리처럼 보이는 본래 문구)은 지우지 않은 채로 본다
+    for candidate in (TITLE_PRESS_SUFFIX_PATTERN.sub("", page), page):
+        if candidate.startswith(prefix) and len(candidate) > len(prefix):
+            return candidate
+
+    return title
+
+
 def clean_article_body_for_storage(
     text: str,
     removed_noise: list[dict[str, Any]] | None = None,

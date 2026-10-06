@@ -1,7 +1,6 @@
 """job 집계 불변식 검사.
 
-sync_events 와 generate_events 가 각자 다른 키로 같은 검사("전체 = 결과의 합")를 하므로
-공용으로 둔다.
+generate_events 의 "전체 = 결과의 합" 검사. job 본문과 떼어 따로 테스트한다.
 """
 
 from __future__ import annotations

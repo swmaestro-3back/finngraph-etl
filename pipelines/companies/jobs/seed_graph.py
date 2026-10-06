@@ -14,7 +14,7 @@ from pipelines.common.clients.neo4j import neo4j_database
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.companies.extractors.listed_stocks import fetch_companies
-from pipelines.companies.loaders.neo4j import seed_graph_companies
+from pipelines.companies.repositories.neo4j.companies import seed_graph_companies
 
 logger = get_logger(__name__)
 

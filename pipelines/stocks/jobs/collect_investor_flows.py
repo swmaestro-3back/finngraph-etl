@@ -17,12 +17,12 @@ from pipelines.common.clients.kis import get_kis_client
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
-from pipelines.companies.loaders.diagnostics import describe_universe
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 from pipelines.stocks.extractors.kis import fetch_foreign_holding
 from pipelines.stocks.extractors.naver import BlockSuspectedError, fetch_investor_trends
-from pipelines.stocks.loaders.flows import upsert_investor_flows
-from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
 from pipelines.stocks.models import ForeignHolding, InvestorFlow
+from pipelines.stocks.repositories.postgres.stock_investor_flows import upsert_investor_flows
+from pipelines.stocks.repositories.postgres.stocks import fetch_serviceable_stocks
 
 logger = get_logger(__name__)
 

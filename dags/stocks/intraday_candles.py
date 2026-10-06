@@ -1,7 +1,7 @@
 """장중 일봉 갱신.
 
-09~17시 매 정각 일봉을 받고, 그 일봉으로 이번 주·이번 달 봉을 계산한다. 주·월봉의 확정값은
-18시 stocks_daily_pipeline이 KIS에서 받아 같은 키에 덮어쓴다. Asset은 발행하지 않는다 —
+08~19시 매 정각 일봉을 받고, 그 일봉으로 이번 주·이번 달 봉을 계산한다. 주·월봉의 확정값은
+20:30 stocks_daily_pipeline이 KIS에서 받아 같은 키에 덮어쓴다. Asset은 발행하지 않는다 —
 파생 지표 계산은 마감 후 한 번이면 된다.
 
 테마 지수는 매시간 최근 lookback(기본 10일) 구간의 테마 일봉을 다시 계산한다. 종목 일봉
@@ -10,8 +10,9 @@
 
 등락률(change_rate)은 봉 적재와 분리된 태스크가 각 갈래 끝에서 다시 계산한다.
 
-일봉이 들어오면 백엔드에 핫테마 재발행을 요청하고, 성공하면 etl://themes/hot 을 발행해
-news_collect_articles 가 정각을 기다리지 않고 새 핫테마로 뉴스를 검색하게 한다.
+테마 일봉 계산이 끝나면 백엔드에 핫테마 재발행을 요청한다(핫테마 선정이 당일 테마 지수
+등락률을 쓴다). 성공하면 etl://themes/hot 을 발행해 news_collect_articles 가 정각을 기다리지
+않고 새 핫테마로 뉴스를 검색하게 한다.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ if dag and task:
     @dag(
         dag_id="stocks_intraday_candles",
         start_date=datetime(2026, 1, 1),
-        schedule="0 9-17 * * 1-5",
+        schedule="0 8-19 * * 1-5",
         catchup=False,
         max_active_runs=1,
         tags=["stocks"],
@@ -43,7 +44,7 @@ if dag and task:
         @task(retries=1)
         def check_market_open() -> None:
             from pipelines.common.utils.time import now_kst
-            from pipelines.stocks.extractors.kis import is_market_open
+            from pipelines.market_calendar.jobs.market_open import is_market_open
 
             today = now_kst().date()
             if not is_market_open(today):
@@ -98,12 +99,8 @@ if dag and task:
 
         candles = check_market_open() >> collect_daily_candles()
         candles >> aggregate_period_candles() >> calculate_stock_change_rates()
-        (
-            candles
-            >> calculate_theme_daily()
-            >> aggregate_theme_period()
-            >> calculate_theme_change_rates()
-        )
-        candles >> publish_hot_themes()
+        theme_daily = candles >> calculate_theme_daily()
+        theme_daily >> aggregate_theme_period() >> calculate_theme_change_rates()
+        theme_daily >> publish_hot_themes()
 
     stocks_intraday_candles()

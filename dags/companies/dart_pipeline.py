@@ -18,12 +18,13 @@ if TYPE_CHECKING:
     # 타입 체커에는 항상 진짜 심볼을 보여준다. 아래 fallback 의 None 이 타입에 섞이면
     # 중첩 함수 안(@task 데코레이터 자리)에서 `if dag and task:` narrowing 이 풀려
     # "Object of type None cannot be called" 로 잡힌다.
-    from airflow.sdk import dag, task
+    from airflow.sdk import MultipleCronTriggerTimetable, dag, task
 else:
     # airflow 는 optional 의존성이라 설치 안 된 환경에서도 import 자체는 통과해야 한다.
     try:
-        from airflow.sdk import dag, task
+        from airflow.sdk import MultipleCronTriggerTimetable, dag, task
     except ImportError:
+        MultipleCronTriggerTimetable = None
         dag = None
         task = None
 
@@ -33,10 +34,14 @@ if dag and task:
     @dag(
         dag_id="companies_dart_pipeline",
         start_date=datetime(2026, 1, 1),
-        # 09시. 앞선 사슬(03시 corpCode → 08시 종목 마스터 → 연결 → 수집 대상)이
+        # 09시. 앞선 사슬(03시 corpCode → 07:30 종목 마스터 → 연결 → 수집 대상)이
         # 끝난 뒤에 돈다. Asset 으로 걸지 않은 이유는 이 잡이 DART 일 한도의 큰 몫을
         # 쓰기 때문이다 — 하루 몇 번 도는지가 예측 가능해야 한다.
-        schedule="0 9 * * *",
+        schedule=MultipleCronTriggerTimetable(
+            "0 9 * * 1",
+            "0 9 * 3-4 *",
+            timezone="Asia/Seoul",
+        ),
         catchup=False,
         max_active_runs=1,
         tags=["companies"],

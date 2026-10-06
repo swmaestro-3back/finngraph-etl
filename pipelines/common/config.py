@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
+CHAT_MODEL_ROLES = ("relevance", "entity", "cluster_title", "summary", "triples")
+
 
 class Settings(BaseSettings):
     # .env 파일을 읽어오기 위한 설정
@@ -106,6 +108,15 @@ class Settings(BaseSettings):
         default=32, validation_alias="BEDROCK_EMBEDDING_MAX_WORKERS"
     )
     bedrock_chat_model: str = Field(default="", validation_alias="BEDROCK_CHAT_MODEL")
+    # 역할별 채팅 모델. 비어 있으면 BEDROCK_CHAT_MODEL 을 쓴다 — chat_model(role) 로 읽는다.
+    # 출력이 짧고 호출이 많은 판정·라벨은 작은 모델로 내려 지연과 비용을 줄일 수 있다.
+    bedrock_relevance_model: str = Field(default="", validation_alias="BEDROCK_RELEVANCE_MODEL")
+    bedrock_entity_model: str = Field(default="", validation_alias="BEDROCK_ENTITY_MODEL")
+    bedrock_cluster_title_model: str = Field(
+        default="", validation_alias="BEDROCK_CLUSTER_TITLE_MODEL"
+    )
+    bedrock_summary_model: str = Field(default="", validation_alias="BEDROCK_SUMMARY_MODEL")
+    bedrock_triples_model: str = Field(default="", validation_alias="BEDROCK_TRIPLES_MODEL")
     bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
     aws_bearer_token_bedrock: str = Field(default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK")
 
@@ -113,6 +124,13 @@ class Settings(BaseSettings):
     neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
     neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
+
+    def chat_model(self, role: str) -> str:
+        """역할(relevance·entity·cluster_title·summary·triples)의 Bedrock 채팅 모델 ID."""
+
+        if role not in CHAT_MODEL_ROLES:
+            raise ValueError(f"알 수 없는 모델 역할: {role}")
+        return getattr(self, f"bedrock_{role}_model") or self.bedrock_chat_model
 
 
 @lru_cache

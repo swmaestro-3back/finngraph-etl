@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
-from pipelines.companies.loaders.us import load_us_companies
+from pipelines.companies.repositories.postgres.companies import load_us_companies
 from pipelines.companies.transformers.us import build_us_companies
 
 logger = get_logger(__name__)

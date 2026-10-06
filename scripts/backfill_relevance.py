@@ -1,4 +1,4 @@
-"""저장된 news 를 관련성 필터(relevance_single_system 프롬프트)로 다시 판정해 무효 기사를 지운다.
+"""저장된 news 를 관련성 필터(relevance_system 프롬프트)로 다시 판정해 무효 기사를 지운다.
 
 수집 초기 기사들은 LLM 필터 없이 저장돼 시황·주가 반응 기사가 섞여 있다. 제목 + 본문 리드를
 스니펫 대신 넣고, 후보 상장사는 gazetteer ∪ news_companies 연결로 잡는다. `valid=false` 인

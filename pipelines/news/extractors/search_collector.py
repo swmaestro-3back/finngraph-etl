@@ -7,7 +7,7 @@ from typing import Any
 import requests
 
 from pipelines.news.config import get_news_settings
-from pipelines.news.repositories.search_history import CompanyQuery
+from pipelines.news.repositories.postgres.search_history import CompanyQuery
 from pipelines.news.utils.date_utils import parse_news_pub_date
 from pipelines.news.utils.text_utils import get_printable_text
 
@@ -169,10 +169,12 @@ def iter_search_news_pages(
         session.close()
 
 
-def build_search_queries(query: CompanyQuery) -> list[str]:
-    return [
-        template.format(name=query.name) for template in get_news_settings().search_query_templates
-    ]
+def build_search_queries(query: CompanyQuery, templates: list[str] | None = None) -> list[str]:
+    """검색어 서식마다 종목명을 넣는다. templates 가 None 이면 NEWS_SEARCH_QUERY_TEMPLATES."""
+
+    if templates is None:
+        templates = get_news_settings().search_query_templates
+    return [template.format(name=query.name) for template in templates]
 
 
 def collection_cutoff(
@@ -219,17 +221,19 @@ def collect_stock_news(
     run_started_at: datetime,
     lookback_days: int | None = None,
     max_pages: int | None = None,
+    query_templates: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """종목 하나를 검색어마다 최신순으로 검색
 
     검색어마다 읽다가 cutoff 보다 오래된 기사가 하나라도 나오면 그 페이지에서 멈춤. 검색어 사이에
-    겹치는 기사는 호출자의 URL 중복 제거가 거른다. lookback_days·max_pages 가 None 이면 설정값.
+    겹치는 기사는 호출자의 URL 중복 제거가 거른다. lookback_days·max_pages·query_templates 가
+    None 이면 설정값.
     """
 
     cutoff = collection_cutoff(query, run_started_at, lookback_days)
     collected: list[dict[str, Any]] = []
 
-    for index, keyword in enumerate(build_search_queries(query)):
+    for index, keyword in enumerate(build_search_queries(query, query_templates)):
         if index > 0:
             time.sleep(get_news_settings().request_delay)
 
@@ -249,6 +253,7 @@ def collect_company_news(
     run_started_at: datetime,
     lookback_days: int | None = None,
     max_pages: int | None = None,
+    query_templates: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[int]]:
     """기업 목록을 순회 수집한다. 기업 하나의 실패는 경고 후 건너뛰고, 전부 실패하면 올린다.
 
@@ -261,7 +266,9 @@ def collect_company_news(
 
     for index, query in enumerate(queries):
         try:
-            collected.extend(collect_stock_news(query, run_started_at, lookback_days, max_pages))
+            collected.extend(
+                collect_stock_news(query, run_started_at, lookback_days, max_pages, query_templates)
+            )
         except NewsSearchError as e:
             failed_company_ids.append(query.company_id)
             logging.debug(

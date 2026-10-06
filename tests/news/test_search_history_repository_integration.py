@@ -12,9 +12,9 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.news.repositories.search_history import (
+from pipelines.news.repositories.postgres.search_history import (
     fetch_due_company_queries,
-    fetch_due_krx300_queries,
+    fetch_due_krx100_queries,
     fetch_due_ticker_queries,
     mark_companies_searched,
 )
@@ -188,28 +188,28 @@ def test_mark_with_empty_list_touches_nothing():
     assert mark_companies_searched([], _now()) == 0
 
 
-def test_krx300_fetch_reads_only_flagged_stocks_of_given_companies(theme_with_stocks):
+def test_krx100_fetch_reads_only_flagged_stocks_of_given_companies(theme_with_stocks):
     company_id = theme_with_stocks["company_id"]
 
     # 플래그 전에는 대상이 아니다
-    assert fetch_due_krx300_queries(2, _now(), [company_id]).queries == []
+    assert fetch_due_krx100_queries(2, _now(), [company_id]).queries == []
 
     with session_scope() as session:
         session.execute(
-            text("UPDATE stocks SET krx300 = true WHERE id = :id"),
+            text("UPDATE stocks SET krx100 = true WHERE id = :id"),
             {"id": theme_with_stocks["common_stock_id"]},
         )
 
-    batch = fetch_due_krx300_queries(2, _now(), [company_id])
+    batch = fetch_due_krx100_queries(2, _now(), [company_id])
     assert [(q.company_id, q.name) for q in batch.queries] == [
         (company_id, theme_with_stocks["common_name"])
     ]
     # 전체 조회에도 들어 있다
-    assert _mine(fetch_due_krx300_queries(2, _now()), company_id)
+    assert _mine(fetch_due_krx100_queries(2, _now()), company_id)
 
     # 간격 안에 검색했으면 빠진다
     mark_companies_searched([company_id], _now())
-    assert fetch_due_krx300_queries(2, _now(), [company_id]).queries == []
+    assert fetch_due_krx100_queries(2, _now(), [company_id]).queries == []
 
 
 def test_fetch_by_tickers_searches_only_the_given_stocks(theme_with_stocks):

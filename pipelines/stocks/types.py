@@ -27,6 +27,7 @@ class DailyCandle:
     close: Decimal
     volume: int
     trade_value: int | None = None
+    base_price: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -47,3 +48,21 @@ class PeriodCandle:
     close: Decimal
     volume: int
     trade_value: int | None = None
+
+
+@dataclass(frozen=True)
+class TradeDates:
+    """거래일 범위.
+
+    Attributes:
+        settled (date | None): 일봉과 밸류에이션이 둘 다 있는 최신 날짜.
+        latest (date | None): 일봉만 있는 최신 날짜. 장중에는 settled 보다 앞선다.
+    """
+
+    settled: date | None
+    latest: date | None
+
+    def covers(self, trade_date: date | None) -> bool:
+        if trade_date is None or self.settled is None or self.latest is None:
+            return False
+        return self.settled <= trade_date <= self.latest

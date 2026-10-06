@@ -1,50 +1,28 @@
-"""news_companies 연결 로직 단위 테스트. INSERT 는 갈아끼운다."""
+"""news_companies 연결 대상 선정 단위 테스트. DB 는 쓰지 않는다."""
 
 from __future__ import annotations
 
-from pipelines.news.repositories import news_companies
+from pipelines.news.repositories.postgres.news_companies import linked_company_ids
 
 
-def test_link_saved_items_links_query_company(monkeypatch):
-    inserted: list[tuple[int, list[int]]] = []
-    monkeypatch.setattr(
-        news_companies,
-        "insert_news_companies",
-        lambda news_id, ids: inserted.append((news_id, ids)) or len(ids),
-    )
+def test_linked_company_ids_are_the_companies_that_passed_judgement():
+    item = {
+        "_query_company": {"company_id": 100, "name": "두산밥캣"},
+        "_linked_companies": [
+            {"company_id": 100, "name": "두산밥캣"},
+            {"company_id": 300, "name": "LG에너지솔루션"},
+        ],
+    }
 
-    items = [
-        {
-            "_news_id": 1,
-            "_save_action": "inserted",
-            "_query_company": {"company_id": 100, "name": "엘앤에프"},
-        },
-        # 기존 행 스킵은 첫 처리 때 연결이 끝났으므로 건드리지 않는다
-        {
-            "_news_id": 2,
-            "_save_action": "skipped_existing",
-            "_query_company": {"company_id": 200, "name": "에코프로"},
-        },
-    ]
-
-    result = news_companies.link_saved_items(items)
-
-    assert inserted == [(1, [100])]
-    assert result == {"rows": 1, "failed": 0}
+    assert linked_company_ids(item) == [100, 300]
 
 
-def test_link_saved_items_isolates_insert_failure(monkeypatch):
-    def failing_insert(news_id, ids):
-        if news_id == 1:
-            raise RuntimeError("db down")
-        return len(ids)
+def test_linked_company_ids_fall_back_to_query_company():
+    # 관련성 필터를 거치지 않은 기사는 검색 대상 기업 하나다
+    assert linked_company_ids({"_query_company": {"company_id": 100, "name": "엘앤에프"}}) == [100]
 
-    monkeypatch.setattr(news_companies, "insert_news_companies", failing_insert)
 
-    company = {"company_id": 200, "name": "에코프로"}
-    items = [
-        {"_news_id": 1, "_save_action": "inserted", "_query_company": company},
-        {"_news_id": 2, "_save_action": "inserted", "_query_company": company},
-    ]
+def test_linked_company_ids_are_empty_when_judgement_linked_nothing():
+    item = {"_query_company": {"company_id": 100, "name": "엘앤에프"}, "_linked_companies": []}
 
-    assert news_companies.link_saved_items(items) == {"rows": 1, "failed": 1}
+    assert linked_company_ids(item) == []

@@ -22,8 +22,8 @@ import pytest
 from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
-from pipelines.stocks.loaders.tickers import sync_tickers
 from pipelines.stocks.models import StockTicker
+from pipelines.stocks.repositories.postgres.stocks import sync_tickers
 
 pytestmark = pytest.mark.integration
 

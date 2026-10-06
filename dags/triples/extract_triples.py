@@ -1,11 +1,14 @@
-"""뉴스 삼중항 추출 — 미처리 기사 전량.
+"""뉴스 삼중항 추출 — 미처리 클러스터 대표 기사 전량.
 
-`news_collect_articles`·`news_backfill_krx300` 이 발행하는 `etl://news/clusters` Asset 으로
-깨어난다. 이벤트 내용은 쓰지 않고 `news.triple_extracted IS NULL` 인 기사를 전량 폴링하므로,
+`news_cluster_articles` 의 `promote_clusters` 가 발행하는 `etl://news/clusters` Asset 으로
+깨어난다. 이벤트 내용은 쓰지 않고 `news.triple_extracted IS NULL` 인 대표 기사를 전량 폴링하므로,
 런이 도는 동안 쌓인 이벤트는 다음 런 하나가 한꺼번에 처리한다. 폴링에 락이 없어
 `max_active_runs=1` 이 같은 기사의 중복 추출을 막는다.
 
-추출에 실패한 기사는 미처리로 남아 다음 런(= 다음에 새 기사가 수집된 시점)에 다시 시도한다.
+엔티티는 수집 단계가 채운 `news_companies` 에서 읽는다. 이 DAG 은 엔티티를 추출·검증하지 않는다.
+
+추출에 실패한 기사는 미처리로 남는다. 클러스터 DAG 는 미처리 대표가 남아 있으면 다음 런에 Asset 을
+다시 발행하므로, 다음 수집 때 다시 시도된다.
 """
 
 from __future__ import annotations
@@ -21,7 +24,6 @@ except ImportError:
 
 
 if dag and task:
-    triples_extracted = Asset("etl://triples/extracted")
 
     @dag(
         dag_id="triples_extract_triples",
@@ -33,7 +35,7 @@ if dag and task:
         doc_md=__doc__,
     )
     def triples_extract_triples():
-        @task(retries=1, retry_delay=timedelta(minutes=10), outlets=[triples_extracted])
+        @task(retries=1, retry_delay=timedelta(minutes=10))
         def extract_triples() -> dict[str, int]:
             from pipelines.triples.jobs.extract_triples import run
 

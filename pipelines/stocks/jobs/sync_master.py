@@ -3,7 +3,7 @@ from __future__ import annotations
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.stocks.extractors.kis_stock_master import fetch_kospi_kosdaq_tickers
-from pipelines.stocks.loaders.tickers import sync_tickers
+from pipelines.stocks.repositories.postgres.stocks import sync_tickers
 
 logger = get_logger(__name__)
 

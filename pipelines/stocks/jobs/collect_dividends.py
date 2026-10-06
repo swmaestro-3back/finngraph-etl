@@ -16,10 +16,10 @@ from pipelines.common.clients.postgres import session_scope
 from pipelines.common.logging import get_logger
 from pipelines.common.utils.batching import chunked
 from pipelines.common.utils.time import now_kst
-from pipelines.companies.loaders.diagnostics import describe_universe
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 from pipelines.stocks.extractors.kis import fetch_dividends
-from pipelines.stocks.loaders.flows import upsert_dividends
-from pipelines.stocks.loaders.tickers import fetch_serviceable_stocks
+from pipelines.stocks.repositories.postgres.stock_dividends import upsert_dividends
+from pipelines.stocks.repositories.postgres.stocks import fetch_serviceable_stocks
 
 logger = get_logger(__name__)
 

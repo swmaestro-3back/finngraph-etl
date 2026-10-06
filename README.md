@@ -7,24 +7,29 @@
 ```text
 finngraph-etl/
 ├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
-│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드
+│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드 · 개체 사전 생성 · 미국 상장사 크롤링
 │   ├── disclosures/      # DART 공시(단일판매ㆍ공급계약체결) 수집
+│   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
 │   ├── health/           # 운영 헬스체크
+│   ├── market_calendar/  # 휴장일 · 예탁원 일정 · 공모주 · DART 공모 신고서 수집
 │   ├── news/             # 뉴스 수집 · 필터 · 요약
-│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계
-│   ├── themes/           # 테마 크롤링
+│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계 · 파생지표
+│   ├── themes/           # 테마 크롤링 · 테마 지수 봉 백필
 │   └── triples/          # 트리플(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
 │   ├── common/           # ETL 내 사용되는 공통 모듈
-│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis)
-│   │   └── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis · dart)
+│   │   ├── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   │   └── gazetteer.py  # 개체 사전 매처 — 본문 기업 표기 → company_id·stock_id·ticker
+│   ├── briefings/        # 백엔드 브리핑 발행 트리거
 │   ├── companies/        # 법인 ETL
 │   ├── disclosures/      # DART 공시 ETL
-│   ├── stocks/           # 주식 및 주가 ETL
+│   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
+│   ├── market_calendar/  # 증시 일정 ETL (휴장일 · 배당 · 증자 · 주총 · 공모)
 │   ├── news/             # 뉴스 ETL
+│   ├── stocks/           # 주식 및 주가 ETL
 │   ├── themes/           # 테마 ETL
-│   ├── triples/          # 트리플관계 ETL
-│   └── events/           # 뉴스 클러스터 → Neo4j Event 승격
+│   └── triples/          # 트리플관계 ETL
 ├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
@@ -59,9 +64,15 @@ finngraph-etl/
 | 동사 | 의미 |
 |------|------|
 | `collect` | 외부 API/크롤링 → RDB 적재 |
+| `crawl` | 웹 크롤링 → 파일 산출 (적재는 별도 `load`) |
 | `sync` | 원천 마스터 데이터 최신화 (멱등, 전체 갱신) |
 | `backfill` | 과거분 소급 수집 (주로 수동) |
-| `compute` | 기존 데이터에서 파생값 계산 |
+| `compute` / `calculate` | 기존 데이터에서 파생값 계산 (종목 파생지표는 `compute`, 봉·등락률은 `calculate`) |
+| `aggregate` | 하위 주기 데이터를 상위 주기로 집계 (일봉 → 주·월봉) |
+| `select` | 이번 런의 처리 대상 선정 |
+| `resolve` | 앞 단계 산출물 위치 등 실행 입력 확정 |
+| `publish` | 외부 시스템(백엔드 API·Redis)에 결과 발행을 트리거 |
+| `promote` | 한 저장소의 데이터를 상위 개념으로 승격 (클러스터 → Event) |
 | `generate` | LLM 생성 |
 | `embed` | 벡터 임베딩 생성·적재 |
 | `extract` / `merge` / `load` | 단계 분리형 파이프라인의 ETL 각 단계 |
@@ -70,7 +81,8 @@ finngraph-etl/
 - task를 나누는 기준은 **재시도 경계**입니다 — "여기가 깨졌을 때 앞 단계를 다시 돌리고
   싶은가?"에 아니라고 답하면 태스크를 나눕니다. DAG를 나누는 기준은 **트리거**입니다.
   스케줄이나 Asset이 다르면 태스크가 하나뿐이어도 별개 DAG입니다.
-- ETL 파이프라인에서 데이터 수집 및 추출은 `extractors/`, 저장 전 데이터 전처리 작업은 `transformers/`, 스토리지 데이터 저장은 `loaders/`가 담당합니다.
+- ETL 파이프라인에서 데이터 수집 및 추출은 `extractors/`, 저장 전 데이터 전처리 작업은 `transformers/`, 스토리지 조회·저장은 `repositories/`가 담당합니다.
+- `repositories/`는 저장소별(`postgres/`·`neo4j/`·`redis/`)로 나누고, 그 안의 파일은 테이블(Neo4j는 노드·간선) 이름을 따릅니다. 한 테이블의 조회·적재 쿼리를 같은 파일에 두며, 여러 테이블을 조인하는 조회는 주 FROM 테이블 파일에, 여러 테이블에 쓰는 적재는 주 테이블 파일에 둡니다. 다른 도메인이 소유한 테이블을 읽을 때는, 쓰는 쪽의 조건이 들어 있지 않고 기본 타입을 돌려주는 범용 조회면 소유 도메인의 리포지토리에 두고 가져다 씁니다(예: 거래일 캘린더, 활성 종목 티커). 쓰는 쪽의 규칙이 담기거나 쓰는 쪽 모델을 돌려주는 조회는 쓰는 쪽 파이프라인에 같은 테이블명 파일로 둡니다.
 
 ## Running Airflow locally
 
@@ -100,7 +112,7 @@ docker compose --profile airflow down -v
 - `dags/`, `pipelines/`, `scripts/`는 컨테이너에 마운트되므로 코드 수정이 즉시 반영된다.
   `pyproject.toml` 의존성이 바뀌면 `airflow build`로 이미지를 다시 빌드해야 한다.
 - 컨테이너 안에서 ETL DB 접속은 `db:5432`다(compose가 `DATABASE_URL`/`DB_HOST`/`DB_PORT`를 덮어씀).
-- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`9-16 * * 1-5` 등)이 KST 기준으로 해석된다.
+- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`8-19 * * 1-5` 등)이 KST 기준으로 해석된다.
 - DAG는 생성 시 일시정지 상태로 등록된다(`DAGS_ARE_PAUSED_AT_CREATION`). UI에서 unpause 후 사용한다.
 
 ### 스택 구성

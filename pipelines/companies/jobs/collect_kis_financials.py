@@ -16,9 +16,12 @@ from pipelines.companies.extractors.kis_finance import (
     fetch_financial_ratio,
     fetch_income_statement,
 )
-from pipelines.companies.loaders.diagnostics import describe_universe
-from pipelines.companies.loaders.financials import fetch_stale_financial_targets, upsert_financials
 from pipelines.companies.models import CompanyFinancial
+from pipelines.companies.repositories.postgres.company_financials import (
+    fetch_stale_financial_targets,
+    upsert_financials,
+)
+from pipelines.companies.repositories.postgres.service_companies import describe_universe
 from pipelines.companies.transformers.financials import (
     PERIOD_ANNUAL,
     PERIOD_QUARTER_CUMULATIVE,

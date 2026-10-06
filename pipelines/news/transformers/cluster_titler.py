@@ -1,10 +1,11 @@
-"""클러스터 이름 생성 — 멤버 기사 묶음으로 사건 이름을 짓는다.
+"""클러스터 이름 생성 — 후보 기사 제목들로 사건 이름을 짓는다.
 
-판정 기사 수가 NEWS_CLUSTER_TITLE_MIN_SIZE 를 넘은 클러스터에만 부른다. 길이 상한
-(NEWS_CLUSTER_TITLE_MAX_CHARS)은 시스템 프롬프트에 주입되고, 그래도 넘치면 같은 입력에
-축약 지시를 붙여 한 번 더 요청한다(온도 0 이라 그냥 재시도하면 같은 답이 나온다). 실패한
-클러스터는 title 이 NULL 로 남아 다음 런에 다시 시도된다. Bedrock 은 부르지 않고 titler 를
-갈아끼울 수 있어 테스트는 가짜로 돈다.
+승격된(대표 기사가 정해진) 클러스터에만 부른다. 입력은 후보 기사 전부의 제목이고 본문은 넣지
+않는다 — 주가 반응형 제목들에서 공통된 사건 하나를 골라 라벨로 다듬는 역할이다. 길이 상한
+(NEWS_CLUSTER_TITLE_MAX_CHARS)은 시스템 프롬프트에 주입되고, 그래도 넘치면 같은 입력에 축약
+지시를 붙여 한 번 더 요청한다(온도 0 이라 그냥 재시도하면 같은 답이 나온다). 실패한 클러스터는
+title 이 NULL 로 남아 다음 런에 다시 시도된다. Bedrock 은 부르지 않고 titler 를 갈아끼울 수 있어
+테스트는 가짜로 돈다.
 """
 
 from __future__ import annotations
@@ -12,47 +13,59 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
-from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from pipelines.news.repositories.news_clusters import ClusterArticle
+from pipelines.news.transformers.prompts import cluster_title as cluster_title_prompt
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 from pipelines.news.utils.text_utils import remove_leading_title_brackets
 
-PROMPT_PATH = Path(__file__).with_name("prompts") / "cluster_title_system.txt"
-
-LEAD_CHARS = 600
 DEFAULT_MAX_TOKENS = 128
 RETRY_ATTEMPTS = 2
 
 
 class ClusterTitle(BaseModel):
-    title: str = Field(description="사건 이름. 한국어 명사구 한 줄")
+    # 형식 규칙은 시스템 프롬프트에만 둔다 — 스키마 설명의 한글은 호출마다 토큰이 비싸게 든다
+    title: str
 
 
 Titler = Callable[[str], Awaitable[ClusterTitle]]
+
+
+@dataclass(frozen=True)
+class Headline:
+    """제목 생성 입력 한 줄 — 후보 기사의 제목과 발행 시각."""
+
+    title: str
+    published_at: datetime | None
 
 
 def _collapse(text: str) -> str:
     return " ".join((text or "").split())
 
 
-def build_title_input(articles: list[ClusterArticle], lead_chars: int = LEAD_CHARS) -> str:
-    """`[기사 N] 날짜 | 제목` 과 본문 리드로 LLM 입력을 만든다."""
+def build_title_input(headlines: list[Headline]) -> str:
+    """후보 기사마다 프롬프트 USER 줄(`[기사 N] 날짜 | 제목`)을 줄바꿈으로 잇는다.
 
-    blocks: list[str] = []
-    for index, article in enumerate(articles, start=1):
+    빈 제목은 건너뛴다. 전부 비면 빈 문자열이다.
+    """
+
+    lines: list[str] = []
+    for headline in headlines:
+        title = _collapse(headline.title)
+        if not title:
+            continue
         day = (
-            article.published_at.astimezone(SEOUL_TIMEZONE).date().isoformat()
-            if article.published_at
+            headline.published_at.astimezone(SEOUL_TIMEZONE).date().isoformat()
+            if headline.published_at
             else "날짜 미상"
         )
-        lead = _collapse(article.text)[:lead_chars].rstrip()
-        blocks.append(f"[기사 {index}] {day} | {_collapse(article.title)}\n{lead}".rstrip())
+        lines.append(cluster_title_prompt.USER.format(index=len(lines) + 1, date=day, title=title))
 
-    return "\n\n".join(blocks)
+    return "\n".join(lines)
 
 
 class TitleTooLong(ValueError):
@@ -75,15 +88,13 @@ def validate_cluster_title(title: str, max_chars: int) -> str:
 def build_shorten_input(articles_text: str, too_long: str, max_chars: int) -> str:
     """길이 초과 제목을 돌려주며 같은 사건을 더 짧게 짓도록 하는 재요청 입력."""
 
-    return (
-        f"{articles_text}\n\n[재요청] 앞서 만든 제목 '{too_long}'은 {len(too_long)}자로 "
-        f"{max_chars}자를 넘는다. 같은 사건을 {max_chars}자 이내로 다시 짓는다. "
-        "고유명사는 남기고 꼬리 명사·수식어부터 뺀다."
+    return cluster_title_prompt.RETRY.format(
+        articles=articles_text, title=too_long, length=len(too_long), max_chars=max_chars
     )
 
 
 def load_system_prompt(max_chars: int) -> str:
-    return PROMPT_PATH.read_text(encoding="utf-8").replace("{max_chars}", str(max_chars))
+    return cluster_title_prompt.SYSTEM.format(max_chars=max_chars)
 
 
 class ClusterTitler:
@@ -102,7 +113,7 @@ class ClusterTitler:
         logging.getLogger("langchain_aws").setLevel(logging.WARNING)
 
         model = ChatBedrockConverse(
-            model=settings.bedrock_chat_model,
+            model=settings.chat_model("cluster_title"),
             region_name=settings.bedrock_region,
             temperature=0,
             max_tokens=max_tokens,
@@ -138,20 +149,15 @@ async def _title_one(titler: Titler, articles_text: str, max_chars: int) -> str:
 
 
 async def _title_all(
-    clusters: dict[int, list[ClusterArticle]],
-    titler: Titler,
-    max_concurrency: int,
-    max_chars: int,
+    inputs: dict[int, str], titler: Titler, max_concurrency: int, max_chars: int
 ) -> dict[int, str]:
     semaphore = asyncio.Semaphore(max(1, max_concurrency))
     titles: dict[int, str] = {}
 
-    async def one(cluster_id: int, articles: list[ClusterArticle]) -> None:
+    async def one(cluster_id: int, articles_text: str) -> None:
         async with semaphore:
             try:
-                titles[cluster_id] = await _title_one(
-                    titler, build_title_input(articles), max_chars
-                )
+                titles[cluster_id] = await _title_one(titler, articles_text, max_chars)
             except Exception as e:
                 logging.debug(
                     "클러스터 이름 생성 실패(다음 런에 재시도): cluster_id=%s, %s: %s",
@@ -160,20 +166,27 @@ async def _title_all(
                     e,
                 )
 
-    await asyncio.gather(*(one(cid, arts) for cid, arts in clusters.items() if arts))
+    await asyncio.gather(*(one(cluster_id, text) for cluster_id, text in inputs.items()))
     return titles
 
 
 def title_clusters(
-    clusters: dict[int, list[ClusterArticle]],
+    clusters: dict[int, list[Headline]],
     titler: Titler | None = None,
     max_concurrency: int = 4,
     max_chars: int = 25,
 ) -> dict[int, str]:
-    """클러스터별 이름. 실패한 클러스터는 결과에 없다. titler 를 안 주면 Bedrock 싱글톤."""
+    """클러스터별 사건 제목. 입력은 후보 기사 제목 전부이고 본문은 넣지 않는다.
 
-    if not clusters:
+    실패했거나 제목이 하나도 없는 클러스터는 결과에 없다. titler 를 안 주면 Bedrock 싱글톤이다.
+    """
+
+    inputs = {
+        cluster_id: build_title_input(headlines) for cluster_id, headlines in clusters.items()
+    }
+    inputs = {cluster_id: text for cluster_id, text in inputs.items() if text}
+    if not inputs:
         return {}
     if titler is None:
         titler = get_cluster_titler(max_chars)
-    return asyncio.run(_title_all(clusters, titler, max_concurrency, max_chars))
+    return asyncio.run(_title_all(inputs, titler, max_concurrency, max_chars))

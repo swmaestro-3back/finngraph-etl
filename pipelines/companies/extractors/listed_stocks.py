@@ -1,7 +1,7 @@
 """Neo4j 시드의 원천이 되는 법인 조회(Postgres).
 
 그래프 시드 입장에서 companies 테이블은 **원천**이다. 적재 대상(Neo4j)과 읽기 대상
-(Postgres)이 다르므로 loaders가 아니라 extractors에 둔다.
+(Postgres)이 다르므로 repositories가 아니라 extractors에 둔다.
 """
 
 from __future__ import annotations

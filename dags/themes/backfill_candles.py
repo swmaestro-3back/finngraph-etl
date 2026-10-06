@@ -10,7 +10,7 @@
 **알려진 한계.** theme_stocks 와 stocks.listed_shares 는 현재 값뿐이라 과거를 "지금의 구성·
 지금의 주식수"로 재구성한다(생존 편향).
 
-**실행 시각.** 장중(09~18시)에는 stocks_intraday_candles 가 같은 행을 갱신하므로 장외 시간에
+**실행 시각.** 장중(08~21시)에는 stocks_intraday_candles 가 같은 행을 갱신하므로 장외 시간에
 실행한다.
 """
 
@@ -63,7 +63,7 @@ if dag and task:
     def themes_backfill_candles():
         def _window(params: dict) -> tuple[date, date | None]:
             from pipelines.common.clients.postgres import session_scope
-            from pipelines.themes.loaders.candles import fetch_first_trade_date
+            from pipelines.stocks.repositories.postgres.stock_candles import fetch_first_trade_date
 
             def as_date(value: str | None) -> date | None:
                 return date.fromisoformat(value) if value else None

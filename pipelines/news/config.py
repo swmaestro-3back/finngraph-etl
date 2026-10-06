@@ -51,13 +51,29 @@ class NewsSettings(BaseSettings):
         default=0.4,
         validation_alias="NEWS_CLUSTER_DESCRIPTION_WEIGHT",
     )
-    cluster_max_articles: int = Field(default=3, validation_alias="NEWS_CLUSTER_MAX_ARTICLES")
+    # 클러스터 판정에 쓰는 본문 리드 길이(자). 제목이 주 신호이고, 본문 앞 이만큼을
+    # NEWS_CLUSTER_DESCRIPTION_WEIGHT 로 낮춰 더한다.
+    cluster_lead_chars: int = Field(default=200, validation_alias="NEWS_CLUSTER_LEAD_CHARS")
 
     cluster_window_days: int = Field(default=7, validation_alias="NEWS_CLUSTER_WINDOW_DAYS")
+    # 클러스터 첫 기사보다 먼저 발행된 기사를 받아 주는 여유(일). 상대방 기업을 나중 런에서
+    # 검색하면 같은 사건의 조금 이른 기사가 뒤늦게 들어온다.
+    cluster_backward_days: int = Field(default=1, validation_alias="NEWS_CLUSTER_BACKWARD_DAYS")
+    # 전역 IDF 를 집계하는 범위(일). 이 기간에 수집된 후보 기사의 cluster_terms 만 센다.
+    cluster_idf_days: int = Field(default=90, validation_alias="NEWS_CLUSTER_IDF_DAYS")
+    # 후보 기사가 이 수에 이르면 대표 기사를 정한다(승격). 클러스터는 이 수까지만 후보를 받는다.
+    cluster_promote_size: int = Field(default=5, validation_alias="NEWS_CLUSTER_PROMOTE_SIZE")
+    # 승격·제목 생성을 다시 시도하는 범위(일). updated_at 이 이 안인 클러스터만 본다.
+    cluster_promote_retry_days: int = Field(
+        default=3, validation_alias="NEWS_CLUSTER_PROMOTE_RETRY_DAYS"
+    )
+    # 대표 후보 본문의 글자 수 하한. 이보다 긴 본문이 하나라도 있으면
+    # 짧은 본문은 대표가 되지 않는다.
+    cluster_representative_min_chars: int = Field(
+        default=200, validation_alias="NEWS_CLUSTER_REPRESENTATIVE_MIN_CHARS"
+    )
 
     cluster_keyword_count: int = Field(default=6, validation_alias="NEWS_CLUSTER_KEYWORD_COUNT")
-    # 판정 기사 수(original_size)가 이 값 이상이 되면 LLM 으로 클러스터 이름을 짓는다.
-    cluster_title_min_size: int = Field(default=3, validation_alias="NEWS_CLUSTER_TITLE_MIN_SIZE")
     # 클러스터 이름 길이 상한. 시스템 프롬프트에 주입되고 검증에도 같은 값을 쓴다.
     cluster_title_max_chars: int = Field(
         default=25, validation_alias="NEWS_CLUSTER_TITLE_MAX_CHARS"
@@ -65,16 +81,18 @@ class NewsSettings(BaseSettings):
 
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
 
-    official_source_threshold: int = Field(default=0, validation_alias="OFFICIAL_SOURCE_THRESHOLD")
-
     request_delay: float = Field(default=1.0, validation_alias="REQUEST_DELAY")
     # 본문 크롤링 동시 요청 수. 대상이 여러 언론사 페이지라 API 제한은 없고,
     # 이 값이 유일한 상한이다.
     news_body_fetch_workers: int = Field(default=8, validation_alias="NEWS_BODY_FETCH_WORKERS")
 
+    # 본문에만 나온 기업 후보(표기)가 이 수를 넘는 기사는 여러 종목을 모은 기사로 보고 저장하지
+    # 않는다. 엔티티 LLM 도 부르지 않는다.
+    news_body_candidate_max: int = Field(default=15, validation_alias="NEWS_BODY_CANDIDATE_MAX")
+
     news_llm_body_limit: int = Field(default=12000, validation_alias="NEWS_LLM_BODY_LIMIT")
     news_llm_max_tokens: int = Field(default=1024, validation_alias="NEWS_LLM_MAX_TOKENS")
-    news_llm_max_concurrency: int = Field(default=4, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
+    news_llm_max_concurrency: int = Field(default=8, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
     # 관련성 필터가 한 번의 LLM 호출에 넣는 기사 수. 시스템 프롬프트 반복과 요청 수를 줄인다.
     news_llm_batch_size: int = Field(default=10, validation_alias="NEWS_LLM_BATCH_SIZE")
 
