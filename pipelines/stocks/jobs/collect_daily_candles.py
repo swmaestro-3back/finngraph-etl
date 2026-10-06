@@ -29,6 +29,8 @@ logger = get_logger(__name__)
 
 CHUNK_SIZE = 100
 
+UPSERT_BATCH_SIZE = 1000
+
 PERIODS = ("W", "M")
 
 REGULAR_OPEN = time(9, 0)
@@ -57,20 +59,20 @@ def run(limit: int | None = None) -> None:
 
     total_rows = 0
     failed: list[str] = []
+    candles: list[DailyCandle] = []
 
-    for chunk in chunked(targets, CHUNK_SIZE):
-        candles = []
-        for _, ticker in chunk:
-            try:
-                fetched = fetch_daily_candles(ticker, start, today, client=client)
-                candles.extend(drop_preopen_placeholders(fetched, now))
-            except Exception:
-                logger.exception("일봉 갱신 실패: ticker=%s", ticker)
-                failed.append(ticker)
+    for _, ticker in targets:
+        try:
+            fetched = fetch_daily_candles(ticker, start, today, client=client)
+            candles.extend(drop_preopen_placeholders(fetched, now))
+        except Exception:
+            logger.exception("일봉 갱신 실패: ticker=%s", ticker)
+            failed.append(ticker)
 
-        if candles:
-            with session_scope() as session:
-                total_rows += upsert_daily_candles(session, candles, source="KIS")
+    if candles:
+        with session_scope() as session:
+            for batch in chunked(candles, UPSERT_BATCH_SIZE):
+                total_rows += upsert_daily_candles(session, batch, source="KIS")
 
     logger.info("일봉 갱신 완료: %d행, 실패 %d종목 %s", total_rows, len(failed), failed[:10])
 

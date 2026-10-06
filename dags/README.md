@@ -23,16 +23,16 @@ dags/
 |--------|------|----------|--------|--------|
 | companies | `companies/sync_master.py` | `companies_sync_master` | `companies` | AssetAny ← `etl://stocks/master`, `etl://companies/corp_codes` |
 | companies | `companies/sync_dart_corp_codes.py` | `companies_sync_dart_corp_codes` | `companies` | `0 3 * * *` (03시) |
-| companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 9 * * *` (09시) |
+| companies | `companies/dart_pipeline.py` | `companies_dart_pipeline` | `companies` | `0 9 * * 1` + `0 9 * 3-4 *` (월 09시, 3~4월은 매일 09시) |
 | companies | `companies/collect_kis_financials.py` | `companies_collect_kis_financials` | `companies` | `0 6 * * 1-5` (평일 06시) |
 | companies | `companies/generate_descriptions.py` | `companies_generate_descriptions` | `companies` | `0 4 * * 6` (토 04시) |
 | companies | `companies/sync_service_companies.py` | `companies_sync_service_companies` | `companies` | AssetAny ← `etl://themes/stocks`, `etl://companies/linked` |
 | companies | `companies/crawl_us.py` | `companies_crawl_us` | `companies` | `0 22 * * 0` (일요일 22시) |
 | companies | `companies/load_us.py` | `companies_load_us` | `companies` | Asset ← `etl://companies/us_crawled` |
 | companies | `companies/sync_gazetteer.py` | `companies_sync_gazetteer` | `companies` | AssetAny ← `etl://companies/master_synced`, `etl://companies/us_loaded` |
-| disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * *` (매일 04시) |
+| disclosures | `disclosures/collect_daily_supply_contracts.py` | `disclosures_collect_daily_supply_contracts` | `disclosures` | `0 4 * * 1-5` (평일 04시, 3일 lookback이 주말을 메움) |
 | disclosures | `disclosures/backfill_supply_contracts.py` | `disclosures_backfill_supply_contracts` | `disclosures` | 수동 |
-| market_calendar | `market_calendar/collect.py` | `market_calendar_collect` | `market_calendar` | `30 7 * * *` (매일 07:30) |
+| market_calendar | `market_calendar/collect.py` | `market_calendar_collect` | `market_calendar` | `0 7 * * 1-5` (평일 07시) |
 | market_calendar | `market_calendar/backfill_market_days.py` | `market_calendar_backfill_market_days` | `market_calendar`, `backfill`, `manual` | 수동 |
 | health | `health/check.py` | `health_check` | `health` | 수동 |
 | news | `news/collect_articles.py` | `news_collect_articles` | `news` | Asset ← `etl://themes/hot` **또는** cron (평일 07:30·21시, 주말 09·15·21시) |
@@ -44,6 +44,7 @@ dags/
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `30 20 * * 1-5` (평일 20:30) |
 | stocks | `stocks/compute_derived.py` | `stocks_compute_derived` | `stocks` | Asset ← `etl://stocks/daily` |
 | stocks | `stocks/collect_dividends.py` | `stocks_collect_dividends` | `stocks` | `0 6 * * 6` (토 06시) |
+| stocks | `stocks/weekly_period_candles.py` | `stocks_weekly_period_candles` | `stocks` | `0 9 * * 6` (토 09시, KIS 주·월봉 120일 재수집으로 수정주가 보정) |
 | stocks | `stocks/backfill_daily_candles.py` | `stocks_backfill_daily_candles` | `stocks`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/backfill_period_candles.py` | `stocks_backfill_period_candles` | `stocks`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/backfill_investor_flows.py` | `stocks_backfill_investor_flows` | `stocks`, `backfill`, `manual` | 수동 |
@@ -67,7 +68,7 @@ companies_collect_kis_financials ─► etl://companies/financials
   (평일 06시)
 
 stocks_daily_pipeline ───────► etl://stocks/daily ──────► stocks_compute_derived
-  (평일 20:30, 일봉→[기간봉 ∥ 테마 일봉→테마 기간봉]→수급)   (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
+  (평일 20:30, 일봉→[기간봉 집계 ∥ 테마 일봉→테마 기간봉]→수급)   (PER·PBR·수익률 → 핫테마 발행 → 브리핑)
 ```
 
 `stocks_compute_derived`는 `etl://stocks/daily` 하나만 구독한다. PER은 분기 EPS 4개를 더한 TTM이라
@@ -205,17 +206,17 @@ Asset을 생산하지도 소비하지도 않아, 자기 시간표로만 도는 D
 
 ```mermaid
 flowchart TB
-    CDP["companies_dart_pipeline<br/><code>0 9 * * *</code>"]
+    CDP["companies_dart_pipeline<br/><code>0 9 * * 1 · 0 9 * 3-4 *</code>"]
     CGD["companies_generate_descriptions<br/><code>0 4 * * 6</code>"]
     SCD["stocks_collect_dividends<br/><code>0 6 * * 6</code>"]
     SBD["stocks_backfill_daily_candles<br/>수동"]
     SBP["stocks_backfill_period_candles<br/>수동"]
     SBI["stocks_backfill_investor_flows<br/>수동"]
     SBV["stocks_backfill_derived<br/>수동"]
-    MCC["market_calendar_collect<br/><code>30 7 * * *</code>"]
+    MCC["market_calendar_collect<br/><code>0 7 * * 1-5</code>"]
     MCB["market_calendar_backfill_market_days<br/>수동"]
     HC["health_check<br/>수동"]
-    DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * *</code>"]
+    DCD["disclosures_collect_daily_supply_contracts<br/><code>0 4 * * 1-5</code>"]
     DBF["disclosures_backfill_supply_contracts<br/>수동"]
     TBC["themes_backfill_candles<br/>수동"]
 

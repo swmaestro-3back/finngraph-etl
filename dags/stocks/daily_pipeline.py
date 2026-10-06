@@ -9,7 +9,8 @@
 받은 구간 전체를 재계산한다. 종목 쪽은 일봉·기간봉이 모두 적재된 뒤에, 테마 쪽은 테마 기간봉
 뒤에 둔다.
 
-테마 봉은 종목 일봉으로 계산하는 시총 가중 지수라 일봉 뒤에 두고, KIS 를 쓰지 않아 기간봉과
+기간봉은 일봉을 모아 계산한다(KIS 원천 기간봉은 stocks_weekly_period_candles 가 주 1회 덮어써
+수정주가를 맞춘다). 테마 봉은 종목 일봉으로 계산하는 시총 가중 지수라 일봉 뒤에 두고, 기간봉과
 병렬이다. 수급이 두 갈래 뒤에 있으므로 Asset(etl://stocks/daily)은 테마 봉까지 있는 상태에서
 발행되고, 그 뒤의 핫테마 발행이 테마 봉을 읽을 수 있다.
 
@@ -68,11 +69,11 @@ if dag and task:
 
             run()
 
-        @task(retries=2)
-        def collect_period_candles() -> None:
-            from pipelines.stocks.jobs.collect_daily_candles import run_period
+        @task(retries=1)
+        def aggregate_period_candles() -> int:
+            from pipelines.stocks.jobs.aggregate_period_candles import run
 
-            run_period()
+            return run()
 
         @task(retries=2)
         def calculate_theme_daily() -> int:
@@ -111,7 +112,7 @@ if dag and task:
 
         candles = check_market_open() >> collect_daily_candles()
         flows = collect_investor_flows()
-        candles >> collect_period_candles() >> calculate_stock_change_rates() >> flows
+        candles >> aggregate_period_candles() >> calculate_stock_change_rates() >> flows
         (
             candles
             >> calculate_theme_daily()

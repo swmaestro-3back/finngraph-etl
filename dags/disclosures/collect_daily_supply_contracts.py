@@ -24,7 +24,7 @@ if dag and task:
     @dag(
         dag_id="disclosures_collect_daily_supply_contracts",
         start_date=datetime(2026, 1, 1),
-        schedule="0 4 * * *",
+        schedule="0 4 * * 1-5",
         catchup=False,
         max_active_runs=1,
         tags=["disclosures"],
