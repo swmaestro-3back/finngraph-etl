@@ -8,6 +8,7 @@ extractor는 단축코드로 말하고 테이블은 stock_id를 키로 쓴다. �
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -59,6 +60,18 @@ UPSERT_PERIOD_CANDLE_SQL = text(
       volume = EXCLUDED.volume,
       trade_value = COALESCE(EXCLUDED.trade_value, stock_candles_period.trade_value),
       updated_at = now()
+    """
+)
+
+SELECT_CLOSES_BY_STOCK_DATE_SQL = text(
+    """
+    SELECT d.stock_id, d.trade_date, d.close
+      FROM stock_candles_daily AS d
+      JOIN (
+             SELECT UNNEST(CAST(:stock_ids AS bigint[])) AS stock_id,
+                    UNNEST(CAST(:trade_dates AS date[])) AS trade_date
+           ) AS pairs
+        ON d.stock_id = pairs.stock_id AND d.trade_date = pairs.trade_date
     """
 )
 
@@ -263,6 +276,20 @@ def upsert_period_candles(session: Session, candles: list[PeriodCandle]) -> int:
 
     session.execute(UPSERT_PERIOD_CANDLE_SQL, payload)
     return len(payload)
+
+
+def fetch_closes_by_stock_dates(
+    session: Session, pairs: list[tuple[int, date]]
+) -> dict[tuple[int, date], Decimal]:
+    if not pairs:
+        return {}
+
+    stock_ids = [stock_id for stock_id, _ in pairs]
+    trade_dates = [trade_date for _, trade_date in pairs]
+    rows = session.execute(
+        SELECT_CLOSES_BY_STOCK_DATE_SQL, {"stock_ids": stock_ids, "trade_dates": trade_dates}
+    )
+    return {(row.stock_id, row.trade_date): row.close for row in rows}
 
 
 def aggregate_current_period_candles(session: Session, since: date) -> int:
