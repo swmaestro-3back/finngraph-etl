@@ -14,6 +14,8 @@
 재클러스터링(recluster_news.py --apply) 뒤에는 --links --apply 로 다시 만든다. 이 스크립트를
 실행하는 동안에는 활성화 설정을 끈다.
 
+같은 작업을 Airflow 수동 DAG news_backfill_issue_timeline 으로도 실행할 수 있다.
+
 기본은 dry-run 이다. 쓰지도 Bedrock 을 부르지도 않고 대상 수와 예시만 출력한다(연결 판정은 앞선
 판정의 기록을 부모 후보로 쓰므로 쓰지 않고는 미리 볼 수 없다). 실제로 쓰려면 --apply 를 준다.
 
@@ -28,72 +30,17 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime, timedelta
 
-from pipelines.common.utils.time import KST, now_kst
-from pipelines.news.config import get_news_settings
+from pipelines.news.jobs.backfill_issue_timeline import (
+    backfill_links,
+    reset_links,
+    since_from_days,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("backfill_issue_timeline")
 
-# --since-days 를 주지 않으면 전체 기간을 대상으로 한다.
-ALL_TIME = datetime(1970, 1, 1, tzinfo=KST)
-# dry-run 에서 출력할 예시 수다.
-SAMPLE_COUNT = 10
-# --limit 을 주지 않으면 사실상 전부 잇는다.
-NO_LIMIT = 1_000_000
-
-
-def reset_links(since: datetime, apply: bool) -> None:
-    from pipelines.news.repositories.postgres import news_clusters
-
-    counts = news_clusters.count_resettable_clusters(since)
-    log.info("[초기화] 대상 %d개 (연결 판정 %d개)", counts["clusters"], counts["linked"])
-    if not apply:
-        return
-
-    reset = news_clusters.reset_cluster_links(since)
-    log.info("[초기화] 임베딩·연결 판정 지움 %d개", reset)
-
-
-def backfill_links(since: datetime, limit: int | None, apply: bool) -> None:
-    from pipelines.news.jobs import link_issues
-    from pipelines.news.repositories.postgres import news_clusters
-
-    summary_deadline = now_kst() - link_issues.SUMMARY_WAIT
-    counts = news_clusters.count_link_targets(since, summary_deadline)
-    log.info(
-        "[연결] 대상 %d개 (임베딩 없음 %d개), 대표 요약 대기로 빠짐 %d개",
-        counts["targets"],
-        counts["without_embedding"],
-        counts["waiting_summary"],
-    )
-
-    if not apply:
-        for target in news_clusters.fetch_link_targets(since, SAMPLE_COUNT, summary_deadline):
-            log.info(
-                "  [dry-run] %s %s %s",
-                target.cluster_id,
-                target.first_published_at.astimezone(KST).date(),
-                target.title,
-            )
-        return
-
-    batch_size = get_news_settings().issue_link_max_per_run
-    totals = dict.fromkeys(link_issues.STAT_KEYS, 0)
-    remaining = limit if limit is not None else NO_LIMIT
-    while remaining > 0:
-        stats = link_issues.link_pending(since=since, limit=min(batch_size, remaining))
-        for key, value in stats.items():
-            totals[key] += value
-        remaining -= stats["scanned"]
-        log.info("[연결] 누적 %s", totals)
-        # 실패한 대상은 linked_at 이 NULL 로 남아 다음 배치에 다시 잡히므로, 하나도 판정하지 못한
-        # 배치가 나오면 멈춘다.
-        if stats["scanned"] == 0 or stats["linked"] + stats["roots"] == 0:
-            break
-
-    log.info("[연결] 합계 %s", totals)
+__all__ = ["backfill_links", "main", "reset_links"]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -126,11 +73,10 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--reset-links, --links 중 하나 이상을 준다")
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit 은 양수")
-    # 0 을 받으면 아래에서 전체 기간으로 처리돼 --reset-links 가 의도보다 넓게 지운다.
     if args.since_days is not None and args.since_days <= 0:
         parser.error("--since-days 는 양수")
 
-    since = now_kst() - timedelta(days=args.since_days) if args.since_days else ALL_TIME
+    since = since_from_days(args.since_days)
     log.info(
         "[시작] %s, since=%s, limit=%s", "apply" if args.apply else "dry-run", since, args.limit
     )

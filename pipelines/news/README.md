@@ -191,10 +191,12 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 
 ### 배포 순서
 
-1. `migrations/versions/V12__issue_timeline.sql` 적용(컬럼·인덱스만 추가).
-2. 스위치를 끈 채(`NEWS_ISSUE_LINK_ENABLED=false`, 기본값) 배포합니다. `link_issues` 는 0 통계로 끝납니다.
-3. 기존 이슈를 오래된 것부터 잇습니다. 기본은 dry-run 이라 대상 수와 예시만 출력하고 쓰지도
-   Bedrock 을 부르지도 않습니다.
+1. `migrations/versions/V12__issue_timeline.sql` 을 적용합니다(컬럼·인덱스만 추가).
+2. 연결 설정을 끈 채(`NEWS_ISSUE_LINK_ENABLED=false`, 기본값) 배포합니다. `link_issues` 는 0 통계로 끝납니다.
+3. 기존 이슈를 오래된 것부터 잇습니다. Airflow 에서 수동 DAG `news_backfill_issue_timeline` 을 실행합니다.
+   기본값(`apply=false`)은 dry-run 이라 대상 수와 예시만 로그에 남기고, 쓰지도 Bedrock 을 부르지도
+   않습니다. 확인한 뒤 `links=true, apply=true` 로 다시 실행합니다. 서버 셸에서는 같은 작업을 스크립트로
+   실행할 수 있습니다.
 
    ```bash
    uv run python scripts/backfill_issue_timeline.py --links            # dry-run
@@ -203,14 +205,15 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 
 4. 백필이 끝나면 `NEWS_ISSUE_LINK_ENABLED=true` 로 켭니다.
 
-스위치를 먼저 켜면 lookback 안의 최근 이슈만 보고 판정해 백필 전의 옛 이슈를 부모로 못 본 채 루트로
-굳습니다. 그랬다면 스위치를 끄고 `--reset-links --links --apply`(기간을 좁히려면 `--since-days N`)로
-다시 만듭니다. `--reset-links` 는 임베딩과 연결 컬럼만 지우고 `updated_at` 은 그대로 둡니다.
+설정을 먼저 켜면 lookback 안의 최근 이슈만 보고 판정하므로, 백필 전의 옛 이슈를 부모로 보지 못한 이슈가
+루트로 남습니다. 그랬다면 설정을 끄고 `reset=true, links=true, apply=true`(스크립트는
+`--reset-links --links --apply`, 기간을 좁히려면 `since_days`)로 다시 만듭니다. 초기화는 임베딩과 연결
+컬럼만 지우고 `updated_at` 은 그대로 둡니다.
 
 ### 연결을 다시 만들어야 할 때
 
-스케줄 연결은 꼬리 재판정 창 밖의 판정을 고치지 않습니다. 아래 작업 뒤에는 스위치를 끄고 백필
-스크립트로 그 기간의 연결을 다시 만든 뒤 켭니다.
+스케줄 연결은 재판정 기간 밖의 판정을 고치지 않습니다. 아래 작업 뒤에는 연결 설정을 끄고 백필
+(`news_backfill_issue_timeline` DAG 또는 스크립트)로 그 기간의 연결을 다시 만든 뒤 켭니다.
 
 - **옛 기사 백필(`news_backfill_krx100` → `news_backfill_cluster_articles`)**: 몇 달 전에 시작한 이슈가
   한꺼번에 생깁니다. `news_backfill_cluster_articles` 의 `link_issues` 는 런당 상한만큼만, lookback
