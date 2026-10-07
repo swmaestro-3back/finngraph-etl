@@ -1,6 +1,7 @@
-"""embed_texts 모델 선택 — model 을 안 주면 BEDROCK_EMBEDDING_MODEL, 주면 그 모델이다.
+"""embed_texts 의 모델 선택을 검증한다. model 을 주지 않으면 BEDROCK_EMBEDDING_MODEL 을, 주면 그
+모델을 쓴다.
 
-Bedrock 클라이언트는 가짜로 갈아끼운다. 요청 본문과 modelId 만 본다.
+Bedrock 클라이언트는 가짜로 바꿔 넣고, 요청 본문과 modelId 만 본다.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ class FakeClient:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
 
-    def invoke_model(self, modelId, body):  # noqa: N803 — boto3 인자 이름 그대로
+    # boto3 의 인자 이름(modelId)을 그대로 써야 해서 이름 규칙 검사(N803)를 끈다.
+    def invoke_model(self, modelId, body):  # noqa: N803
         payload = json.loads(body)
         self.calls.append((modelId, payload))
         vector = [float(len(payload["inputText"]))] * payload["dimensions"]

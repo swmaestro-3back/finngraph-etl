@@ -17,9 +17,10 @@ Asset 으로 깨어난다. task 구성은 `news_cluster_articles` 와 같고, �
 삼중항 추출은 `news_cluster_articles` 와 같은 `etl://news/clusters` 를 발행해
 `triples_extract_triples` 가 처리한다.
 
-`link_issues` 는 스케줄 연결과 같아(런당 상한, lookback, 꼬리 재판정 창) 백필이 만든 옛 이슈를 다
-제자리에 잇지 못한다. 이 DAG 와 요약이 끝나면 `scripts/backfill_issue_timeline.py --reset-links
---since-days <백필 기간> --links --apply` 로 그 기간의 연결을 다시 만든다(pipelines/news/README.md).
+`link_issues` 는 스케줄 연결과 같은 제약(실행당 상한, lookback, 재판정 기간)으로 실행되므로, 백필로
+들어온 옛 이슈를 모두 올바른 부모에 잇지는 못한다. 이 DAG 와 요약이 끝나면
+`scripts/backfill_issue_timeline.py --reset-links --since-days <백필 기간> --links --apply` 로 그
+기간의 연결을 다시 만든다(pipelines/news/README.md).
 """
 
 from __future__ import annotations
@@ -80,16 +81,18 @@ if dag and task:
             result = run()
             return {"fetched": result["fetched"], "saved": result["saved"]}
 
-        # 요약 뒤에 돌아야 이번 런에 승격된 이슈가 한 줄 요약을 넣고 임베딩된다. 요약이 실패해도
-        # 돈다(all_done) — 요약 없는 이슈는 승격·제목 생성 24시간 뒤에 요약 없이 잇는다.
+        # 이번 실행에 승격된 이슈가 한 줄 요약까지 넣어 임베딩되도록 요약 뒤에 실행한다. 요약이
+        # 실패해도 실행되며(all_done), 요약이 끝내 없는 이슈는 승격·제목 생성 24시간 뒤에 요약 없이
+        # 잇는다.
         @task(retries=1, retry_delay=timedelta(minutes=10), trigger_rule="all_done")
         def link_issues() -> dict[str, int]:
             from pipelines.news.jobs.link_issues import run
 
             return run()
 
-        # DAG run 상태는 말단 task 로만 정해진다. 요약 뒤에 all_done 인 link_issues 가 붙으면 요약
-        # 실패가 성공 런에 묻히므로, 요약 성공을 요구하는 말단을 하나 둬 실패를 런에 남긴다.
+        # DAG run 상태는 뒤에 이어지는 task 가 없는 마지막 task 들로만 정해진다. all_done 인
+        # link_issues 만 마지막 task 로 두면 요약이 실패해도 실행이 성공으로 끝나므로, 요약 성공을
+        # 요구하는 마지막 task 를 하나 더 둔다.
         @task
         def finish() -> None:
             return None

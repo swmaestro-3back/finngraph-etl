@@ -1,8 +1,9 @@
-"""link_issues job 단위 테스트. DB·Bedrock·개체 사전은 메모리 가짜로 갈아끼우고 흐름만 본다.
+"""link_issues job 을 검증하는 단위 테스트다. DB·Bedrock·개체 사전은 메모리 가짜로 바꿔 넣고
+흐름만 본다.
 
-가짜 저장소는 SQL 과 같은 규칙(이름·대표 있음, 요약 대기, 먼저 시작, lookback, 판정 완료, 대상 주요
-기업이 연결된 후보, min_score, 페이지 경계, 꼬리 창)으로 대상·후보·꼬리를 고르고 판정을 바로
-반영한다 — 같은 런의 앞선 이슈가 뒤 이슈의 후보가 되는지를 본다.
+가짜 저장소는 SQL 과 같은 규칙(이름·대표 기사 있음, 요약 대기, 먼저 시작, lookback, 판정 완료, 대상 주요
+기업이 연결된 후보, min_score, 페이지 경계, 재판정 기간)으로 대상·후보·재판정 대상을 고르고 판정을
+바로 반영한다. 그래서 같은 실행의 앞선 이슈가 뒤 이슈의 후보가 되는지를 볼 수 있다.
 """
 
 from __future__ import annotations
@@ -40,7 +41,8 @@ MATCHER = CompanyMatcher(
     }
 )
 
-# 임베딩 가짜: 텍스트에 먼저 걸리는 주제어로 벡터를 고른다. HBM 은 마이크론과 코사인 0.6 이다.
+# 가짜 임베딩은 TOPIC_VECTORS 순서대로 주제어를 찾아, 텍스트에 처음 포함된 주제어의 벡터를 돌려준다.
+# 주제어가 없으면 OTHER_VECTOR 를 쓴다. HBM 은 마이크론과 코사인 0.6 이다.
 TOPIC_VECTORS = {
     "HBM": [0.6, 0.0, 0.8, 0.0],
     "마이크론": [1.0, 0.0, 0.0, 0.0],
@@ -244,7 +246,8 @@ def _members(*titles: str, companies: tuple[int, ...] = ()) -> list[ClusterMembe
 def test_run_embeds_missing_once_and_links_oldest_first(fake):
     job, clusters, calls = fake
     now = now_kst()
-    # 이미 판정된 7월 건설지출 루트 (기업 없음, 임베딩 있음)
+    # 이미 판정된 7월 건설지출 이슈다. 기업이 없고 임베딩이 있으며, 루트(부모가 없는 타임라인
+    # 첫 이슈)다.
     clusters[1] = FakeCluster(
         "미국 7월 건설지출",
         now - timedelta(days=30),
@@ -252,7 +255,7 @@ def test_run_embeds_missing_once_and_links_oldest_first(fake):
         linked=True,
         root=1,
     )
-    # 이번 런 대상: 마이크론 프리뷰(가장 먼저) → 8월 건설지출 → 마이크론 HBM 실적
+    # 이번 실행 대상은 시작 순서대로 마이크론 프리뷰, 8월 건설지출, 마이크론 HBM 실적이다.
     clusters[10] = FakeCluster(
         "마이크론 실적 발표 일정",
         now - timedelta(days=3),
@@ -283,11 +286,12 @@ def test_run_embeds_missing_once_and_links_oldest_first(fake):
     stats = job.run()
 
     assert stats == _stats(scanned=3, embedded=3, linked=2, follow_up=2, roots=1)
-    # 임베딩은 한 번에, 뉴스 전용 모델·1024 차원으로
+    # 임베딩은 한 번에 요청하고, 뉴스 전용 모델과 1024 차원을 쓴다.
     assert len(calls["embed"]) == 1
     texts, dim, model = calls["embed"][0]
     assert (dim, model) == (1024, "titan-test")
-    # 제목 / 대표 기사 CHANGE 포인트 / 멤버 기사 제목 앞 3개(저장소가 후보 기사 먼저 발행순으로 준다)
+    # 제목 / 대표 기사 CHANGE 포인트 / 멤버 기사 제목 앞 3개 순서다. 저장소는 후보 기사(승격 전에
+    # 들어온 기사)를 먼저, 발행순으로 준다.
     assert texts[0] == (
         "마이크론 실적 발표 일정\n"
         "마이크론이 4분기 실적을 발표해요.\n"
@@ -295,18 +299,18 @@ def test_run_embeds_missing_once_and_links_oldest_first(fake):
         "마이크론 실적 D-7\n"
         "실적 시즌"
     )
-    # CHANGE 가 없으면 요약 첫 문장
+    # CHANGE 가 없으면 요약 문단의 첫 문장을 쓴다.
     assert texts[1] == "미국 8월 건설지출\n건설지출이 늘었어요."
-    # 연결 대상 창은 지금부터 lookback 90일, 요약 대기는 24시간
+    # 연결 대상 기간은 지금부터 lookback 90일이고, 요약 대기는 24시간이다.
     since, limit, deadline = calls["targets"][0]
     assert abs(since - (now - timedelta(days=90))) < timedelta(minutes=1)
     assert abs(deadline - (now - timedelta(hours=24))) < timedelta(minutes=1)
     assert limit == 200
-    # 개체 사전은 런당 한 번
+    # 개체 사전은 실행당 한 번만 불러온다.
     assert calls["matcher"] == 1
 
-    # 프리뷰는 새 이야기의 루트, 실적은 같은 런에 먼저 판정된 프리뷰에 후속으로 이어진다
-    # (이틀 떨어졌고 코사인 0.6 은 같은 사건 기준 0.75 미만)
+    # 프리뷰는 새 타임라인의 루트가 되고, 실적은 같은 실행에서 먼저 판정된 프리뷰에 후속으로
+    # 이어진다. 두 이슈는 이틀 떨어져 있고, 코사인 0.6 은 같은 사건 기준 0.75 미만이다.
     assert (clusters[10].parent, clusters[10].root, clusters[10].relation) == (None, 10, None)
     assert (clusters[12].parent, clusters[12].root, clusters[12].relation) == (10, 10, "follow_up")
     assert clusters[12].score == pytest.approx(0.6)
@@ -322,7 +326,7 @@ def test_candidate_filter_uses_target_primary_companies_and_thresholds(fake):
         "마이크론 실적",
         now - timedelta(days=1),
         summary="요약이에요.",
-        # SK하이닉스는 본문에만 나온 거래처라 주요 기업이 아니다
+        # SK하이닉스는 본문에만 나온 거래처라 주요 기업이 아니다.
         members=_members("마이크론 실적 발표", companies=(MICRON, SK_HYNIX)),
     )
     clusters[2] = FakeCluster("건설지출", now - timedelta(hours=1), summary="요약이에요.")
@@ -336,15 +340,16 @@ def test_candidate_filter_uses_target_primary_companies_and_thresholds(fake):
     assert abs(first_window - (clusters[1].first_published_at - timedelta(days=90))) < timedelta(
         seconds=1
     )
-    # 기업 없는 대상은 기업 없는 후보만, 더 높은 하한으로
+    # 기업 없는 대상은 기업 없는 후보만 더 높은 하한으로 찾는다.
     assert (second_companies, second_min) == (frozenset(), 0.75)
 
 
 def test_primary_companies_are_judged_per_cluster(fake):
     job, clusters, calls = fake
     now = now_kst()
-    # 후보: 마이크론은 제목에 나온 기사가 아니라 다른 멤버 기사에 연결돼 있다. 주요 기업은 클러스터
-    # 단위(연결 기업 중 멤버 제목 하나 이상에 나온 기업)라 마이크론도 주요 기업이다.
+    # 후보 이슈에서 마이크론은 제목에 마이크론이 나온 기사가 아니라 다른 멤버 기사에 연결돼 있다. 주요
+    # 기업은 클러스터 단위(연결 기업 중 멤버 제목 하나 이상에 나온 기업)로 고르므로 마이크론도 주요
+    # 기업이다.
     clusters[1] = FakeCluster(
         "SK하이닉스 HBM 증설",
         now - timedelta(days=5),
@@ -373,7 +378,7 @@ def test_candidate_without_primary_overlap_is_rejected(fake):
     clusters[1] = FakeCluster(
         "SK하이닉스 HBM 증설",
         now - timedelta(days=5),
-        # 마이크론은 연결돼 있지만 어느 제목에도 없다
+        # 마이크론은 연결돼 있지만 어느 제목에도 없다.
         members=_members("SK하이닉스 HBM 증설", companies=(SK_HYNIX, MICRON)),
         embedding=MICRON_VECTOR,
         linked=True,
@@ -390,7 +395,7 @@ def test_candidate_without_primary_overlap_is_rejected(fake):
 
     assert stats == _stats(scanned=1, embedded=1, roots=1)
     assert clusters[2].parent is None and clusters[2].root == 2
-    # 후보의 멤버는 런 중에 한 번만 읽는다
+    # 후보의 멤버는 실행 중에 한 번만 읽는다.
     assert calls["members"] == [[2], [1]]
 
 
@@ -405,7 +410,7 @@ def test_close_start_is_same_event_even_with_low_score(fake):
         linked=True,
         root=1,
     )
-    # 같은 발표를 다른 표현으로 묶은 클러스터 — 6시간 차, 코사인 0.6
+    # 같은 발표를 다른 표현으로 묶은 클러스터다(6시간 차, 코사인 0.6).
     clusters[2] = FakeCluster(
         "HBM 매출 급증",
         now - timedelta(hours=4),
@@ -421,13 +426,13 @@ def test_close_start_is_same_event_even_with_low_score(fake):
 def test_target_without_summary_waits_until_stale(fake):
     job, clusters, calls = fake
     now = now_kst()
-    # 대표 요약이 아직 없고 방금 승격·제목이 붙었다 — 요약을 기다린다
+    # 대표 기사 요약이 아직 없고 방금 승격·제목이 붙었으므로 요약을 기다린다.
     clusters[1] = FakeCluster("마이크론 실적", now - timedelta(days=1), updated_at=now)
-    # 요약 없이 하루 넘게 지났다 — 요약 없이 잇는다
+    # 요약 없이 하루 넘게 지났으므로 요약 없이 잇는다.
     clusters[2] = FakeCluster(
         "미국 건설지출", now - timedelta(days=3), updated_at=now - timedelta(hours=25)
     )
-    # 이름이나 대표가 없으면 대상이 아니다
+    # 이름이나 대표 기사가 없으면 대상이 아니다.
     clusters[3] = FakeCluster(None, now - timedelta(days=2), summary="요약이에요.")
     clusters[4] = FakeCluster(
         "대표 없음", now - timedelta(days=2), summary="요약이에요.", representative=False
@@ -451,7 +456,7 @@ def test_run_reuses_stored_embedding(fake):
         linked=True,
         root=1,
     )
-    # 지난 런에 임베딩은 저장됐지만 연결 기록에 실패한 대상
+    # 지난 실행에서 임베딩은 저장됐지만 연결 기록에는 실패한 대상이다.
     clusters[2] = FakeCluster(
         "마이크론 HBM 공급",
         now - timedelta(days=1),
@@ -468,7 +473,7 @@ def test_run_reuses_stored_embedding(fake):
 def test_candidates_are_paged_until_one_passes_primary_company_rule(fake):
     job, clusters, calls = fake
     now = now_kst()
-    # 맞는 부모: 마이크론이 제목에 나온다. 코사인 0.6
+    # 맞는 부모는 마이크론이 제목에 나오고 코사인이 0.6 이다.
     clusters[1] = FakeCluster(
         "마이크론 HBM 공급",
         now - timedelta(days=10),
@@ -477,8 +482,8 @@ def test_candidates_are_paged_until_one_passes_primary_company_rule(fake):
         linked=True,
         root=1,
     )
-    # 한 페이지를 넘는 고득점 후보. 마이크론은 본문에만 스쳐(제목은 SK하이닉스) SQL 의 기업 조건은
-    # 넘지만 주요 기업 규칙에서 떨어진다
+    # 한 페이지를 넘게 채우는 고득점 후보다. 마이크론이 본문에만 언급돼(제목은 SK하이닉스) SQL 의
+    # 기업 조건은 통과하지만 주요 기업 규칙에서 탈락한다.
     for offset in range(job.CANDIDATE_PAGE_SIZE + 2):
         clusters[100 + offset] = FakeCluster(
             "SK하이닉스 HBM 증설",
@@ -498,7 +503,7 @@ def test_candidates_are_paged_until_one_passes_primary_company_rule(fake):
     assert job.run() == _stats(scanned=1, embedded=1, linked=1, follow_up=1)
     assert (clusters[200].parent, clusters[200].relation) == (1, "follow_up")
     assert clusters[200].score == pytest.approx(0.6)
-    # 첫 페이지는 전부 탈락이라 다음 페이지를 읽었다
+    # 첫 페이지는 전부 탈락이라 다음 페이지를 읽었다.
     assert [cluster_id for cluster_id, *_ in calls["candidates"]] == [200, 200]
 
 
@@ -521,21 +526,21 @@ def test_root_without_eligible_candidate_reads_only_short_page(fake):
     )
 
     assert job.run() == _stats(scanned=1, embedded=1, roots=1)
-    # 후보가 한 페이지에 못 미치면 더 읽지 않는다
+    # 후보가 한 페이지에 못 미치면 더 읽지 않는다.
     assert len(calls["candidates"]) == 1
 
 
 def test_earlier_cluster_judged_late_relinks_tail(fake):
-    """같은 사건이 둘로 갈렸는데 늦게 시작한 쪽이 먼저 승격·판정된 경우.
+    """같은 사건이 둘로 나뉘었는데 늦게 시작한 쪽이 먼저 승격·판정된 경우를 본다.
 
     백필처럼 시작 순서로 한 번에 이으면 B·C 는 A 에 같은 사건으로 붙는다. 스케줄 연결은 A 가 들어올
-    때 A 보다 뒤에 시작한 판정(꼬리)을 다시 만들어 같은 결과에 이른다.
+    때 A 보다 뒤에 시작한 판정(재판정 대상)을 다시 만들어 같은 결과에 이른다.
     """
 
     job, clusters, calls = fake
     now = now_kst()
     a_start = now - timedelta(hours=24)
-    # A 는 먼저 시작했지만 아직 후보가 덜 차 대표가 없다
+    # A 는 먼저 시작했지만 아직 승격 전이라 대표 기사가 없다.
     clusters[1] = FakeCluster(
         "마이크론 실적",
         a_start,
@@ -556,12 +561,12 @@ def test_earlier_cluster_judged_late_relinks_tail(fake):
         members=_members("마이크론 실적에 주가 급등", companies=(MICRON,)),
     )
 
-    # 첫 런: A 는 대상이 아니다. B 는 루트, C 는 B 에 같은 사건으로 붙는다
+    # 첫 실행: A 는 대상이 아니다. B 는 루트가 되고, C 는 B 에 같은 사건으로 붙는다.
     assert job.run() == _stats(scanned=2, embedded=2, linked=1, same_event=1, roots=1)
     assert (clusters[2].parent, clusters[3].parent, clusters[3].root) == (None, 2, 2)
 
-    # 둘째 런: A 가 승격돼 들어온다. A 는 앞선 이슈가 없어 루트이고, A 보다 뒤에 시작한 B·C 를 다시
-    # 판정한다
+    # 둘째 실행: A 가 승격돼 들어온다. A 는 앞선 이슈가 없어 루트이고, A 보다 뒤에 시작한 B·C 를
+    # 다시 판정한다.
     clusters[1].representative = True
     stats = job.run()
 
@@ -569,9 +574,9 @@ def test_earlier_cluster_judged_late_relinks_tail(fake):
     assert (clusters[1].parent, clusters[1].root) == (None, 1)
     assert (clusters[2].parent, clusters[2].root, clusters[2].relation) == (1, 1, "same_event")
     assert clusters[2].score == pytest.approx(1.0)
-    # C 는 코사인이 같은 A·B 중 늦게 시작한 B 를 그대로 부모로 두고, 루트는 새로 물려받는다
+    # C 는 코사인이 같은 A·B 중 늦게 시작한 B 를 그대로 부모로 두고, 루트만 새로 물려받는다.
     assert (clusters[3].parent, clusters[3].root, clusters[3].relation) == (2, 1, "same_event")
-    # 꼬리는 A 뒤, 지금부터 72시간 안에 시작한 판정이다
+    # 재판정 대상은 A 보다 뒤에 시작했고 지금부터 72시간 안에 시작한 이슈다.
     after_published_at, after_id, relink_since = calls["tails"][-1]
     assert (after_published_at, after_id) == (a_start, 1)
     assert abs(relink_since - (now - timedelta(hours=72))) < timedelta(minutes=1)
@@ -585,7 +590,7 @@ def test_tail_outside_relink_window_is_kept(fake, monkeypatch, window_hours):
     monkeypatch.setenv("NEWS_ISSUE_RELINK_WINDOW_HOURS", window_hours)
     config.get_news_settings.cache_clear()
     now = now_kst()
-    # B 는 나흘 전에 시작해 루트로 판정됐다. 하루 먼저 시작한 A 가 이제야 들어온다
+    # B 는 나흘 전에 시작해 루트로 판정됐다. 하루 먼저 시작한 A 가 이제야 들어온다.
     clusters[1] = FakeCluster(
         "마이크론 실적",
         now - timedelta(days=5),
@@ -602,7 +607,8 @@ def test_tail_outside_relink_window_is_kept(fake, monkeypatch, window_hours):
     )
 
     assert job.run() == _stats(scanned=1, embedded=1, roots=1)
-    # 창 밖(또는 창 0)이라 B 는 다시 판정하지 않는다 — 기간을 정해 백필 스크립트로 다시 만든다
+    # 재판정 기간 밖이거나 기간이 0 이라 B 는 다시 판정하지 않는다. 이런 판정은 기간을 정해 백필
+    # 스크립트로 다시 만든다.
     assert (clusters[2].parent, clusters[2].root) == (None, 2)
     assert len(calls["tails"]) == (1 if window_hours == "72" else 0)
 
@@ -622,7 +628,7 @@ def test_run_isolates_one_failure(fake):
     stats = job.run()
 
     assert stats == _stats(scanned=2, embedded=2, roots=1, failed=1)
-    # 실패한 대상은 판정 전으로 남아 다음 런에 다시 잡힌다
+    # 실패한 대상은 판정 전으로 남아 다음 실행에 다시 잡힌다.
     assert not clusters[1].linked
     assert clusters[2].root == 2
 
@@ -639,7 +645,8 @@ def test_run_keeps_embedded_targets_when_embedding_batch_fails(fake):
 
     assert stats == _stats(scanned=2, roots=1, failed=1)
     assert clusters[1].embedding is None and not clusters[1].linked
-    # 꼬리는 이번에 실제로 잇는 대상 기준이다 — 임베딩에 실패한 대상은 다음 런에 다시 고른다
+    # 재판정 대상은 이번에 실제로 잇는 대상을 기준으로 고르고, 임베딩에 실패한 대상은 다음 실행에
+    # 다시 고른다.
     assert [cluster_id for _, cluster_id, _ in calls["tails"]] == [2]
 
 
@@ -677,9 +684,9 @@ def test_run_skips_everything_when_disabled(fake, monkeypatch):
     config.get_news_settings.cache_clear()
     clusters[1] = FakeCluster("마이크론 실적", now_kst() - timedelta(days=1), summary="요약.")
 
-    # 기본값은 꺼짐
+    # 기본값은 꺼져 있다.
     assert job.run() == ZERO
-    # 대상 조회도 임베딩도 하지 않는다
+    # 대상 조회도 임베딩도 하지 않는다.
     assert calls["targets"] == [] and calls["embed"] == []
     assert not clusters[1].linked
 
@@ -688,7 +695,7 @@ def test_link_pending_uses_given_window_and_limit(fake, monkeypatch):
     from pipelines.news import config
 
     job, clusters, calls = fake
-    # 백필 경로는 스위치와 무관하게 돈다
+    # 백필 경로는 NEWS_ISSUE_LINK_ENABLED 와 무관하게 실행된다.
     monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "false")
     config.get_news_settings.cache_clear()
     now = now_kst()

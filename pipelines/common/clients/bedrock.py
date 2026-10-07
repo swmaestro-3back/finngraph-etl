@@ -53,9 +53,9 @@ def get_bedrock_client(region: str, timeout: int, max_pool_connections: int = 10
 def embed_texts(texts: list[str], dim: int, model: str | None = None) -> list[list[float]]:
     """Titan Embed v2 로 텍스트 목록을 임베딩한다. 순서는 입력 순서와 같다.
 
-    normalize=True 지만 조회가 코사인이라 결과에는 영향이 없다. model 을 안 주면
-    BEDROCK_EMBEDDING_MODEL 이다 — 테마 임베딩용이라 질의 측(kg-api)과 묶여 있어, 다른 용도의
-    벡터는 자기 모델 설정을 넘겨 그 값이 바뀌어도 영향받지 않게 한다.
+    normalize=True 지만 조회가 코사인이라 결과에는 영향이 없다. model 을 주지 않으면
+    BEDROCK_EMBEDDING_MODEL 을 쓴다. 이 값은 테마 임베딩용이라 질의 측(kg-api)과 함께 바뀌므로,
+    다른 용도의 벡터는 자기 모델 설정을 넘겨서 그 변경에 영향받지 않게 한다.
     """
     import json
     from concurrent.futures import ThreadPoolExecutor

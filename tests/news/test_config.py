@@ -104,7 +104,7 @@ def test_issue_link_defaults(monkeypatch):
 
     settings = NewsSettings(_env_file=None)
 
-    # 스위치는 꺼진 채로 배포한다 — 연결 백필이 끝난 뒤 켠다
+    # NEWS_ISSUE_LINK_ENABLED 는 꺼진 채로 배포하고, 연결 백필이 끝난 뒤 켠다.
     assert settings.issue_link_enabled is False
     assert settings.issue_link_threshold == 0.45
     assert settings.issue_link_no_company_threshold == 0.75
@@ -112,7 +112,7 @@ def test_issue_link_defaults(monkeypatch):
     assert settings.issue_link_max_per_run == 200
     assert settings.issue_same_event_max_gap_hours == 24
     assert settings.issue_same_event_score == 0.75
-    # 클러스터 시간 창(7일)과 같다
+    # 코사인만으로 같은 사건이라고 보는 간격 상한은 클러스터 기간(NEWS_CLUSTER_WINDOW_DAYS, 7일)과 같다.
     assert settings.issue_same_event_score_max_gap_hours == 168
     assert settings.issue_relink_window_hours == 72
     assert settings.issue_embedding_model == "amazon.titan-embed-text-v2:0"
