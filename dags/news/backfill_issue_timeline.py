@@ -1,7 +1,6 @@
 """이슈 타임라인 연결을 기존 이슈 전체에 만들거나 처음부터 다시 만든다.
 
-수동 실행 전용이다. scripts/backfill_issue_timeline.py 와 같은 작업
-(pipelines/news/jobs/backfill_issue_timeline.py)을 서버에 접속하지 않고 실행하려고 둔다.
+수동 실행 전용이며, pipelines/news/jobs/backfill_issue_timeline.py 를 실행한다.
 
 - 처음 배포한 뒤: `links=true, apply=true` 로 전체 기간을 잇고, 끝나면
   NEWS_ISSUE_LINK_ENABLED 를 켠다.

@@ -81,9 +81,9 @@ class NewsSettings(BaseSettings):
 
     # 이슈 타임라인 연결(jobs/link_issues.py). 아래 임계값은 dev 데이터로 고른 초기값이다.
     # 스케줄 연결을 켜고 끄는 설정이다. 기존 클러스터 연결 백필
-    # (scripts/backfill_issue_timeline.py)이 끝난 뒤에 켠다. 먼저 켜면 lookback 안의 최근 이슈만
+    # (news_backfill_issue_timeline DAG)이 끝난 뒤에 켠다. 먼저 켜면 lookback 안의 최근 이슈만
     # 보고 판정하므로, 그보다 오래된 이슈를 부모로 보지 못한 채 루트(부모가 없는 타임라인 첫
-    # 이슈)로 남는다. 백필 스크립트는 이 값과 무관하게 돈다.
+    # 이슈)로 남는다. 백필 DAG 는 이 값과 무관하게 돈다.
     issue_link_enabled: bool = Field(default=False, validation_alias="NEWS_ISSUE_LINK_ENABLED")
     # 주요 기업이 겹치는 앞선 이슈에 이을 때 쓰는 코사인 하한이다. 0.6 처럼 높이면 거의 같은 사건의
     # 중복만 잇고 실제 후속 이슈를 놓친다.

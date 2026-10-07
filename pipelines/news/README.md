@@ -195,39 +195,31 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 2. 연결 설정을 끈 채(`NEWS_ISSUE_LINK_ENABLED=false`, 기본값) 배포합니다. `link_issues` 는 0 통계로 끝납니다.
 3. 기존 이슈를 오래된 것부터 잇습니다. Airflow 에서 수동 DAG `news_backfill_issue_timeline` 을 실행합니다.
    기본값(`apply=false`)은 dry-run 이라 대상 수와 예시만 로그에 남기고, 쓰지도 Bedrock 을 부르지도
-   않습니다. 확인한 뒤 `links=true, apply=true` 로 다시 실행합니다. 서버 셸에서는 같은 작업을 스크립트로
-   실행할 수 있습니다.
-
-   ```bash
-   uv run python scripts/backfill_issue_timeline.py --links            # dry-run
-   uv run python scripts/backfill_issue_timeline.py --links --apply
-   ```
+   않습니다. 확인한 뒤 `links=true, apply=true` 로 다시 실행합니다.
 
 4. 백필이 끝나면 `NEWS_ISSUE_LINK_ENABLED=true` 로 켭니다.
 
 설정을 먼저 켜면 lookback 안의 최근 이슈만 보고 판정하므로, 백필 전의 옛 이슈를 부모로 보지 못한 이슈가
-루트로 남습니다. 그랬다면 설정을 끄고 `reset=true, links=true, apply=true`(스크립트는
-`--reset-links --links --apply`, 기간을 좁히려면 `since_days`)로 다시 만듭니다. 초기화는 임베딩과 연결
+루트로 남습니다. 그랬다면 설정을 끄고 `reset=true, links=true, apply=true`(기간을 좁히려면 `since_days`)로 다시
+만듭니다. 초기화는 임베딩과 연결
 컬럼만 지우고 `updated_at` 은 그대로 둡니다.
 
 ### 연결을 다시 만들어야 할 때
 
 스케줄 연결은 재판정 기간 밖의 판정을 고치지 않습니다. 아래 작업 뒤에는 연결 설정을 끄고 백필
-(`news_backfill_issue_timeline` DAG 또는 스크립트)로 그 기간의 연결을 다시 만든 뒤 켭니다.
+DAG `news_backfill_issue_timeline` 으로 그 기간의 연결을 다시 만든 뒤 켭니다.
 
 - **옛 기사 백필(`news_backfill_krx100` → `news_backfill_cluster_articles`)**: 몇 달 전에 시작한 이슈가
-  한꺼번에 생깁니다. `news_backfill_cluster_articles` 의 `link_issues` 는 런당 상한만큼만, lookback
-  안에서만 잇고, 그 뒤에 시작해 이미 판정된 이슈는 창 밖이라 새 이슈를 부모로 못 봅니다. 백필 클러스터의
-  승격·제목·요약이 끝난 뒤(dry-run 의 "대표 요약 대기로 빠짐" 이 0) 백필 기간만큼 다시 만듭니다.
-
-  ```bash
-  uv run python scripts/backfill_issue_timeline.py --reset-links --since-days <백필 기간 일수> --links --apply
-  ```
+  한꺼번에 생깁니다. `news_backfill_cluster_articles` 의 `link_issues` 는 실행당 상한만큼만, lookback
+  안에서만 잇고, 그 뒤에 시작해 이미 판정된 이슈는 재판정 기간 밖이라 새 이슈를 부모로 보지 못합니다.
+  백필 클러스터의 승격·제목·요약이 끝난 뒤(dry-run 로그의 "대표 요약 대기로 빠짐" 이 0) 백필 기간만큼
+  `reset=true, links=true, since_days=<백필 기간 일수>, apply=true` 로 다시 만듭니다.
 
 - **클러스터 재판정(`scripts/recluster_news.py --apply`)**: `news_clusters` 를 전부 지우므로 연결도 모두
-  사라집니다. 스위치를 켠 채 두면 스케줄 연결이 lookback(90일) 안만 승격 순서대로 다시 잇고, 그보다
-  오래된 이슈는 영영 판정되지 않습니다. `--apply` 전에 스위치를 끄고, 재판정 뒤 승격·제목·요약이 끝나면
-  `--links --apply` 로 전체를 이은 다음 켭니다(새 클러스터라 `--reset-links` 는 필요 없습니다).
+  사라집니다. 연결 설정을 켠 채 두면 스케줄 연결이 lookback(90일) 안의 이슈만 승격 순서대로 다시
+  잇고, 그보다 오래된 이슈는 판정하지 않습니다. `--apply` 전에 설정을 끄고, 재판정 뒤 승격·제목·요약이
+  끝나면 백필 DAG 를 `links=true, apply=true` 로 실행해 전체를 이은 다음 켭니다(새 클러스터라 초기화는
+  필요 없습니다).
 
 ## KRX100 백필 (dags/news/backfill_krx100.py)
 

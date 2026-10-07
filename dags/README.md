@@ -170,8 +170,7 @@ news_cluster_articles·news_backfill_cluster_articles:
 으로 옛 기사를 들인 뒤에는 `news_backfill_cluster_articles` 와 요약이 끝나면 설정을 끄고
 `news_backfill_issue_timeline` 을 `reset=true, links=true, since_days=<백필 기간>, apply=true` 로 실행해 그
 기간의 연결을 다시 만든다. `scripts/recluster_news.py --apply` 는 클러스터와 함께 연결도 모두 지우므로,
-설정을 끄고 돌린 뒤 요약까지 끝나면 `links=true, apply=true` 로 다시 잇고 켠다. 같은 작업을
-`scripts/backfill_issue_timeline.py` 로도 실행할 수 있다.
+설정을 끄고 돌린 뒤 요약까지 끝나면 `links=true, apply=true` 로 다시 잇고 켠다.
 
 `collect_articles`는 이번 런에 새로 저장한 기사가 없으면 스킵해 Asset을 발행하지 않는다 — 판정할
 기사가 없는 시간에 클러스터 DAG를 깨우지 않기 위해서다. `promote_clusters`는 삼중항 미처리 대표

@@ -27,8 +27,8 @@ news_clusters.title 을, 한 줄 요약은 summarize_articles 가 대표 기사�
 스케줄 진입점 run() 은 NEWS_ISSUE_LINK_ENABLED 설정이 켜져 있을 때만 실행된다. 재판정 기간 밖의
 판정은 다시 만들지 않으므로, 연결 백필 전에 켜면 최근 이슈가 lookback 밖의 옛 이슈를 부모로 보지
 못한 채 루트로 남는다. 같은 이유로 옛 기사를 한꺼번에 들이는 백필(news_backfill_krx100) 뒤에는 그
-기간의 연결을 다시 만든다(pipelines/news/README.md "이슈 타임라인"). 백필 스크립트
-(scripts/backfill_issue_timeline.py)는 활성화 설정을 거치지 않고 link_pending() 을 직접 부른다.
+기간의 연결을 다시 만든다(pipelines/news/README.md "이슈 타임라인"). 백필 DAG
+(news_backfill_issue_timeline)는 활성화 설정을 거치지 않고 link_pending() 을 직접 부른다.
 """
 
 from __future__ import annotations

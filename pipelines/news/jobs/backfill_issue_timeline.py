@@ -1,6 +1,6 @@
 """이슈 타임라인 백필: 기존 이슈(클러스터)에 타임라인 연결을 만든다.
 
-news_backfill_issue_timeline DAG 와 scripts/backfill_issue_timeline.py 가 이 모듈을 부른다. 스케줄
+수동 DAG news_backfill_issue_timeline 이 이 모듈을 부른다. 스케줄
 연결(jobs/link_issues.run)은 지금부터 lookback 안의 판정 전 이슈만 잇고, 이미 판정된 이슈는 재판정
 기간 안에서만 다시 판정한다. 그래서 lookback 보다 오래된 이슈를 잇거나, 판정 기준을 바꾼 뒤 연결을
 처음부터 다시 만들 때 이 백필을 쓴다.

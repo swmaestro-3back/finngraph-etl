@@ -19,8 +19,8 @@ Asset 으로 깨어난다. task 구성은 `news_cluster_articles` 와 같고, �
 
 `link_issues` 는 스케줄 연결과 같은 제약(실행당 상한, lookback, 재판정 기간)으로 실행되므로, 백필로
 들어온 옛 이슈를 모두 올바른 부모에 잇지는 못한다. 이 DAG 와 요약이 끝나면
-`scripts/backfill_issue_timeline.py --reset-links --since-days <백필 기간> --links --apply` 로 그
-기간의 연결을 다시 만든다(pipelines/news/README.md).
+`news_backfill_issue_timeline` 을 `reset=true, links=true, since_days=<백필 기간>, apply=true` 로
+실행해 그 기간의 연결을 다시 만든다(pipelines/news/README.md).
 """
 
 from __future__ import annotations
