@@ -1,4 +1,4 @@
-"""이슈 타임라인 연결 판정 단위 테스트. DB·Bedrock 은 부르지 않는다."""
+"""이슈 타임라인 연결 판정을 검증하는 단위 테스트다. DB·Bedrock 은 부르지 않는다."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def test_node_summary_prefers_change_point():
         [],
         [{"kind": "SCALE", "text": "규모는 1조원이에요."}],
         [{"kind": "CHANGE", "text": "   "}],
-        # JSONB 를 읽은 값이라 형식을 믿지 않는다
+        # JSONB 를 읽은 값이라 형식을 믿지 않는다.
         "CHANGE",
         [{"kind": "CHANGE"}, "깨진 항목"],
     ],
@@ -113,7 +113,8 @@ def test_build_embedding_text_joins_title_summary_and_first_titles():
         ["마이크론 4분기 호실적", "  ", "HBM 매출 급증", "가이던스 상향", "넷째 제목"],
     )
 
-    # 빈 제목은 빼고 주어진 순서(후보 기사 먼저 발행 시각순)로 앞 3개까지
+    # 빈 제목은 빼고, 주어진 순서대로 앞 3개까지만 넣는다. 저장소는 후보 기사(승격 전에 들어온
+    # 기사)를 먼저, 발행 시각순으로 준다.
     assert text == (
         "마이크론 실적\n"
         "마이크론 4분기 매출이 전년 대비 46% 늘었어요.\n"
@@ -139,9 +140,9 @@ def test_to_vector_literal():
 
 def test_primary_companies_keep_only_title_mentioned():
     members = [
-        # 본문에만 나온 거래처(SK하이닉스)는 news_companies 에 있어도 주요 기업이 아니다
+        # 본문에만 나온 거래처(SK하이닉스)는 news_companies 에 있어도 주요 기업이 아니다.
         ClusterMember("마이크론, 4분기 실적 발표", frozenset({MICRON, SK_HYNIX})),
-        # 약칭도 같은 기업으로 잡는다
+        # 약칭도 같은 기업으로 잡는다.
         ClusterMember("삼전도 HBM 공급 기대", frozenset({SAMSUNG})),
     ]
 
@@ -149,7 +150,7 @@ def test_primary_companies_keep_only_title_mentioned():
 
 
 def test_primary_companies_ignore_title_companies_not_linked():
-    # 제목에 나왔어도 news_companies 판정을 통과하지 못한 기업은 넣지 않는다
+    # 제목에 나왔어도 news_companies 판정을 통과하지 못한 기업은 넣지 않는다.
     members = [ClusterMember("마이크론·SK하이닉스 실적 비교", frozenset({MICRON}))]
 
     assert primary_company_ids(members, MATCHER) == {MICRON}
@@ -179,7 +180,7 @@ def test_choose_parent_picks_highest_score_sharing_company():
         [
             _candidate(1, 10, 0.50, MICRON),
             _candidate(2, 3, 0.70, MICRON, SAMSUNG),
-            # 코사인은 높지만 기업이 안 겹친다
+            # 코사인은 높지만 기업이 겹치지 않는다.
             _candidate(3, 2, 0.95, SK_HYNIX),
         ],
         MICRON,
@@ -202,7 +203,7 @@ def test_choose_parent_requires_earlier_start():
 
 
 def test_choose_parent_same_start_smaller_id_counts_as_earlier():
-    # 같은 시각에 시작한 클러스터 둘(같은 사건이 갈린 경우)은 id 가 작은 쪽이 먼저다
+    # 같은 시각에 시작한 클러스터 둘(같은 사건이 나뉜 경우)은 id 가 작은 쪽이 먼저다.
     twin = LinkCandidate(TARGET_ID - 1, NOW, 0.9, frozenset({MICRON}))
 
     assert _choose([twin], MICRON) == twin
@@ -245,19 +246,19 @@ SCORE_GAP = timedelta(hours=168)
 @pytest.mark.parametrize(
     ("gap", "score", "expected"),
     [
-        # 첫 기사가 가까우면 점수와 무관하게 같은 사건
+        # 첫 기사 시각이 가까우면 점수와 무관하게 같은 사건이다.
         (timedelta(0), 0.1, SAME_EVENT),
         (timedelta(hours=3), 0.5, SAME_EVENT),
         (timedelta(hours=24), 0.5, SAME_EVENT),
         (timedelta(hours=24, seconds=1), 0.5, FOLLOW_UP),
-        # 며칠 떨어졌어도 내용이 아주 가까우면 갈린 같은 사건
+        # 며칠 떨어졌어도 코사인이 같은 사건 기준(0.75) 이상이면 같은 사건이 나뉜 것이다.
         (timedelta(days=3), 0.78, SAME_EVENT),
         (timedelta(days=3), 0.75, SAME_EVENT),
         (timedelta(days=3), 0.749, FOLLOW_UP),
-        # 코사인 기준은 간격 상한까지만 본다(경계 포함)
+        # 코사인 기준은 간격 상한까지만 본다(경계 포함).
         (timedelta(hours=168), 0.8, SAME_EVENT),
         (timedelta(hours=168, seconds=1), 0.8, FOLLOW_UP),
-        # 시리즈 지표의 다음 회차(7월 → 8월 건설지출)는 코사인이 높아도 후속
+        # 시리즈 지표의 다음 회차(7월 → 8월 건설지출)는 코사인이 높아도 후속이다.
         (timedelta(days=30), 0.80, FOLLOW_UP),
         (timedelta(days=30), 0.5, FOLLOW_UP),
     ],
@@ -290,13 +291,13 @@ def _decide(candidates, *companies):
 
 def test_decide_link_marks_follow_up_and_same_event():
     assert _decide([_candidate(1, 5, 0.6, MICRON)], MICRON) == LinkDecision(1, 0.6, FOLLOW_UP)
-    # 같은 날 시작한 중복 클러스터
+    # 같은 날 시작한 중복 클러스터는 같은 사건이다.
     assert _decide([_candidate(2, 0, 0.5, MICRON, hours_ago=6)], MICRON) == LinkDecision(
         2, 0.5, SAME_EVENT
     )
-    # 며칠 떨어졌어도 내용이 거의 같으면 같은 사건
+    # 며칠 떨어졌어도 코사인이 같은 사건 기준 이상이면 같은 사건이다.
     assert _decide([_candidate(3, 4, 0.8, MICRON)], MICRON) == LinkDecision(3, 0.8, SAME_EVENT)
-    # 기업 없는 연결은 하한(0.75)부터 점수 기준을 넘지만, 한 달 뒤 다음 회차는 후속이다
+    # 기업 없는 연결은 하한(0.75)부터 같은 사건 기준을 넘지만, 한 달 뒤의 다음 회차는 후속이다.
     assert _decide([_candidate(4, 30, 0.9)]) == LinkDecision(4, 0.9, FOLLOW_UP)
 
 
