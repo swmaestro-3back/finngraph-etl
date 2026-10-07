@@ -1,7 +1,8 @@
-"""scripts/backfill_issue_timeline.py 단위 테스트. DB·Bedrock 은 가짜로 갈아끼우고 흐름만 본다.
+"""scripts/backfill_issue_timeline.py 를 검증하는 단위 테스트다. DB·Bedrock 은 가짜로 바꿔 넣고
+흐름만 본다.
 
-dry-run 이 기본이고 아무것도 쓰지 않는지, 초기화 → 연결 순서를 지키는지, 연결 반복이 진전이 없을
-때 멈추는지를 본다 — 운영 DB 에 한 번 잘못 쓰면 되돌리기 어려운 부분이다.
+운영 DB 에 한 번 잘못 쓰면 되돌리기 어려우므로, dry-run 이 기본이고 아무것도 쓰지 않는지, 초기화
+→ 연결 순서를 지키는지, 연결 반복이 진전이 없을 때 멈추는지를 본다.
 """
 
 from __future__ import annotations
@@ -94,7 +95,7 @@ def test_dry_run_is_default_and_writes_nothing(backfill):
     assert "embed_texts" not in events
     assert events == ["count_resettable", "count_link_targets", "fetch_link_targets"]
     assert link_calls == []
-    # 요약 대기 기준은 job 과 같은 24시간
+    # 요약 대기 기준은 link_issues 와 같은 24시간이다.
     assert abs(deadlines[0] - (now_kst() - timedelta(hours=24))) < timedelta(minutes=1)
 
 
@@ -107,7 +108,7 @@ def test_apply_runs_reset_before_links(backfill):
     order = [e for e in events if e in WRITERS]
     assert order[0] == "reset_cluster_links"
     assert order.index("reset_cluster_links") < order.index("link_pending")
-    # 기간을 안 주면 전체, 배치는 런당 상한
+    # 기간을 주지 않으면 전체 기간을 보고, 배치 크기는 실행당 상한을 따른다.
     assert link_calls[0] == (module.ALL_TIME, 2)
 
 
@@ -123,7 +124,8 @@ def test_since_days_narrows_the_window(backfill):
 
 def test_links_loop_stops_without_progress(backfill):
     module, events, link_calls, link_results, _ = backfill
-    # 대상은 있는데 전부 실패 — linked_at 이 NULL 로 남아 같은 대상이 계속 잡힌다
+    # 대상은 있는데 전부 실패하면 linked_at 이 NULL 로 남아 같은 대상이 계속 잡히므로, 첫 배치에서
+    # 멈춘다.
     link_results.extend([_stats(2, failed=2), _stats(2, linked=2)])
 
     module.main(["--links", "--apply"])
@@ -137,7 +139,7 @@ def test_links_loop_runs_until_no_targets_and_respects_limit(backfill):
 
     module.main(["--links", "--limit", "3", "--apply"])
 
-    # 상한 3 을 배치 2 로 나눠 2 → 1, 남은 수가 0 이 되면 멈춘다
+    # 상한 3 을 배치 크기 2 로 나눠 2개, 1개 순으로 잇고, 남은 수가 0 이 되면 멈춘다.
     assert [limit for _, limit in link_calls] == [2, 1]
 
     link_calls.clear()

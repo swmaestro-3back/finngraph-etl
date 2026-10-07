@@ -15,9 +15,9 @@
   .venv/bin/python scripts/recluster_news.py --apply
 
 news_clusters 를 지우면 이슈 타임라인 연결도 모두 사라진다. NEWS_ISSUE_LINK_ENABLED 를 켠 채 두면
-스케줄 연결이 lookback 안만 승격 순서대로 다시 잇고 그보다 오래된 이슈는 판정되지 않으므로,
---apply 전에 끄고 요약까지 끝난 뒤 scripts/backfill_issue_timeline.py --links --apply 로 전체를 이은
-다음 켠다(pipelines/news/README.md "연결을 다시 만들어야 할 때").
+스케줄 연결이 lookback 안의 이슈만 승격 순서대로 다시 잇고, 그보다 오래된 이슈는 판정하지 않는다.
+그래서 --apply 전에 이 설정을 끄고, 요약까지 끝난 뒤 scripts/backfill_issue_timeline.py --links
+--apply 로 전체를 이은 다음 다시 켠다(pipelines/news/README.md "연결을 다시 만들어야 할 때").
 
 판정 입력은 운영(cluster_articles.assign)과 같은 제목 + 본문 리드다. 본문이 없는 옛 행은
 제목만으로 판정한다. IDF 는 저장된 기사 전체에서 센다 — 운영(후보 기사만 센다)보다 큰 사건의
