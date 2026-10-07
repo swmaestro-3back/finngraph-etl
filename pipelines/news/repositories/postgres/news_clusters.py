@@ -470,17 +470,18 @@ def count_pending_representatives(promote_size: int) -> int:
 
 
 # ── 이슈 타임라인 ────────────────────────────────────────────────────────────
-# 판정 규칙은 transformers/issue_linker.py, 흐름은 jobs/link_issues.py. 벡터는 pgvector 텍스트
-# 표현('[x,y,...]')으로 주고받고 SQL 에서 CAST 한다 — pgvector 파이썬 패키지를 쓰지 않는다.
+# 판정 규칙은 transformers/issue_linker.py 에, 흐름은 jobs/link_issues.py 에 있다. pgvector 파이썬
+# 패키지를 쓰지 않으므로 벡터는 텍스트 표현('[x,y,...]')으로 주고받고 SQL 에서 CAST 한다.
 #
 # 연결 쓰기(임베딩·판정·초기화)는 updated_at 을 건드리지 않는다. 승격·제목 재시도와 Event 스캔
-# (events/repositories/postgres/news_clusters.py)이 updated_at 창으로 대상을 고르므로, 연결이 옛
-# 클러스터를 다시 깨우면 안 된다.
+# (events/repositories/postgres/news_clusters.py)이 updated_at 범위로 대상을 고르므로, 연결을 쓰면서
+# 옛 클러스터를 다시 그 대상으로 만들면 안 된다.
 
-# 대표 기사에 요약(포인트나 문단)이 있으면 바로 잇는다. 없으면 클러스터의 updated_at 이
-# summary_deadline 보다 이를 때만 요약 없이 잇는다 — updated_at 은 승격·제목 생성 때 함께 갱신되므로
-# 이름이 붙은 뒤 그만큼 요약 재시도 기회가 지났다는 뜻이다. 요약이 계속 실패하는 기사가 연결을
-# 영영 막지 않게 하는 장치다.
+# 연결 대상은 이름과 대표 기사가 있고 아직 판정 전인 클러스터다. 대표 기사에 요약(포인트나 문단)이
+# 있으면 바로 잇고, 없으면 클러스터의 updated_at 이 summary_deadline 보다 이를 때만 요약 없이
+# 잇는다. updated_at 은 승격·제목 생성 때 갱신되므로, 그 값이 summary_deadline 보다 이르면 이름이
+# 붙은 뒤 요약을 다시 시도할 시간이 충분히 지났다는 뜻이다. 요약이 계속 실패하는 기사가 연결을
+# 무기한 막지 않게 하려는 조건이다.
 _LINK_TARGET_FROM_SQL = """
       FROM news_clusters c
       JOIN news n ON n.id = c.representative_news_id
@@ -496,7 +497,8 @@ _SUMMARY_READY_SQL = """(
         OR c.updated_at < :summary_deadline
        )"""
 
-# 오래된 것부터 — 판정마다 커밋하므로 앞선 대상이 같은 런의 뒤 대상의 부모 후보가 된다.
+# 오래된 것부터 고른다. 판정마다 커밋하므로 앞선 대상이 같은 실행에서 뒤에 오는 대상의 부모
+# 후보가 된다.
 SELECT_LINK_TARGETS_SQL = text(
     f"""
     SELECT c.id,
@@ -525,11 +527,12 @@ COUNT_LINK_TARGETS_SQL = text(
     """
 )
 
-# 클러스터 멤버 기사(후보·후속 모두)의 제목과 연결 기업. 임베딩 텍스트의 기사 제목과 주요
-# 기업(제목에 나온 기업) 판정의 입력이다. 순서는 후보 기사(cluster_terms 가 있는 행) 먼저, 그 안에서
-# 발행 시각순이다 — 후보는 승격 전에 다 차고 그 뒤로 바뀌지 않으므로, 임베딩 텍스트의 앞 제목이
-# 스케줄 연결(승격 직후)·백필·시뮬레이션(클러스터가 자란 뒤) 어디서 만들어도 같다. 최신순이면
-# 언제 만드느냐에 따라 텍스트가 달라져, 시뮬레이션으로 고른 임계값이 스케줄 연결의 점수와 어긋난다.
+# 클러스터 멤버 기사(승격 전후에 들어온 기사 모두)의 제목과 연결 기업을 읽는다. 임베딩 텍스트에
+# 넣을 기사 제목과 주요 기업(제목에 나온 기업) 판정의 입력이다. 순서는 후보 기사(승격 전에 들어온
+# 기사, cluster_terms 가 있는 행)가 먼저이고, 그 안에서는 발행 시각순이다. 후보 기사는 승격 전에 다
+# 차고 그 뒤로 바뀌지 않는다. 그래서 임베딩 텍스트의 앞 제목은 승격 직후의 스케줄 연결에서
+# 만들든, 기사가 더 붙은 뒤의 백필에서 만들든 같다. 최신순이면 만드는 시점에 따라 텍스트가 달라져,
+# 같은 이슈라도 코사인이 달라지고 임계값과 어긋난다.
 SELECT_CLUSTER_MEMBERS_SQL = text(
     """
     SELECT n.cluster_id,
@@ -554,16 +557,17 @@ UPDATE_CLUSTER_EMBEDDING_SQL = text(
     """
 )
 
-# 부모 후보: 대상보다 먼저 시작했고((first_published_at, id) 순서 — 대상 처리 순서와 같다) 대상
-# 시작 전 lookback 안이며 연결 판정이 끝난 클러스터. 판정이 끝난 것만 보는 이유는 부모의
-# story_root_id 를 물려받기 때문이다. {company_filter} 는 대상의 주요 기업 중 하나라도 연결된
-# 클러스터(대상에 기업이 있을 때) 또는 기업이 하나도 없는 클러스터다. 후보의 주요 기업 규칙은
-# 제목 매치가 필요해 job 이 파이썬에서 다시 거른다. 정렬은 issue_linker.choose_parent 와 같다.
+# 부모 후보는 연결 판정이 끝났고, 대상보다 먼저 시작했으며, 대상 시작 전 lookback 안에 있는
+# 클러스터다. "먼저"는 대상 처리 순서와 같은 (first_published_at, id) 순서로 비교한다. 부모의
+# story_root_id 를 물려받아야 하므로 판정이 끝난 것만 본다. {company_filter} 는 대상에 기업이 있으면
+# 대상의 주요 기업 중 하나라도 연결된 클러스터를, 없으면 기업이 하나도 없는 클러스터를 고른다. 후보
+# 쪽의 주요 기업 규칙은 제목 매치가 필요해 jobs/link_issues.py 가 다시 거른다. 정렬은
+# issue_linker.choose_parent 와 같다.
 #
-# 그 탈락분 때문에 페이지로 나눠 읽는다. :after_score 가 있으면 지난 페이지 마지막 행
-# (score, first_published_at, id) 뒤부터다 — 세 열 모두 내림차순이라 행 비교 하나로 이어진다.
-# score 는 float8 이고 같은 입력이면 같은 값이 나와, 파이썬으로 받았다 돌려줘도 경계가 어긋나지
-# 않는다.
+# 파이썬에서 탈락하는 후보가 있으므로 페이지로 나눠 읽는다. :after_score 가 있으면 지난 페이지의
+# 마지막 행 (score, first_published_at, id) 뒤부터 읽는다. 세 열 모두 내림차순이라 행 비교 하나로
+# 이어 읽을 수 있다. score 는 float8 이고 같은 입력이면 같은 값이 나오므로, 파이썬으로 받았다가 다시
+# 넘겨도 경계가 어긋나지 않는다.
 _LINK_CANDIDATES_SQL = """
     SELECT s.id, s.first_published_at, s.score
       FROM (
@@ -614,9 +618,9 @@ SELECT_LINK_CANDIDATES_WITHOUT_COMPANY_SQL = text(
     )
 )
 
-# 부모가 있으면 부모의 루트를 물려받고, 없으면 자기 자신이 루트다. 첫 판정은 linked_at IS NULL
-# 조건으로 같은 클러스터를 두 번 판정하지 않는다. 다시 판정(꼬리 재판정)은 판정된 클러스터만
-# 덮어쓴다 — 그사이 --reset-links 가 지운 클러스터를 되살리지 않는다.
+# 부모가 있으면 부모의 story_root_id 를 물려받고, 없으면 자기 자신이 루트(부모가 없는 타임라인 첫
+# 이슈)다. 첫 판정은 linked_at IS NULL 조건으로 같은 클러스터를 두 번 판정하지 않는다. 재판정은
+# 판정된 클러스터만 덮어쓰므로, 그사이 --reset-links 가 지운 클러스터를 되살리지 않는다.
 _UPDATE_LINK_DECISION_SQL = """
     UPDATE news_clusters
        SET parent_cluster_id = CAST(:parent_id AS BIGINT),
@@ -638,9 +642,10 @@ _UPDATE_LINK_DECISION_SQL = """
 UPDATE_LINK_DECISION_SQL = text(_UPDATE_LINK_DECISION_SQL.format(linked="NULL"))
 UPDATE_RELINK_DECISION_SQL = text(_UPDATE_LINK_DECISION_SQL.format(linked="NOT NULL"))
 
-# 다시 판정할 꼬리: 판정된 클러스터 중 정렬상 (after_published_at, after_id) 뒤에 시작했고
-# relink_since 이후에 시작한 것, 오래된 순. 부모는 늘 정렬상 앞이라 이 구간의 자식도 모두 이
-# 구간 안에 있다 — 구간을 앞에서부터 다시 판정하면 story_root_id 가 어긋나지 않는다.
+# 재판정 대상은 판정된 클러스터 중 정렬상 (after_published_at, after_id) 뒤에 시작했고
+# relink_since 이후에 시작한 것이며, 오래된 순으로 읽는다. 부모는 늘 정렬상 앞에 있어서 이 구간에
+# 속한 클러스터의 자식도 모두 이 구간 안에 있다. 그래서 구간을 앞에서부터 다시 판정하면
+# story_root_id 가 어긋나지 않는다.
 SELECT_RELINK_TAIL_SQL = text(
     """
     SELECT c.id,
@@ -658,7 +663,7 @@ SELECT_RELINK_TAIL_SQL = text(
     """
 )
 
-# 연결을 처음부터 다시 만들 때(백필 --reset-links) 지우는 범위. 부모는 늘 더 먼저 시작한
+# 연결을 처음부터 다시 만들 때(백필 --reset-links) 지우는 범위다. 부모는 늘 더 먼저 시작한
 # 클러스터라, first_published_at 이 since 이후인 구간을 통째로 지우면 그 앞의 판정은 지워진
 # 클러스터를 가리키지 않는다. 임베딩도 지워 지금의 요약·설정으로 다시 만든다.
 _RESETTABLE_SQL = """
@@ -692,9 +697,9 @@ RESET_LINKS_SQL = text(
 
 @dataclass(frozen=True)
 class LinkTarget:
-    """연결 판정 대상 이슈. summary·summary_points 는 대표 기사의 것이고, embedding 은 pgvector
-    텍스트 표현이며 아직 없으면 None 이다. parent_id 는 다시 판정할 이슈의 지금 부모다(첫 판정
-    대상과 루트는 None)."""
+    """연결 판정 대상 이슈를 담는다. summary·summary_points 는 대표 기사의 것이고, embedding 은
+    pgvector 텍스트 표현이며 아직 없으면 None 이다. parent_id 는 재판정 대상의 현재 부모다(첫
+    판정 대상과 루트는 None)."""
 
     cluster_id: int
     title: str
@@ -706,9 +711,10 @@ class LinkTarget:
 
 
 def fetch_link_targets(since: datetime, limit: int, summary_deadline: datetime) -> list[LinkTarget]:
-    """이름·대표가 있고 판정 전이며 first_published_at 이 since 이후인 클러스터, 오래된 순.
+    """이름과 대표 기사가 있고 판정 전이며 first_published_at 이 since 이후인 클러스터를 오래된
+    순으로 읽는다.
 
-    대표 기사에 요약이 없는 클러스터는 updated_at 이 summary_deadline 보다 이를 때만 든다.
+    대표 기사에 요약이 없는 클러스터는 updated_at 이 summary_deadline 보다 이를 때만 넣는다.
     """
 
     with session_scope() as session:
@@ -731,7 +737,7 @@ def fetch_link_targets(since: datetime, limit: int, summary_deadline: datetime) 
 
 
 def count_link_targets(since: datetime, summary_deadline: datetime) -> dict[str, int]:
-    """연결 대상 수(targets), 그중 임베딩이 없는 수, 대표 요약을 기다리느라 빠진 수."""
+    """연결 대상 수(targets), 그중 임베딩이 없는 수, 대표 기사 요약을 기다리느라 빠진 수를 센다."""
 
     with session_scope() as session:
         row = session.execute(
@@ -746,8 +752,8 @@ def count_link_targets(since: datetime, summary_deadline: datetime) -> dict[str,
 
 
 def fetch_cluster_members(cluster_ids: list[int]) -> dict[int, list[ClusterMember]]:
-    """클러스터별 멤버 기사의 제목과 연결 기업, 후보 기사 먼저 발행 시각순. 멤버가 없는 클러스터는
-    키가 없다."""
+    """클러스터별 멤버 기사의 제목과 연결 기업을 후보 기사 먼저, 발행 시각순으로 읽는다. 멤버가
+    없는 클러스터는 결과에 키가 없다."""
 
     if not cluster_ids:
         return {}
@@ -787,10 +793,11 @@ def fetch_link_candidates(
     limit: int,
     after: LinkCandidate | None = None,
 ) -> list[LinkCandidate]:
-    """대상의 부모 후보를 코사인 내림차순으로 limit 개. 기업 조건과 min_score 는 SQL 에서 먼저
-    거른다. after 를 주면 그 후보(지난 페이지의 마지막 행) 다음부터다.
+    """대상의 부모 후보를 코사인 내림차순으로 limit 개 읽는다. 기업 조건과 min_score 는 SQL 에서
+    먼저 거른다. after 를 주면 그 후보(지난 페이지의 마지막 행) 다음부터 읽는다.
 
-    돌려주는 후보의 company_ids 는 비어 있다 — 후보의 주요 기업은 job 이 멤버 제목으로 채운다.
+    돌려주는 후보의 company_ids 는 비어 있고, 후보의 주요 기업은 jobs/link_issues.py 가 멤버
+    제목으로 채운다.
     """
 
     params: dict[str, Any] = {
@@ -827,7 +834,7 @@ def fetch_relink_tail(
     after_published_at: datetime, after_id: int, relink_since: datetime
 ) -> list[LinkTarget]:
     """판정된 클러스터 중 정렬상 (after_published_at, after_id) 뒤에 시작했고 relink_since 이후에
-    시작한 것, 오래된 순. 임베딩이 있으므로 summary 는 채우지 않는다."""
+    시작한 것을 오래된 순으로 읽는다. 임베딩이 이미 있으므로 summary 는 채우지 않는다."""
 
     with session_scope() as session:
         rows = session.execute(
@@ -859,9 +866,9 @@ def record_link_decision(
     *,
     relink: bool = False,
 ) -> bool:
-    """연결 판정을 쓴다. 부모가 없으면 루트. 쓴 행이 없으면 False.
+    """연결 판정을 쓴다. 부모가 없으면 루트로 기록하고, 쓴 행이 없으면 False 를 돌려준다.
 
-    첫 판정(relink=False)은 판정 전 클러스터에만, 다시 판정(relink=True)은 판정된 클러스터에만 쓴다.
+    첫 판정(relink=False)은 판정 전 클러스터에만, 재판정(relink=True)은 판정된 클러스터에만 쓴다.
     """
 
     with session_scope() as session:
@@ -870,7 +877,7 @@ def record_link_decision(
             {
                 "cluster_id": cluster_id,
                 "parent_id": parent_id,
-                # vector 가 float4 라 코사인 끝자리는 잡음이다
+                # vector 가 float4 라 코사인의 끝자리는 의미가 없으므로 소수 6자리까지만 남긴다.
                 "link_score": None if score is None else round(score, 6),
                 "link_relation": relation,
             },
@@ -880,7 +887,8 @@ def record_link_decision(
 
 
 def count_resettable_clusters(since: datetime) -> dict[str, int]:
-    """first_published_at 이 since 이후이고 임베딩이나 판정이 있는 클러스터 수와 그중 판정된 수"""
+    """first_published_at 이 since 이후이고 임베딩이나 판정이 있는 클러스터 수와 그중 판정된 수를
+    센다."""
 
     with session_scope() as session:
         row = session.execute(COUNT_RESETTABLE_SQL, {"since": since}).one()
@@ -889,7 +897,7 @@ def count_resettable_clusters(since: datetime) -> dict[str, int]:
 
 
 def reset_cluster_links(since: datetime) -> int:
-    """since 이후 시작한 클러스터의 임베딩과 연결 판정을 지운다. 지운 클러스터 수."""
+    """since 이후 시작한 클러스터의 임베딩과 연결 판정을 지우고, 지운 클러스터 수를 돌려준다."""
 
     with session_scope() as session:
         return int(session.execute(RESET_LINKS_SQL, {"since": since}).rowcount)

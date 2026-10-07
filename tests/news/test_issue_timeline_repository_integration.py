@@ -1,5 +1,5 @@
-"""이슈 타임라인 repository 통합 테스트 — 연결 대상·멤버·후보(페이지) 조회, 꼬리 조회, 임베딩·판정
-쓰기(첫 판정·재판정), 초기화.
+"""이슈 타임라인 repository 를 검증하는 통합 테스트다. 연결 대상·멤버·후보(페이지) 조회, 재판정
+대상 조회, 임베딩·판정 쓰기(첫 판정·재판정), 초기화를 본다.
 
 실제 Postgres(pgvector)에 news / news_clusters / news_companies 행을 만들고 SQL 을 직접 부른다.
 다른 행과 섞이지 않게 2101년 날짜와 uuid 마커를 쓴다. V12 마이그레이션이 적용된 DB 가 필요하다.
@@ -48,9 +48,9 @@ def _deadline() -> datetime:
 
 @pytest.fixture
 def story():
-    """root(3/1, 기업 A·B), plain(3/3, 기업 없음), other(3/5, 기업 B), stale(3/7, 요약 없음·오래됨),
-    waiting(3/8, 요약 없음·방금 갱신), untitled(3/9), unpromoted(3/9), target(3/10, 기업 A),
-    twin(3/10 같은 시각, 기업 A)."""
+    """다음 클러스터를 만든다: root(3/1, 기업 A·B), plain(3/3, 기업 없음), other(3/5, 기업 B),
+    stale(3/7, 요약 없음·오래됨), waiting(3/8, 요약 없음·방금 갱신), untitled(3/9),
+    unpromoted(3/9), target(3/10, 기업 A), twin(3/10 같은 시각, 기업 A)."""
 
     marker = uuid.uuid4().hex[:8]
     news_ids: list[int] = []
@@ -112,7 +112,7 @@ def story():
                     "c": cluster_id,
                     "summary": summary,
                     "points": None if points is None else json.dumps(points, ensure_ascii=False),
-                    # 후보 기사(승격 전에 들어온 기사)만 토큰 가중치가 있다
+                    # 후보 기사(승격 전에 들어온 기사)만 토큰 가중치가 있다.
                     "terms": '{"실적": 1.0}' if candidate else None,
                 },
             ).scalar_one()
@@ -123,7 +123,7 @@ def story():
                     {"n": news_id, "c": company_id},
                 )
             if representative:
-                # updated_at 은 그대로 둔다 — 요약 대기 판정이 이 값을 본다
+                # 요약 대기 판정이 updated_at 을 보므로 대표 기사를 지정할 때 updated_at 은 바꾸지 않는다.
                 session.execute(
                     text("UPDATE news_clusters SET representative_news_id = :n WHERE id = :c"),
                     {"n": news_id, "c": cluster_id},
@@ -151,7 +151,7 @@ def story():
             representative=True,
             candidate=True,
         )
-        # 둘째·넷째는 승격 뒤에 붙은 기사, 셋째는 후보다
+        # 둘째·넷째는 승격 뒤에 붙은 기사이고, 셋째는 후보 기사다.
         member(ids["root"], "둘째 기사", 2, (company_a, company_b))
         member(ids["root"], "셋째 기사", 3, candidate=True)
         member(ids["root"], "넷째 기사", 4)
@@ -222,7 +222,8 @@ def _candidates(story, cluster_key: str, embedding: str, companies, **overrides)
 def test_targets_need_title_representative_and_summary_or_wait(story):
     targets = fetch_link_targets(BASE - timedelta(days=1), 10_000, _deadline())
 
-    # 이름·대표가 있고 판정 전인 것만, 오래된 순. 요약 없는 것은 updated_at 이 하루 넘게 지나야 든다
+    # 이름과 대표 기사가 있고 판정 전인 것만 오래된 순으로 읽는다. 요약이 없는 것은 updated_at 이
+    # 하루 넘게 지나야 대상이 된다.
     assert [t.cluster_id for t in targets] == [
         story["root"],
         story["plain"],
@@ -243,7 +244,7 @@ def test_targets_need_title_representative_and_summary_or_wait(story):
         "without_embedding": 6,
         "waiting_summary": 1,
     }
-    # 상한
+    # limit 개까지만 읽는다.
     assert [t.cluster_id for t in fetch_link_targets(BASE + timedelta(days=1), 2, _deadline())] == [
         story["plain"],
         story["other"],
@@ -253,7 +254,7 @@ def test_targets_need_title_representative_and_summary_or_wait(story):
 def test_members_candidates_first_by_published_at_with_companies(story):
     members = fetch_cluster_members([story["root"], story["plain"], -1])
 
-    # 후보 기사 먼저(승격 뒤에 바뀌지 않는다), 그 안에서 발행 시각순
+    # 후보 기사(승격 뒤에 바뀌지 않는다)를 먼저, 그 안에서는 발행 시각순으로 읽는다.
     assert members == {
         story["root"]: [
             ClusterMember("첫 기사", frozenset({story["a"]})),
@@ -276,7 +277,7 @@ def test_link_flow_without_touching_updated_at(story):
     ]
     assert target.embedding is not None and target.embedding.startswith("[1")
 
-    # 판정 전 클러스터는 후보가 아니다
+    # 판정 전 클러스터는 부모 후보가 아니다.
     assert _candidates(story, "target", target.embedding, {story["a"]}) == []
 
     for key in ("root", "other", "plain"):
@@ -284,14 +285,14 @@ def test_link_flow_without_touching_updated_at(story):
     root_row = _row(story["root"])
     assert (root_row["story_root_id"], root_row["link_relation"]) == (story["root"], None)
 
-    # 기업 A 가 연결된 root 만. other(기업 B)·plain(기업 없음)은 빠진다
+    # 기업 A 가 연결된 root 만 나오고, other(기업 B)·plain(기업 없음)은 빠진다.
     assert _candidates(story, "target", target.embedding, {story["a"]}) == [story["root"]]
-    # 기업 B 는 root(둘째 기사)와 other 둘 다 연결돼 있다. 코사인이 같으면 늦게 시작한 쪽이 먼저다
+    # 기업 B 는 root(둘째 기사)와 other 둘 다 연결돼 있다. 코사인이 같으면 늦게 시작한 쪽이 먼저다.
     assert _candidates(story, "target", target.embedding, {story["b"]}) == [
         story["other"],
         story["root"],
     ]
-    # 기업 없는 대상은 기업 없는 클러스터만, 하한과 lookback 을 지킨다
+    # 기업 없는 대상은 기업 없는 클러스터만 후보로 보고, 하한과 lookback 도 지킨다.
     assert _candidates(story, "target", _unit(1), set(), min_score=0.75) == [story["plain"]]
     assert _candidates(story, "target", _unit(2), set(), min_score=0.75) == []
     assert (
@@ -314,15 +315,15 @@ def test_link_flow_without_touching_updated_at(story):
     )
     assert float(row["link_score"]) == pytest.approx(0.931235)
     assert row["linked_at"] is not None
-    # 연결 쓰기는 승격·제목 재시도와 Event 스캔이 보는 updated_at 을 건드리지 않는다
+    # 연결 쓰기는 승격·제목 재시도와 Event 스캔이 보는 updated_at 을 건드리지 않는다.
     assert row["updated_at"] == STALE
-    # 이미 판정된 클러스터는 다시 쓰지 않는다
+    # 이미 판정된 클러스터는 다시 쓰지 않는다.
     assert record_link_decision(story["target"], None, None, None) is False
     assert _row(story["target"])["parent_cluster_id"] == story["root"]
 
-    # 같은 시각에 시작한 twin 은 id 가 작은 target 을 후보로 본다(반대는 아니다)
+    # 같은 시각에 시작한 twin 은 id 가 작은 target 을 후보로 본다(반대는 아니다).
     assert _candidates(story, "twin", _unit(0), {story["a"]}) == [story["target"], story["root"]]
-    # 루트는 부모의 루트를 물려받는다
+    # story_root_id 는 부모의 루트(부모가 없는 타임라인 첫 이슈)를 물려받는다.
     assert record_link_decision(story["twin"], story["target"], 1.0, "same_event") is True
     assert _row(story["twin"])["story_root_id"] == story["root"]
 
@@ -345,7 +346,7 @@ def test_candidates_are_paged_by_score_start_and_id(story):
         "limit": 1,
     }
 
-    # 코사인이 같아 늦게 시작한 other 가 첫 페이지, root 가 다음 페이지다
+    # 코사인이 같아 늦게 시작한 other 가 첫 페이지, root 가 다음 페이지다.
     [first] = fetch_link_candidates(**params)
     assert first.cluster_id == story["other"]
     assert first.score == pytest.approx(1.0)
@@ -362,7 +363,8 @@ def test_relink_tail_and_rewrite_only_linked(story):
     record_link_decision(story["target"], story["root"], 0.9, "follow_up")
     record_link_decision(story["twin"], story["target"], 1.0, "same_event")
 
-    # 판정된 클러스터 중 root(BASE 시작) 뒤에 시작한 것, 오래된 순. 지금 부모를 함께 준다
+    # 판정된 클러스터 중 root(BASE 시작) 뒤에 시작한 것을 오래된 순으로 읽고, 현재 부모를 함께
+    # 돌려준다.
     tail = fetch_relink_tail(BASE, story["root"], BASE - timedelta(days=1))
     assert [(t.cluster_id, t.parent_id) for t in tail] == [
         (story["plain"], None),
@@ -371,7 +373,7 @@ def test_relink_tail_and_rewrite_only_linked(story):
         (story["twin"], story["target"]),
     ]
     assert all(t.embedding is not None and t.summary is None for t in tail)
-    # relink_since 앞에 시작한 판정은 빠진다. 같은 시각이면 id 가 큰 쪽만 뒤다
+    # relink_since 보다 먼저 시작한 클러스터는 빠진다. 시작 시각이 같으면 id 가 큰 쪽만 정렬상 뒤다.
     assert [
         t.cluster_id for t in fetch_relink_tail(BASE + timedelta(days=9), story["target"], BASE)
     ] == [story["twin"]]
@@ -379,7 +381,7 @@ def test_relink_tail_and_rewrite_only_linked(story):
         t.cluster_id for t in fetch_relink_tail(BASE, story["root"], BASE + timedelta(days=4))
     ] == [story["other"], story["target"], story["twin"]]
 
-    # 재판정은 판정된 클러스터를 덮어쓰고, 루트는 새 부모에서 물려받는다
+    # 재판정은 판정된 클러스터를 덮어쓰고, story_root_id 는 새 부모에게서 물려받는다.
     assert record_link_decision(story["target"], story["other"], 0.8, "follow_up", relink=True)
     assert record_link_decision(story["twin"], story["target"], 1.0, "same_event", relink=True)
     target_row, twin_row = _row(story["target"]), _row(story["twin"])
@@ -389,7 +391,7 @@ def test_relink_tail_and_rewrite_only_linked(story):
     )
     assert twin_row["story_root_id"] == story["other"]
     assert target_row["updated_at"] == STALE
-    # 판정 전(또는 초기화된) 클러스터는 재판정이 되살리지 않는다
+    # 판정 전(또는 초기화된) 클러스터는 재판정이 되살리지 않는다.
     assert record_link_decision(story["stale"], None, None, None, relink=True) is False
     assert _row(story["stale"])["linked_at"] is None
 
@@ -410,7 +412,7 @@ def test_reset_links_clears_only_clusters_from_since(story):
     assert count_resettable_clusters(since) == {"clusters": 2, "linked": 2}
     assert reset_cluster_links(since) == 2
 
-    # 3/1 root·3/3 plain 은 그대로, 3/5 other·3/10 target 은 임베딩·판정 모두 지워진다
+    # 3/1 root·3/3 plain 은 그대로 남고, 3/5 other·3/10 target 은 임베딩·판정이 모두 지워진다.
     for key in ("root", "plain"):
         row = _row(story[key])
         assert not row["no_embedding"] and row["linked_at"] is not None
