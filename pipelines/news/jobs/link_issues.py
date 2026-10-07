@@ -290,7 +290,7 @@ def link_pending(since: datetime, limit: int) -> dict[str, int]:
     """first_published_at 이 since 이후인 연결 대상을 limit 개까지 임베딩하고, 재판정 대상과 함께
     오래된 순으로 잇는다.
 
-    NEWS_ISSUE_LINK_ENABLED 와 무관하게 실행되며, 백필 스크립트는 기간을 넓혀 부른다. 통계의
+    NEWS_ISSUE_LINK_ENABLED 와 무관하게 실행되며, 백필 DAG 는 기간을 넓혀 부른다. 통계의
     linked 는 same_event 와 follow_up 의 합이고, 다른 실행이 먼저 판정한 대상은 어느 항목에도 세지
     않는다.
     """

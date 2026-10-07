@@ -620,7 +620,7 @@ SELECT_LINK_CANDIDATES_WITHOUT_COMPANY_SQL = text(
 
 # 부모가 있으면 부모의 story_root_id 를 물려받고, 없으면 자기 자신이 루트(부모가 없는 타임라인 첫
 # 이슈)다. 첫 판정은 linked_at IS NULL 조건으로 같은 클러스터를 두 번 판정하지 않는다. 재판정은
-# 판정된 클러스터만 덮어쓰므로, 그사이 --reset-links 가 지운 클러스터를 되살리지 않는다.
+# 판정된 클러스터만 덮어쓰므로, 그사이 백필 초기화가 지운 클러스터를 되살리지 않는다.
 _UPDATE_LINK_DECISION_SQL = """
     UPDATE news_clusters
        SET parent_cluster_id = CAST(:parent_id AS BIGINT),
@@ -663,7 +663,7 @@ SELECT_RELINK_TAIL_SQL = text(
     """
 )
 
-# 연결을 처음부터 다시 만들 때(백필 --reset-links) 지우는 범위다. 부모는 늘 더 먼저 시작한
+# 연결을 처음부터 다시 만들 때(백필 DAG 의 reset=true) 지우는 범위다. 부모는 늘 더 먼저 시작한
 # 클러스터라, first_published_at 이 since 이후인 구간을 통째로 지우면 그 앞의 판정은 지워진
 # 클러스터를 가리키지 않는다. 임베딩도 지워 지금의 요약·설정으로 다시 만든다.
 _RESETTABLE_SQL = """

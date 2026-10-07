@@ -123,7 +123,7 @@ class NewsSettings(BaseSettings):
     )
     # 이슈 연결에 쓰는 임베딩 모델이다. 테마용 BEDROCK_EMBEDDING_MODEL 은 질의 측(kg-api)과 함께
     # 바뀌므로 따로 둔다. 이 값을 바꾸면 기존 news_clusters.embedding 과 섞이지 않게
-    # --reset-links 로 임베딩을 다시 만든다.
+    # 백필 DAG 를 reset=true 로 실행해 임베딩을 다시 만든다.
     issue_embedding_model: str = Field(
         default="amazon.titan-embed-text-v2:0", validation_alias="NEWS_ISSUE_EMBEDDING_MODEL"
     )
