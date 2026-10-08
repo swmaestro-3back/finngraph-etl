@@ -527,16 +527,17 @@ COUNT_LINK_TARGETS_SQL = text(
     """
 )
 
-# 클러스터 멤버 기사(승격 전후에 들어온 기사 모두)의 제목과 연결 기업을 읽는다. 임베딩 텍스트에
-# 넣을 기사 제목과 주요 기업(제목에 나온 기업) 판정의 입력이다. 순서는 후보 기사(승격 전에 들어온
-# 기사, cluster_terms 가 있는 행)가 먼저이고, 그 안에서는 발행 시각순이다. 후보 기사는 승격 전에 다
-# 차고 그 뒤로 바뀌지 않는다. 그래서 임베딩 텍스트의 앞 제목은 승격 직후의 스케줄 연결에서
-# 만들든, 기사가 더 붙은 뒤의 백필에서 만들든 같다. 최신순이면 만드는 시점에 따라 텍스트가 달라져,
-# 같은 이슈라도 코사인이 달라지고 임계값과 어긋난다.
+# 클러스터 멤버 기사(승격 전후에 들어온 기사 모두)의 제목, 발행 시각, 연결 기업을 읽는다. 임베딩
+# 텍스트에 넣을 기사 제목, 주요 기업(제목에 나온 기업) 판정, 투표 판정에 쓰는 이슈 요약문의
+# 입력이다. 순서는 후보 기사(승격 전에 들어온 기사, cluster_terms 가 있는 행)가 먼저이고, 그
+# 안에서는 발행 시각순이다. 후보 기사는 승격 전에 다 차고 그 뒤로 바뀌지 않는다. 그래서 임베딩
+# 텍스트의 앞 제목은 승격 직후의 스케줄 연결에서 만들든, 기사가 더 붙은 뒤의 백필에서 만들든 같다.
+# 최신순이면 만드는 시점에 따라 텍스트가 달라져, 같은 이슈라도 코사인이 달라지고 임계값과 어긋난다.
 SELECT_CLUSTER_MEMBERS_SQL = text(
     """
     SELECT n.cluster_id,
            n.title,
+           COALESCE(n.published_at, n.collected_at) AS published_at,
            COALESCE(
              ARRAY_AGG(x.company_id) FILTER (WHERE x.company_id IS NOT NULL),
              '{}'
@@ -665,32 +666,49 @@ SELECT_RELINK_TAIL_SQL = text(
 
 # 연결을 처음부터 다시 만들 때(백필 DAG 의 reset=true) 지우는 범위다. 부모는 늘 더 먼저 시작한
 # 클러스터라, first_published_at 이 since 이후인 구간을 통째로 지우면 그 앞의 판정은 지워진
-# 클러스터를 가리키지 않는다. 임베딩도 지워 지금의 요약·설정으로 다시 만든다.
-_RESETTABLE_SQL = """
-      FROM news_clusters
+# 클러스터를 가리키지 않는다. 임베딩도 지워 지금의 요약·설정으로 다시 만든다. 성격 분류도 지우며,
+# 프롬프트와 입력이 같으면 LLM 응답 캐시를 써서 새 호출 없이 다시 분류한다.
+_RESETTABLE_WHERE = """
      WHERE first_published_at >= :since
-       AND (linked_at IS NOT NULL OR embedding IS NOT NULL)
+       AND (linked_at IS NOT NULL OR embedding IS NOT NULL OR issue_kind IS NOT NULL)
 """
 
 COUNT_RESETTABLE_SQL = text(
     f"""
     SELECT COUNT(*) AS clusters,
            COUNT(*) FILTER (WHERE linked_at IS NOT NULL) AS linked
-    {_RESETTABLE_SQL};
+      FROM news_clusters
+    {_RESETTABLE_WHERE};
     """
 )
 
 RESET_LINKS_SQL = text(
-    """
+    f"""
     UPDATE news_clusters
        SET embedding = NULL,
            parent_cluster_id = NULL,
            story_root_id = NULL,
            link_score = NULL,
            link_relation = NULL,
-           linked_at = NULL
-     WHERE first_published_at >= :since
-       AND (linked_at IS NOT NULL OR embedding IS NOT NULL);
+           linked_at = NULL,
+           issue_kind = NULL,
+           issue_kind_reason = NULL,
+           issue_kind_model = NULL,
+           issue_kind_prompt_version = NULL,
+           issue_kind_at = NULL
+    {_RESETTABLE_WHERE};
+    """
+)
+
+# 호출 상한 때문에 다시 판정하지 못한 재판정 대상의 linked_at 만 비워 다음 실행의 대상으로
+# 돌린다. 부모·루트·점수·관계는 다음 판정이 덮어쓸 때까지 그대로 두고, 임베딩도 남겨 다시 만들지
+# 않는다.
+RELEASE_LINK_DECISIONS_SQL = text(
+    """
+    UPDATE news_clusters
+       SET linked_at = NULL
+     WHERE id = ANY(:cluster_ids)
+       AND linked_at IS NOT NULL;
     """
 )
 
@@ -752,8 +770,8 @@ def count_link_targets(since: datetime, summary_deadline: datetime) -> dict[str,
 
 
 def fetch_cluster_members(cluster_ids: list[int]) -> dict[int, list[ClusterMember]]:
-    """클러스터별 멤버 기사의 제목과 연결 기업을 후보 기사 먼저, 발행 시각순으로 읽는다. 멤버가
-    없는 클러스터는 결과에 키가 없다."""
+    """클러스터별 멤버 기사의 제목, 연결 기업, 발행 시각(없으면 수집 시각)을 후보 기사 먼저, 그
+    안에서 발행 시각순으로 읽는다. 멤버가 없는 클러스터는 결과에 키가 없다."""
 
     if not cluster_ids:
         return {}
@@ -764,11 +782,12 @@ def fetch_cluster_members(cluster_ids: list[int]) -> dict[int, list[ClusterMembe
         ).fetchall()
 
     members: dict[int, list[ClusterMember]] = {}
-    for cluster_id, title, company_ids in rows:
+    for cluster_id, title, published_at, company_ids in rows:
         members.setdefault(int(cluster_id), []).append(
             ClusterMember(
                 title=title or "",
                 company_ids=frozenset(int(c) for c in company_ids or []),
+                published_at=published_at,
             )
         )
 
@@ -887,8 +906,8 @@ def record_link_decision(
 
 
 def count_resettable_clusters(since: datetime) -> dict[str, int]:
-    """first_published_at 이 since 이후이고 임베딩이나 판정이 있는 클러스터 수와 그중 판정된 수를
-    센다."""
+    """first_published_at 이 since 이후이고 임베딩, 판정, 성격 분류 중 하나라도 있는 클러스터 수와
+    그중 판정된 수를 센다."""
 
     with session_scope() as session:
         row = session.execute(COUNT_RESETTABLE_SQL, {"since": since}).one()
@@ -897,7 +916,22 @@ def count_resettable_clusters(since: datetime) -> dict[str, int]:
 
 
 def reset_cluster_links(since: datetime) -> int:
-    """since 이후 시작한 클러스터의 임베딩과 연결 판정을 지우고, 지운 클러스터 수를 돌려준다."""
+    """since 이후 시작한 클러스터의 임베딩, 연결 판정, 성격 분류를 지우고, 지운 클러스터 수를
+    돌려준다."""
 
     with session_scope() as session:
         return int(session.execute(RESET_LINKS_SQL, {"since": since}).rowcount)
+
+
+def release_link_decisions(cluster_ids: list[int]) -> int:
+    """판정된 클러스터의 linked_at 만 비워 다음 연결 실행의 대상으로 돌리고, 돌린 클러스터 수를
+    돌려준다."""
+
+    if not cluster_ids:
+        return 0
+    with session_scope() as session:
+        return int(
+            session.execute(
+                RELEASE_LINK_DECISIONS_SQL, {"cluster_ids": sorted({int(c) for c in cluster_ids})}
+            ).rowcount
+        )
