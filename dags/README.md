@@ -39,6 +39,7 @@ dags/
 | news | `news/cluster_articles.py` | `news_cluster_articles` | `news` | Asset ← `etl://news/articles` |
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | news | `news/backfill_cluster_articles.py` | `news_backfill_cluster_articles` | `news`, `backfill` | Asset ← `etl://news/backfill-articles` |
+| news | `news/backfill_issue_timeline.py` | `news_backfill_issue_timeline` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `30 7 * * 1-5` (평일 07:30) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 8-19 * * 1-5` (평일 08~19시 매 정각), `etl://themes/hot` 발행 |
 | stocks | `stocks/daily_pipeline.py` | `stocks_daily_pipeline` | `stocks` | `30 20 * * 1-5` (평일 20:30) |
@@ -144,12 +145,32 @@ news_backfill_krx100 ───► etl://news/backfill-articles ──► news_ba
 
 news_cluster_articles·news_backfill_cluster_articles:
   assign_clusters ──► promote_clusters ──┬──► generate_events
-                                         └──► summarize_articles
+                                         └──► summarize_articles ──┬──► link_issues (all_done)
+                                                                   └──► finish
 ```
 
 > **배포 순서(요약 핵심 포인트).** `V10__news_summary_points.sql`(컬럼만 추가)을 코드보다 먼저 적용한다.
 > V10 없이 배포하면 `summarize_articles` 가 실패한다. 요약 대상이 `summary_points IS NULL` 인 대표
 > 기사라, 배포 뒤 첫 런이 옛 형식(했다체, 포인트 없음) 요약을 전부 새 형식으로 다시 만든다.
+
+`link_issues`는 이슈(이름과 대표 기사가 있는 클러스터)를 같은 타임라인의 앞선 이슈에 잇는다(이슈
+타임라인, `pipelines/news/README.md`). 이번 실행에 승격된 이슈가 한 줄 요약까지 넣어 임베딩되도록 요약
+뒤에 실행하고, 요약이 실패해도 실행한다(`trigger_rule="all_done"`). DAG run 상태는 뒤에 이어지는 task 가
+없는 마지막 task 들로만 정해진다. 그래서 요약 뒤에 마지막 task `finish` 를 두어, 요약이 실패한 실행이
+성공으로 기록되지 않게 한다. `NEWS_ISSUE_LINK_ENABLED` 가 꺼져 있으면(기본) 아무것도 하지 않는다.
+
+> **배포 순서(이슈 타임라인).** `V12__issue_timeline.sql`(컬럼·인덱스만 추가)을 코드보다 먼저 적용한다.
+> V12 없이 배포하면 설정이 꺼져 있을 때는 DAG 가 돌지만, 켜는 순간 `link_issues` 가 실패한다. 설정을
+> 끈 채 배포하고 `news_backfill_issue_timeline` 을 `links=true, apply=true` 로 수동 실행해 기존 이슈를
+> 오래된 것부터 이은 뒤 `NEWS_ISSUE_LINK_ENABLED=true` 로 켠다. 먼저 켜면 lookback 보다 오래된 이슈를
+> 부모로 보지 못한 이슈가 루트로 남는다.
+
+`link_issues` 는 먼저 시작한 이슈가 늦게 판정되면 그 뒤에 시작한 판정을 다시 만들지만, 지금부터
+`NEWS_ISSUE_RELINK_WINDOW_HOURS`(기본 72) 안에 시작한 판정만 다시 만든다. 그래서 `news_backfill_krx100`
+으로 옛 기사를 들인 뒤에는 `news_backfill_cluster_articles` 와 요약이 끝나면 설정을 끄고
+`news_backfill_issue_timeline` 을 `reset=true, links=true, since_days=<백필 기간>, apply=true` 로 실행해 그
+기간의 연결을 다시 만든다. `scripts/recluster_news.py --apply` 는 클러스터와 함께 연결도 모두 지우므로,
+설정을 끄고 돌린 뒤 요약까지 끝나면 `links=true, apply=true` 로 다시 잇고 켠다.
 
 `collect_articles`는 이번 런에 새로 저장한 기사가 없으면 스킵해 Asset을 발행하지 않는다 — 판정할
 기사가 없는 시간에 클러스터 DAG를 깨우지 않기 위해서다. `promote_clusters`는 삼중항 미처리 대표

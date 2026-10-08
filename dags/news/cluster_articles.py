@@ -1,4 +1,4 @@
-"""뉴스 클러스터 판정 → 대표 선정 → Event 생성·요약.
+"""뉴스 클러스터 판정 → 대표 선정 → Event 생성·요약 → 이슈 타임라인 연결.
 
 `news_collect_articles` 가 발행하는 `etl://news/articles` Asset 으로 깨어난다. 이벤트 내용은 쓰지
 않고 DB 를 폴링한다 — `assign_clusters` 는 cluster_id 가 없는 기사 전량을, 나머지 task 는 각자의
@@ -12,6 +12,11 @@ DAG 가 먼저 판정한다.
 `promote_clusters` 는 삼중항 미처리 대표 기사가 남아 있을 때만 `etl://news/clusters` 를 발행해
 `triples_extract_triples` 를 깨운다. 이번 런에 승격이 없어도 지난 런에 추출이 실패한 대표가 있으면
 다시 깨운다. 발행을 건너뛰어도(skip) Event 생성과 요약은 돈다(`trigger_rule="none_failed"`).
+
+`link_issues` 는 요약 뒤에 이슈를 같은 타임라인의 앞선 이슈에 잇는다. 요약이 실패해도 실행되고
+(`trigger_rule="all_done"`), `NEWS_ISSUE_LINK_ENABLED` 가 꺼져 있으면 아무것도 하지 않는다.
+DAG run 상태는 뒤에 이어지는 task 가 없는 마지막 task 들로만 정해진다. 그래서 요약이 실패한 실행이
+성공으로 기록되지 않도록 요약 뒤에 마지막 task `finish` 를 둔다.
 """
 
 from __future__ import annotations
@@ -73,8 +78,26 @@ if dag and task:
             result = run()
             return {"fetched": result["fetched"], "saved": result["saved"]}
 
+        # 이번 실행에 승격된 이슈가 한 줄 요약까지 넣어 임베딩되도록 요약 뒤에 실행한다. 요약이
+        # 실패해도 실행되며(all_done), 요약이 끝내 없는 이슈는 승격·제목 생성 24시간 뒤에 요약 없이
+        # 잇는다.
+        @task(retries=1, retry_delay=timedelta(minutes=10), trigger_rule="all_done")
+        def link_issues() -> dict[str, int]:
+            from pipelines.news.jobs.link_issues import run
+
+            return run()
+
+        # DAG run 상태는 뒤에 이어지는 task 가 없는 마지막 task 들로만 정해진다. all_done 인
+        # link_issues 만 마지막 task 로 두면 요약이 실패해도 실행이 성공으로 끝나므로, 요약 성공을
+        # 요구하는 마지막 task 를 하나 더 둔다.
+        @task
+        def finish() -> None:
+            return None
+
         promoted = promote_clusters()
+        summarized = summarize_articles()
         assign_clusters() >> promoted
-        promoted >> [generate_events(), summarize_articles()]
+        promoted >> [generate_events(), summarized]
+        summarized >> [link_issues(), finish()]
 
     news_cluster_articles()

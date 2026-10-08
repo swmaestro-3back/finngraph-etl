@@ -79,6 +79,55 @@ class NewsSettings(BaseSettings):
         default=25, validation_alias="NEWS_CLUSTER_TITLE_MAX_CHARS"
     )
 
+    # 이슈 타임라인 연결(jobs/link_issues.py). 아래 임계값은 dev 데이터로 고른 초기값이다.
+    # 스케줄 연결을 켜고 끄는 설정이다. 기존 클러스터 연결 백필
+    # (news_backfill_issue_timeline DAG)이 끝난 뒤에 켠다. 먼저 켜면 lookback 안의 최근 이슈만
+    # 보고 판정하므로, 그보다 오래된 이슈를 부모로 보지 못한 채 루트(부모가 없는 타임라인 첫
+    # 이슈)로 남는다. 백필 DAG 는 이 값과 무관하게 돈다.
+    issue_link_enabled: bool = Field(default=False, validation_alias="NEWS_ISSUE_LINK_ENABLED")
+    # 주요 기업이 겹치는 앞선 이슈에 이을 때 쓰는 코사인 하한이다. 0.6 처럼 높이면 거의 같은 사건의
+    # 중복만 잇고 실제 후속 이슈를 놓친다.
+    issue_link_threshold: float = Field(default=0.45, validation_alias="NEWS_ISSUE_LINK_THRESHOLD")
+    # 기업이 없는 이슈(거시 지표 등)끼리 이을 때 쓰는 코사인 하한이다. 기업 겹침 조건으로 거를 수
+    # 없어서 더 엄격하게 잡는다.
+    issue_link_no_company_threshold: float = Field(
+        default=0.75, validation_alias="NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD"
+    )
+    # 연결 대상은 지금부터, 부모 후보는 대상의 first_published_at 부터 거슬러 이 일수 안에서 고른다.
+    issue_link_lookback_days: int = Field(
+        default=90, validation_alias="NEWS_ISSUE_LINK_LOOKBACK_DAYS"
+    )
+    issue_link_max_per_run: int = Field(default=200, validation_alias="NEWS_ISSUE_LINK_MAX_PER_RUN")
+    # 부모와의 관계를 같은 사건(same_event)으로 보는 기준이다. 첫 기사 시각 차가 이 시간 이내이거나,
+    # 코사인이 issue_same_event_score 이상이면서 시각 차가 issue_same_event_score_max_gap_hours
+    # 이내이면 같은 사건이 클러스터 둘로 나뉜 것으로 보고, 아니면 후속(follow_up)으로 본다.
+    issue_same_event_max_gap_hours: float = Field(
+        default=24, validation_alias="NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS"
+    )
+    issue_same_event_score: float = Field(
+        default=0.75, validation_alias="NEWS_ISSUE_SAME_EVENT_SCORE"
+    )
+    # 코사인만으로 같은 사건이라고 보는 간격 상한(시간)이며, 클러스터 기간
+    # (NEWS_CLUSTER_WINDOW_DAYS, 7일)과 같다. 한 사건이 클러스터 둘로 나뉘는 일은 그 기간 안에서
+    # 일어나지만, 시리즈 지표의 다음 회차(7월 → 8월 건설지출)는 코사인이 높아도 몇 주 떨어져 있다.
+    # 상한이 없으면 기업 없는 연결은 하한(0.75)이 점수 기준과 같아서 전부 같은 사건으로 합쳐진다.
+    issue_same_event_score_max_gap_hours: float = Field(
+        default=168, validation_alias="NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS"
+    )
+    # 먼저 시작한 이슈가 늦게 판정되면(승격·요약이 늦을 때), 그보다 뒤에 시작해 이미 판정된 이슈는
+    # 그 이슈를 부모로 보지 못한 상태로 남는다. 그래서 실행마다 이번 대상 중 가장 먼저 시작한
+    # 이슈보다 뒤에 시작해 이미 판정된 이슈를 다시 판정하되, 지금부터 이 시간 안에 시작한 이슈만
+    # 고른다. 0 이면 다시 판정하지 않는다.
+    issue_relink_window_hours: float = Field(
+        default=72, validation_alias="NEWS_ISSUE_RELINK_WINDOW_HOURS"
+    )
+    # 이슈 연결에 쓰는 임베딩 모델이다. 테마용 BEDROCK_EMBEDDING_MODEL 은 질의 측(kg-api)과 함께
+    # 바뀌므로 따로 둔다. 이 값을 바꾸면 기존 news_clusters.embedding 과 섞이지 않게
+    # 백필 DAG 를 reset=true 로 실행해 임베딩을 다시 만든다.
+    issue_embedding_model: str = Field(
+        default="amazon.titan-embed-text-v2:0", validation_alias="NEWS_ISSUE_EMBEDDING_MODEL"
+    )
+
     anchor_host: str = Field(default="", validation_alias="ANCHOR_HOST")
 
     request_delay: float = Field(default=1.0, validation_alias="REQUEST_DELAY")

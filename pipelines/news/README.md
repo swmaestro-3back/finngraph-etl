@@ -92,7 +92,8 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 ## 클러스터와 하류 (jobs/cluster_articles.py)
 
 수집 DAG 는 새 기사를 저장하면 `etl://news/articles` 를 발행하고, `news_cluster_articles` DAG 가
-이어서 돕니다: `assign_clusters` → `promote_clusters` → `generate_events` ∥ `summarize_articles`.
+이어서 돕니다: `assign_clusters` → `promote_clusters` → `generate_events` ∥ `summarize_articles`,
+요약 뒤에 `link_issues`(아래 "이슈 타임라인" 절).
 
 - **판정** (`assign`, `transformers/clustering/online.py`): `cluster_id` 가 없는 저장 기사를 발행
   시각순으로 하나씩, 시간 창(클러스터 첫 기사 1일 전 ~ 7일 뒤) 안 클러스터의 프로필과 비교합니다.
@@ -116,6 +117,114 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 
 설계: `docs/superpowers/specs/2026-10-04-news-pipeline-three-dags-design.md`,
 `transformers/clustering/docs/` 의 세 문서.
+
+## 이슈 타임라인 (jobs/link_issues.py)
+
+이슈 하나(`news_clusters` 한 행이며 백엔드 `/api/v1/issues` 가 보여 줍니다)의 타임라인은 서로
+이어지는 앞선 이슈들을 시작 순서대로 이은 것입니다(실적 프리뷰 → 실적 발표, 7월 건설지출 → 8월
+건설지출). `link_issues` 는 이슈마다 부모 하나를 골라 `parent_cluster_id`, `story_root_id`(타임라인
+첫 이슈의 id이며 루트는 자기 id), `link_score`(부모와의 코사인), `link_relation`, `linked_at` 을
+씁니다. 백엔드는 요청한 이슈에서 `parent_cluster_id` 를 따라 올라간 이슈들을 최신순으로 보여 주고,
+후속 이슈가 여러 갈래로 나뉜 경우 다른 갈래는 넣지 않습니다. `same_event` 로 이어진 이슈는 노드
+하나로 합칩니다. LLM 은 부르지 않습니다. 노드 제목은 `news_clusters.title` 이고, 한 줄 요약은 대표
+기사 핵심 포인트의 `CHANGE` 항목(없으면 `news.summary` 첫 문장)입니다. 판정 규칙은
+`transformers/issue_linker.py` 에, 조회와 쓰기는 `repositories/postgres/news_clusters.py` 의
+"이슈 타임라인" 절에 있습니다.
+
+- **대상**: 이름과 대표 기사가 있고 `linked_at` 이 NULL 인 클러스터를 첫 기사 시각순으로 고릅니다.
+  지금부터 `NEWS_ISSUE_LINK_LOOKBACK_DAYS` 안에서 실행당 `NEWS_ISSUE_LINK_MAX_PER_RUN` 개까지입니다.
+  판정마다 커밋하므로 같은 실행에서 앞선 대상이 뒤 대상의 부모 후보가 됩니다.
+- **요약 대기**: 대표 기사에 요약(포인트나 문단)이 아직 없으면, 클러스터 `updated_at` 에서 24시간이
+  지난 뒤에만 요약 없이 잇습니다. `updated_at` 은 승격과 제목 생성 때 갱신되므로, 그동안 클러스터 DAG
+  가 실행될 때마다 요약을 다시 시도합니다. 후속 기사가 붙을 때도 갱신되므로 기사가 계속 붙는 이슈는
+  그만큼 더 기다립니다. 대개 클러스터 기간(`NEWS_CLUSTER_WINDOW_DAYS`) 안에 끝납니다.
+- **임베딩**: 제목, 한 줄 요약, 멤버 기사 제목 3개(후보 기사부터 발행 시각순)를 줄바꿈으로 이어
+  Titan v2(1024)로 만들고 `news_clusters.embedding` 에 저장합니다. 후보 기사는 승격 전에 모두
+  들어오고 그 뒤로 바뀌지 않으므로, 승격 직후에 만들든 기사가 더 붙은 뒤 백필에서 만들든 입력이
+  같습니다. 모델은 테마용 `BEDROCK_EMBEDDING_MODEL` 과 별개인 `NEWS_ISSUE_EMBEDDING_MODEL` 입니다.
+  한 번 저장한 임베딩은 다시 만들지 않습니다.
+- **주요 기업**: 이슈의 `news_companies` 기업 가운데 멤버 기사 제목 하나 이상에 나온 기업입니다. 제목
+  매치는 기사 수집 작업과 같은 개체 사전 매처(`common/gazetteer.py`)를 쓰므로 약칭도 같은 기업으로
+  잡고, 본문에만 언급된 거래처나 경쟁사는 뺍니다. 제목에서 기업을 하나도 찾지 못하면 연결된 기업
+  전체를 씁니다.
+- **부모**: 대상보다 먼저 시작했고(첫 기사 시각, 같으면 id), 대상 시작 전 lookback 안이며, 이미
+  판정된 이슈 가운데 주요 기업이 하나 이상 겹치고 코사인이 `NEWS_ISSUE_LINK_THRESHOLD` 이상인
+  이슈입니다. 기업이 없는 이슈는 기업이 없는 이슈끼리만 `NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD`
+  이상으로 잇습니다. 코사인이 가장 큰 이슈가 부모이고, 같으면 늦게 시작한 쪽, 그래도 같으면 id 가 큰
+  쪽입니다. 부모가 없으면 루트입니다. 후보는 코사인 순으로 30개씩 읽고, 주요 기업 규칙을 넘는 후보가
+  나올 때까지 다음 페이지를 읽습니다. SQL 은 본문에만 언급된 기업까지 함께 거르므로, 그런 후보가 앞을
+  채우면 맞는 부모가 뒤 페이지에 있을 수 있기 때문입니다.
+- **재판정**: 이슈는 시작 순서가 아니라 승격과 요약을 받는 순서로 들어옵니다. 먼저 시작한 이슈가 늦게
+  들어오면(후보 기사가 늦게 차거나 요약이 늦을 때), 그 뒤에 시작해 이미 판정된 이슈는 그 이슈를 부모로
+  보지 못한 채 판정돼 있습니다. 예를 들어 같은 사건이 나뉜 두 클러스터가 각각 루트로 남습니다. 그래서
+  실행마다 이번 대상 중 가장 먼저 시작한 이슈보다 뒤에 시작한 이슈(재판정 대상)를 대상과 함께 시작
+  순서대로 다시 판정합니다. 부모는 늘 먼저 시작한 이슈이므로 재판정 대상의 자식도 모두 재판정 대상에
+  들어 있고, 그래서 `story_root_id` 가 어긋나지 않습니다. 재판정 대상은 지금부터
+  `NEWS_ISSUE_RELINK_WINDOW_HOURS` 안에 시작한 이슈로 한정합니다. 그 밖의 판정은 그대로 두므로, 그보다
+  오래된 이슈가 한꺼번에 들어오면(아래 "연결을 다시 만들어야 할 때") 백필 DAG 로 다시 만듭니다.
+- **관계**: 같은 사건이 클러스터 둘로 나뉘는 일이 잦아서 연결마다 관계를 붙입니다. 첫 기사 시각 차가
+  `NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS` 이내이거나, 코사인이 `NEWS_ISSUE_SAME_EVENT_SCORE` 이상이면서
+  시각 차가 `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` 이내이면 `same_event`(백엔드가 노드 하나로
+  합칩니다)이고, 아니면 `follow_up` 입니다. 코사인 쪽 간격 상한은 클러스터 기간
+  `NEWS_CLUSTER_WINDOW_DAYS`(7일)와 같습니다. 한 사건이 클러스터 둘로 나뉘는 일은 그 기간 안에서
+  일어나지만, 시리즈 지표의 다음 회차(7월 건설지출 → 8월 건설지출)는 제목과 요약이 거의 같아 코사인이
+  높아도 몇 주 떨어져 있기 때문입니다. 이 상한이 없으면, 하한(0.75)이 같은 사건 기준과 같은 기업 없는
+  연결은 모두 노드 하나로 합쳐집니다. 첫 기사 시각만 보므로 하루 안에 이어진 서로 다른 사건도
+  `same_event` 로 합쳐질 수 있습니다.
+- **실패**: 이슈 하나가 실패하면 세고 넘어가며, 다음 실행에서 다시 판정합니다. 전부 실패하면 task 를
+  실패시킵니다. 연결을 쓸 때는 `updated_at` 을 바꾸지 않습니다. 승격·제목 재시도와 Event 스캔이
+  `updated_at` 범위로 대상을 고르기 때문입니다.
+- **DAG**: `summarize_articles` 뒤에 `trigger_rule="all_done"` 으로 실행합니다. 요약이 실패해도 연결은
+  실행하고, 요약 실패는 요약 뒤의 마지막 task `finish` 가 실행 실패로 남깁니다.
+
+| 설정 | 기본값 | 의미 |
+| --- | --- | --- |
+| `NEWS_ISSUE_LINK_ENABLED` | `false` | 스케줄 연결을 켜고 끄는 설정. 백필 DAG 는 이 값과 무관하게 실행됩니다 |
+| `NEWS_ISSUE_LINK_THRESHOLD` | `0.45` | 주요 기업이 겹치는 부모의 코사인 하한 |
+| `NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD` | `0.75` | 기업 없는 이슈끼리의 코사인 하한 |
+| `NEWS_ISSUE_LINK_LOOKBACK_DAYS` | `90` | 대상(지금부터)과 부모 후보(대상 첫 기사부터)를 찾는 기간 |
+| `NEWS_ISSUE_LINK_MAX_PER_RUN` | `200` | 실행당 대상 상한 |
+| `NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS` | `24` | 같은 사건으로 보는 첫 기사 시각 차 |
+| `NEWS_ISSUE_SAME_EVENT_SCORE` | `0.75` | 같은 사건으로 보는 코사인(아래 간격 상한 안에서만) |
+| `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` | `168` | 코사인으로 같은 사건을 판단하는 첫 기사 시각 차 상한(클러스터 기간과 같은 7일) |
+| `NEWS_ISSUE_RELINK_WINDOW_HOURS` | `72` | 재판정 대상을 고르는 기간(지금부터, 시간). `0` 이면 다시 판정하지 않습니다 |
+| `NEWS_ISSUE_EMBEDDING_MODEL` | `amazon.titan-embed-text-v2:0` | 연결용 임베딩 모델 |
+
+임계값은 dev 데이터로 고른 초기값입니다. 0.6 처럼 높이면 같은 사건의 중복만 잇고 실제 후속 이슈를
+놓칩니다. 임계값이나 임베딩 모델을 바꿔도 이미 저장된 판정과 임베딩은 그대로이므로, 백필 DAG 를
+`reset=true` 로 실행해 다시 만듭니다.
+
+### 배포 순서
+
+1. `migrations/versions/V12__issue_timeline.sql` 을 적용합니다(컬럼·인덱스만 추가).
+2. 연결 설정을 끈 채(`NEWS_ISSUE_LINK_ENABLED=false`, 기본값) 배포합니다. `link_issues` 는 0 통계로 끝납니다.
+3. 기존 이슈를 오래된 것부터 잇습니다. Airflow 에서 수동 DAG `news_backfill_issue_timeline` 을 실행합니다.
+   기본값(`apply=false`)은 dry-run 이라 대상 수와 예시만 로그에 남기고, 쓰지도 Bedrock 을 부르지도
+   않습니다. 확인한 뒤 `links=true, apply=true` 로 다시 실행합니다.
+
+4. 백필이 끝나면 `NEWS_ISSUE_LINK_ENABLED=true` 로 켭니다.
+
+설정을 먼저 켜면 lookback 안의 최근 이슈만 보고 판정하므로, 백필 전의 옛 이슈를 부모로 보지 못한 이슈가
+루트로 남습니다. 그랬다면 설정을 끄고 `reset=true, links=true, apply=true`(기간을 좁히려면 `since_days`)로 다시
+만듭니다. 초기화는 임베딩과 연결
+컬럼만 지우고 `updated_at` 은 그대로 둡니다.
+
+### 연결을 다시 만들어야 할 때
+
+스케줄 연결은 재판정 기간 밖의 판정을 고치지 않습니다. 아래 작업 뒤에는 연결 설정을 끄고 백필
+DAG `news_backfill_issue_timeline` 으로 그 기간의 연결을 다시 만든 뒤 켭니다.
+
+- **옛 기사 백필(`news_backfill_krx100` → `news_backfill_cluster_articles`)**: 몇 달 전에 시작한 이슈가
+  한꺼번에 생깁니다. `news_backfill_cluster_articles` 의 `link_issues` 는 실행당 상한만큼만, lookback
+  안에서만 잇고, 그 뒤에 시작해 이미 판정된 이슈는 재판정 기간 밖이라 새 이슈를 부모로 보지 못합니다.
+  백필 클러스터의 승격·제목·요약이 끝난 뒤(dry-run 로그의 "대표 요약 대기로 빠짐" 이 0) 백필 기간만큼
+  `reset=true, links=true, since_days=<백필 기간 일수>, apply=true` 로 다시 만듭니다.
+
+- **클러스터 재판정(`scripts/recluster_news.py --apply`)**: `news_clusters` 를 전부 지우므로 연결도 모두
+  사라집니다. 연결 설정을 켠 채 두면 스케줄 연결이 lookback(90일) 안의 이슈만 승격 순서대로 다시
+  잇고, 그보다 오래된 이슈는 판정하지 않습니다. `--apply` 전에 설정을 끄고, 재판정 뒤 승격·제목·요약이
+  끝나면 백필 DAG 를 `links=true, apply=true` 로 실행해 전체를 이은 다음 켭니다(새 클러스터라 초기화는
+  필요 없습니다).
 
 ## KRX100 백필 (dags/news/backfill_krx100.py)
 
