@@ -8,7 +8,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
-CHAT_MODEL_ROLES = ("relevance", "entity", "cluster_title", "summary", "triples")
+CHAT_MODEL_ROLES = (
+    "relevance",
+    "entity",
+    "cluster_title",
+    "summary",
+    "triples",
+    "issue_link_proposer",
+    "issue_link_confirmer",
+    "issue_kind",
+    "issue_kind_screen",
+)
+# 비어 있으면 그 단계를 끄는 역할이다. 이때 BEDROCK_CHAT_MODEL 을 대신 쓰지 않는다.
+OPTIONAL_CHAT_MODEL_ROLES = ("issue_kind_screen",)
 
 
 class Settings(BaseSettings):
@@ -117,6 +129,27 @@ class Settings(BaseSettings):
     )
     bedrock_summary_model: str = Field(default="", validation_alias="BEDROCK_SUMMARY_MODEL")
     bedrock_triples_model: str = Field(default="", validation_alias="BEDROCK_TRIPLES_MODEL")
+    # 이슈 연결 투표 판정(pipelines/news/transformers/issue_link_vote)에 쓰는 모델이다. 제안자
+    # 모델은 screen(1차 거르기)·evidence·matter 관점 판정·계획 경로·rank 단계를, 확인자 모델은
+    # judge·check·계획 이행 확인 단계를 맡는다.
+    # 확인자 둘이 모두 통과해야 연결되므로 연결 정밀도는 주로 확인자 모델이 정한다. 성격 분류는 주가
+    # 반응 이슈를 연결에서 빼는 판정이며 두 모델이 나눠 맡는다. 1차 모델(Kimi)이 모든 이슈를 먼저
+    # 분류하고, 1차 답이 market_reaction 이거나 리포트·전망 단서가 있는 event 이면 성격 분류 모델
+    # (Sonnet)이 다시 판정해 그 답을 쓴다. 1차 모델을 비우거나 성격 분류 모델과 같게 두면 성격 분류
+    # 모델 하나로만 분류한다.
+    bedrock_issue_link_proposer_model: str = Field(
+        default="moonshotai.kimi-k2.5", validation_alias="BEDROCK_ISSUE_LINK_PROPOSER_MODEL"
+    )
+    bedrock_issue_link_confirmer_model: str = Field(
+        default="us.anthropic.claude-sonnet-4-6",
+        validation_alias="BEDROCK_ISSUE_LINK_CONFIRMER_MODEL",
+    )
+    bedrock_issue_kind_model: str = Field(
+        default="us.anthropic.claude-sonnet-4-6", validation_alias="BEDROCK_ISSUE_KIND_MODEL"
+    )
+    bedrock_issue_kind_screen_model: str = Field(
+        default="moonshotai.kimi-k2.5", validation_alias="BEDROCK_ISSUE_KIND_SCREEN_MODEL"
+    )
     bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
     aws_bearer_token_bedrock: str = Field(default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK")
 
@@ -126,11 +159,15 @@ class Settings(BaseSettings):
     neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
 
     def chat_model(self, role: str) -> str:
-        """역할(relevance·entity·cluster_title·summary·triples)의 Bedrock 채팅 모델 ID."""
+        """역할(CHAT_MODEL_ROLES)에 쓸 Bedrock 채팅 모델 ID 를 돌려준다.
+        OPTIONAL_CHAT_MODEL_ROLES 의 역할은 비어 있으면 "" 를 돌려준다."""
 
         if role not in CHAT_MODEL_ROLES:
             raise ValueError(f"알 수 없는 모델 역할: {role}")
-        return getattr(self, f"bedrock_{role}_model") or self.bedrock_chat_model
+        model = getattr(self, f"bedrock_{role}_model")
+        if role in OPTIONAL_CHAT_MODEL_ROLES:
+            return model
+        return model or self.bedrock_chat_model
 
 
 @lru_cache
