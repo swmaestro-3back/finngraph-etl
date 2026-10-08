@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -80,11 +81,6 @@ class NewsSettings(BaseSettings):
     )
 
     # 이슈 타임라인 연결(jobs/link_issues.py). 아래 임계값은 dev 데이터로 고른 초기값이다.
-    # 스케줄 연결을 켜고 끄는 설정이다. 기존 클러스터 연결 백필
-    # (news_backfill_issue_timeline DAG)이 끝난 뒤에 켠다. 먼저 켜면 lookback 안의 최근 이슈만
-    # 보고 판정하므로, 그보다 오래된 이슈를 부모로 보지 못한 채 루트(부모가 없는 타임라인 첫
-    # 이슈)로 남는다. 백필 DAG 는 이 값과 무관하게 돈다.
-    issue_link_enabled: bool = Field(default=False, validation_alias="NEWS_ISSUE_LINK_ENABLED")
     # 주요 기업이 겹치는 앞선 이슈에 이을 때 쓰는 코사인 하한이다. 0.6 처럼 높이면 거의 같은 사건의
     # 중복만 잇고 실제 후속 이슈를 놓친다.
     issue_link_threshold: float = Field(default=0.45, validation_alias="NEWS_ISSUE_LINK_THRESHOLD")
@@ -98,6 +94,23 @@ class NewsSettings(BaseSettings):
         default=90, validation_alias="NEWS_ISSUE_LINK_LOOKBACK_DAYS"
     )
     issue_link_max_per_run: int = Field(default=200, validation_alias="NEWS_ISSUE_LINK_MAX_PER_RUN")
+    # 연결 판정 방식이다. vote 는 LLM 투표(제안자 pair·rank, 확인자 judge·check)로 잇고 주가 반응
+    # 이슈를 뺀다(transformers/issue_link_vote). cosine 은 주요 기업 겹침과 코사인 임계값만 보는
+    # 이전 규칙이며, LLM 을 부르지 않으므로 문제가 생겼을 때 되돌리는 용도로 둔다. 투표 판정 모델은
+    # BEDROCK_ISSUE_LINK_*_MODEL 로 정한다.
+    issue_link_method: Literal["vote", "cosine"] = Field(
+        default="vote", validation_alias="NEWS_ISSUE_LINK_METHOD"
+    )
+    # 투표 판정이 실행 한 번에 새로 부르는 LLM 호출 상한이다(캐시 적중은 세지 않는다). 상한에
+    # 닿으면 남은 대상은 다음 실행으로 미룬다.
+    issue_link_llm_max_calls_per_run: int = Field(
+        default=1500, validation_alias="NEWS_ISSUE_LINK_LLM_MAX_CALLS_PER_RUN"
+    )
+    # 대상 이슈 하나가 실행 한 번에 새로 부르는 LLM 호출 상한이다. 상한에 닿으면 그 이슈만 미룬다.
+    # 받은 응답은 캐시에 남으므로 다음 실행이 이어서 진행한다.
+    issue_link_llm_max_calls_per_issue: int = Field(
+        default=150, validation_alias="NEWS_ISSUE_LINK_LLM_MAX_CALLS_PER_ISSUE"
+    )
     # 부모와의 관계를 같은 사건(same_event)으로 보는 기준이다. 첫 기사 시각 차가 이 시간 이내이거나,
     # 코사인이 issue_same_event_score 이상이면서 시각 차가 issue_same_event_score_max_gap_hours
     # 이내이면 같은 사건이 클러스터 둘로 나뉜 것으로 보고, 아니면 후속(follow_up)으로 본다.

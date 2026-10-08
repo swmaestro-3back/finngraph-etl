@@ -14,10 +14,11 @@
 
   .venv/bin/python scripts/recluster_news.py --apply
 
-news_clusters 를 지우면 이슈 타임라인 연결도 모두 사라진다. NEWS_ISSUE_LINK_ENABLED 를 켠 채 두면
-스케줄 연결이 lookback 안의 이슈만 승격 순서대로 다시 잇고, 그보다 오래된 이슈는 판정하지 않는다.
-그래서 --apply 전에 이 설정을 끄고, 요약까지 끝난 뒤 백필 DAG news_backfill_issue_timeline 을
-links=true, apply=true 로 실행해 전체를 이은 다음 다시 켠다
+news_clusters 를 지우면 이슈 타임라인 연결도 모두 사라진다. 그 뒤 스케줄 연결은 lookback 안의
+이슈만 승격 순서대로 다시 잇고, 그보다 오래된 이슈를 부모로 보지 못한다. 그래서 --apply 뒤 요약까지
+끝나면 news_cluster_articles 를 멈추고, 백필 DAG news_backfill_issue_timeline 을
+reset=true, links=true, apply=true 로 실행해 전체를 처음부터 이은 다음 다시 켠다. 입력이 같은 판정은
+LLM 응답 캐시를 쓰므로 새 호출은 바뀐 클러스터에서만 생긴다
 (pipelines/news/README.md "연결을 다시 만들어야 할 때").
 
 판정 입력은 운영(cluster_articles.assign)과 같은 제목 + 본문 리드다. 본문이 없는 옛 행은

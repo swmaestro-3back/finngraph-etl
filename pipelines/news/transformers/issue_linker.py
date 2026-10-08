@@ -47,10 +47,15 @@ class TitleMatcher(Protocol):
 
 @dataclass(frozen=True)
 class ClusterMember:
-    """클러스터에 속한 기사 한 건의 제목과 그 기사에 연결된 기업(news_companies)을 담는다."""
+    """클러스터에 속한 기사 한 건의 제목, 그 기사에 연결된 기업(news_companies), 발행 시각을 담는다.
+
+    발행 시각이 없는 기사는 수집 시각을 쓴다. 투표 판정은 이 시각을 이슈 요약문에 적고, 후보
+    이슈에서 대상보다 늦게 나온 기사를 가리는 데 쓴다.
+    """
 
     title: str
     company_ids: frozenset[int] = field(default_factory=frozenset)
+    published_at: datetime | None = None
 
 
 @dataclass(frozen=True)

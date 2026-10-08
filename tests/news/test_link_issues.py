@@ -32,6 +32,16 @@ ZERO = {
     "relinked": 0,
     "relink_changed": 0,
     "failed": 0,
+    "classified": 0,
+    "market_reaction": 0,
+    "kind_escalated": 0,
+    "kind_unknown": 0,
+    "proposed": 0,
+    "confirmed": 0,
+    "deferred": 0,
+    "llm_calls": 0,
+    "cache_hits": 0,
+    "llm_cost_usd": 0,
 }
 
 MATCHER = CompanyMatcher(
@@ -89,7 +99,8 @@ def fake(monkeypatch):
     from pipelines.news import config
     from pipelines.news.jobs import link_issues as job
 
-    monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "true")
+    # 이 파일은 코사인 규칙(되돌리기용)을 검증한다. 투표 판정은 test_link_issues_vote.py 에서 검증한다.
+    monkeypatch.setenv("NEWS_ISSUE_LINK_METHOD", "cosine")
     monkeypatch.setenv("NEWS_ISSUE_LINK_THRESHOLD", "0.45")
     monkeypatch.setenv("NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD", "0.75")
     monkeypatch.setenv("NEWS_ISSUE_LINK_LOOKBACK_DAYS", "90")
@@ -676,28 +687,8 @@ def test_run_without_targets_skips_embedding_and_gazetteer(fake):
     assert calls["embed"] == [] and calls["matcher"] == 0
 
 
-def test_run_skips_everything_when_disabled(fake, monkeypatch):
-    from pipelines.news import config
-
+def test_link_pending_uses_given_window_and_limit(fake):
     job, clusters, calls = fake
-    monkeypatch.delenv("NEWS_ISSUE_LINK_ENABLED")
-    config.get_news_settings.cache_clear()
-    clusters[1] = FakeCluster("마이크론 실적", now_kst() - timedelta(days=1), summary="요약.")
-
-    # 기본값은 꺼져 있다.
-    assert job.run() == ZERO
-    # 대상 조회도 임베딩도 하지 않는다.
-    assert calls["targets"] == [] and calls["embed"] == []
-    assert not clusters[1].linked
-
-
-def test_link_pending_uses_given_window_and_limit(fake, monkeypatch):
-    from pipelines.news import config
-
-    job, clusters, calls = fake
-    # 백필 경로는 NEWS_ISSUE_LINK_ENABLED 와 무관하게 실행된다.
-    monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "false")
-    config.get_news_settings.cache_clear()
     now = now_kst()
     for cid in range(1, 4):
         clusters[cid] = FakeCluster(f"이슈 {cid}", now - timedelta(days=400 - cid), summary="요약.")

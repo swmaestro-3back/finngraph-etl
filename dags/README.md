@@ -157,13 +157,18 @@ news_cluster_articles·news_backfill_cluster_articles:
 타임라인, `pipelines/news/README.md`). 이번 실행에 승격된 이슈가 한 줄 요약까지 넣어 임베딩되도록 요약
 뒤에 실행하고, 요약이 실패해도 실행한다(`trigger_rule="all_done"`). DAG run 상태는 뒤에 이어지는 task 가
 없는 마지막 task 들로만 정해진다. 그래서 요약 뒤에 마지막 task `finish` 를 두어, 요약이 실패한 실행이
-성공으로 기록되지 않게 한다. `NEWS_ISSUE_LINK_ENABLED` 가 꺼져 있으면(기본) 아무것도 하지 않는다.
+성공으로 기록되지 않게 한다.
 
-> **배포 순서(이슈 타임라인).** `V12__issue_timeline.sql`(컬럼·인덱스만 추가)을 코드보다 먼저 적용한다.
-> V12 없이 배포하면 설정이 꺼져 있을 때는 DAG 가 돌지만, 켜는 순간 `link_issues` 가 실패한다. 설정을
-> 끈 채 배포하고 `news_backfill_issue_timeline` 을 `links=true, apply=true` 로 수동 실행해 기존 이슈를
-> 오래된 것부터 이은 뒤 `NEWS_ISSUE_LINK_ENABLED=true` 로 켠다. 먼저 켜면 lookback 보다 오래된 이슈를
-> 부모로 보지 못한 이슈가 루트로 남는다.
+> **배포 순서(이슈 타임라인).** `V12__issue_timeline.sql` 과 `V13__issue_link_votes.sql`(컬럼·테이블·
+> 인덱스만 추가)을 코드보다 먼저 적용한다. 둘 없이 배포하면 `link_issues` 가 실패한다. 배포하면 스케줄
+> 연결이 바로 돌기 시작하므로, `news_cluster_articles` 를 멈춘 채 배포하고 `news_backfill_issue_timeline`
+> 을 `links=true, apply=true` 로 수동 실행해 기존 이슈를 오래된 것부터 이은 뒤 다시 켠다. 스케줄 연결이
+> 먼저 돌면 lookback 보다 오래된 이슈를 부모로 보지 못한 이슈가 루트로 남는다. 판정 방식
+> 기본값(`NEWS_ISSUE_LINK_METHOD=vote`)은 Bedrock LLM 을 부르므로 제안자·확인자·성격 분류 모델
+> (`BEDROCK_ISSUE_LINK_*_MODEL`, `BEDROCK_ISSUE_KIND_MODEL`, `BEDROCK_ISSUE_KIND_SCREEN_MODEL`)을 호출할
+> 수 있어야 하고, 백필은 `max_llm_calls` 로 나눠 실행할 수 있다. 이전 코사인 규칙으로 이은 판정이
+> 있으면 `reset=true, links=true, apply=true` 로 다시 만든다. 문제가 생기면
+> `NEWS_ISSUE_LINK_METHOD=cosine` 으로 되돌린다(LLM 을 부르지 않는다).
 
 `link_issues` 는 먼저 시작한 이슈가 늦게 판정되면 그 뒤에 시작한 판정을 다시 만들지만, 지금부터
 `NEWS_ISSUE_RELINK_WINDOW_HOURS`(기본 72) 안에 시작한 판정만 다시 만든다. 그래서 `news_backfill_krx100`

@@ -13,8 +13,8 @@ DAG 가 먼저 판정한다.
 `triples_extract_triples` 를 깨운다. 이번 런에 승격이 없어도 지난 런에 추출이 실패한 대표가 있으면
 다시 깨운다. 발행을 건너뛰어도(skip) Event 생성과 요약은 돈다(`trigger_rule="none_failed"`).
 
-`link_issues` 는 요약 뒤에 이슈를 같은 타임라인의 앞선 이슈에 잇는다. 요약이 실패해도 실행되고
-(`trigger_rule="all_done"`), `NEWS_ISSUE_LINK_ENABLED` 가 꺼져 있으면 아무것도 하지 않는다.
+`link_issues` 는 요약 뒤에 이슈를 같은 타임라인의 앞선 이슈에 잇는다. 요약이 실패해도 실행된다
+(`trigger_rule="all_done"`).
 DAG run 상태는 뒤에 이어지는 task 가 없는 마지막 task 들로만 정해진다. 그래서 요약이 실패한 실행이
 성공으로 기록되지 않도록 요약 뒤에 마지막 task `finish` 를 둔다.
 """

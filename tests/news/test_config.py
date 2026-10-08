@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_search_defaults():
     from pipelines.news.config import NewsSettings
@@ -83,7 +85,6 @@ def test_body_candidate_max_default(monkeypatch):
 
 
 ISSUE_LINK_ENV = (
-    "NEWS_ISSUE_LINK_ENABLED",
     "NEWS_ISSUE_LINK_THRESHOLD",
     "NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD",
     "NEWS_ISSUE_LINK_LOOKBACK_DAYS",
@@ -93,6 +94,9 @@ ISSUE_LINK_ENV = (
     "NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS",
     "NEWS_ISSUE_RELINK_WINDOW_HOURS",
     "NEWS_ISSUE_EMBEDDING_MODEL",
+    "NEWS_ISSUE_LINK_METHOD",
+    "NEWS_ISSUE_LINK_LLM_MAX_CALLS_PER_RUN",
+    "NEWS_ISSUE_LINK_LLM_MAX_CALLS_PER_ISSUE",
 )
 
 
@@ -104,8 +108,6 @@ def test_issue_link_defaults(monkeypatch):
 
     settings = NewsSettings(_env_file=None)
 
-    # NEWS_ISSUE_LINK_ENABLED 는 꺼진 채로 배포하고, 연결 백필이 끝난 뒤 켠다.
-    assert settings.issue_link_enabled is False
     assert settings.issue_link_threshold == 0.45
     assert settings.issue_link_no_company_threshold == 0.75
     assert settings.issue_link_lookback_days == 90
@@ -116,12 +118,15 @@ def test_issue_link_defaults(monkeypatch):
     assert settings.issue_same_event_score_max_gap_hours == 168
     assert settings.issue_relink_window_hours == 72
     assert settings.issue_embedding_model == "amazon.titan-embed-text-v2:0"
+    # 판정은 LLM 투표가 기본이고, 코사인 규칙은 되돌리기용이다.
+    assert settings.issue_link_method == "vote"
+    assert settings.issue_link_llm_max_calls_per_run == 1500
+    assert settings.issue_link_llm_max_calls_per_issue == 150
 
 
 def test_issue_link_settings_read_env(monkeypatch):
     from pipelines.news.config import NewsSettings
 
-    monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "true")
     monkeypatch.setenv("NEWS_ISSUE_LINK_THRESHOLD", "0.5")
     monkeypatch.setenv("NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD", "0.8")
     monkeypatch.setenv("NEWS_ISSUE_LINK_LOOKBACK_DAYS", "30")
@@ -131,10 +136,12 @@ def test_issue_link_settings_read_env(monkeypatch):
     monkeypatch.setenv("NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS", "72")
     monkeypatch.setenv("NEWS_ISSUE_RELINK_WINDOW_HOURS", "0")
     monkeypatch.setenv("NEWS_ISSUE_EMBEDDING_MODEL", "titan-test")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_METHOD", "cosine")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_LLM_MAX_CALLS_PER_RUN", "10")
+    monkeypatch.setenv("NEWS_ISSUE_LINK_LLM_MAX_CALLS_PER_ISSUE", "5")
 
     settings = NewsSettings(_env_file=None)
 
-    assert settings.issue_link_enabled is True
     assert settings.issue_link_threshold == 0.5
     assert settings.issue_link_no_company_threshold == 0.8
     assert settings.issue_link_lookback_days == 30
@@ -144,6 +151,19 @@ def test_issue_link_settings_read_env(monkeypatch):
     assert settings.issue_same_event_score_max_gap_hours == 72
     assert settings.issue_relink_window_hours == 0
     assert settings.issue_embedding_model == "titan-test"
+    assert settings.issue_link_method == "cosine"
+    assert settings.issue_link_llm_max_calls_per_run == 10
+    assert settings.issue_link_llm_max_calls_per_issue == 5
+
+
+def test_issue_link_method_rejects_unknown(monkeypatch):
+    from pydantic import ValidationError
+
+    from pipelines.news.config import NewsSettings
+
+    monkeypatch.setenv("NEWS_ISSUE_LINK_METHOD", "llm")
+    with pytest.raises(ValidationError):
+        NewsSettings(_env_file=None)
 
 
 def test_env_example_lists_issue_link_settings():
