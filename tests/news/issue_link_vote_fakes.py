@@ -76,6 +76,8 @@ class FakeBedrock:
     fail_titles: set[str] = field(default_factory=set)
     # True 면 rank 응답을 읽을 수 없는 텍스트로 준다.
     garbled_rank: bool = False
+    # 이 제목의 성격 분류 응답은 모든 모델에서 읽을 수 없는 텍스트로 준다.
+    garbled_kinds: set[str] = field(default_factory=set)
     calls: Counter = field(default_factory=Counter)
     requests: list[dict[str, Any]] = field(default_factory=list)
 
@@ -91,6 +93,8 @@ class FakeBedrock:
             title = re.search(r"^제목: (.*)$", user, re.M).group(1)
             model = request["modelId"]
             self.kind_models[model] += 1
+            if title in self.garbled_kinds:
+                return _garbled()
             kind = self.model_kinds.get((model, title), self.kinds.get(title, "event"))
             return _tool({"main_news": title, "reason": f"{title} 판단", "kind": kind})
         if stage == "rank":
@@ -185,10 +189,7 @@ class FakeBedrock:
 
     def _rank(self, user: str) -> dict[str, Any]:
         if self.garbled_rank:
-            return {
-                "output": {"message": {"content": [{"text": "생각 중..."}]}},
-                "stopReason": "end_turn",
-            }
+            return _garbled()
         new_part, _, rest = user.partition("EARLIER candidates")
         child = re.search(r"^Title: (.*)$", new_part, re.M).group(1)
         rows = []
@@ -227,6 +228,10 @@ def _has_title(text: str, title: str) -> bool:
     return re.search(rf"^(Title|제목): {re.escape(title)}$", text, re.M) is not None
 
 
+def _garbled() -> dict[str, Any]:
+    return {"output": {"message": {"content": [{"text": "생각 중..."}]}}, "stopReason": "end_turn"}
+
+
 def _tool(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "output": {"message": {"content": [{"toolUse": {"name": "t", "input": payload}}]}},
@@ -255,3 +260,6 @@ class MemoryStore:
 
     def put(self, record: CallRecord) -> dict[str, Any]:
         return self.rows.setdefault(record.cache_key, record).response
+
+    def delete(self, cache_key: str) -> None:
+        self.rows.pop(cache_key, None)

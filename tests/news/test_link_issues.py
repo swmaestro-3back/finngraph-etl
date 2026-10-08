@@ -35,6 +35,7 @@ ZERO = {
     "classified": 0,
     "market_reaction": 0,
     "kind_escalated": 0,
+    "kind_unknown": 0,
     "proposed": 0,
     "confirmed": 0,
     "deferred": 0,

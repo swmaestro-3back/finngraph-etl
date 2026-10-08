@@ -1,5 +1,5 @@
-"""투표 판정 LLM 클라이언트 단위 테스트다. 캐시 키와 재사용, 검증과 형식 재요청, JSON 모드, 호출
-상한, 비용을 확인한다."""
+"""투표 판정 LLM 클라이언트 단위 테스트다. 캐시 키와 재사용, 검증과 형식 재요청, 읽지 못한 응답의
+캐시 삭제, JSON 모드, 호출 상한, 비용을 확인한다."""
 
 from __future__ import annotations
 
@@ -117,6 +117,40 @@ def test_invalid_reply_gets_one_repair_then_conservative_answer():
     repair = invoke.requests[1]["messages"]
     assert [m["role"] for m in repair] == ["user", "assistant", "user"]
     assert "could not be used" in repair[2]["content"][0]["text"]
+
+
+def test_unparsed_reply_is_evicted_from_the_cache():
+    store = MemoryStore()
+    client = _client(Scripted(_text("모르겠어요"), _text('{"label": "MAYBE"}')), store)
+    assert _screen(client).obj is None
+
+    # 첫 응답과 재요청 응답을 모두 지운다.
+    assert store.rows == {}
+    assert client.stats.evicted == 2
+    # 같은 실행은 메모리에 남긴 답을 쓰고 다시 묻지 않는다.
+    assert _screen(client).obj is None
+    assert client.stats.calls == 2
+
+    # 다음 실행은 모델에 다시 묻는다.
+    again = _client(Scripted(_text('{"label": "DIFFERENT"}')), store)
+    assert _screen(again).obj == {"label": "DIFFERENT"}
+    assert (again.stats.calls, again.stats.cache_hits) == (1, 0)
+
+
+def test_refused_reply_stays_in_the_cache():
+    store = MemoryStore()
+    too_long = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "too long"}}, "Converse"
+    )
+    client = _client(Scripted(too_long, too_long), store)
+    assert _screen(client).obj is None
+
+    # 거절은 다시 물어도 같으므로 지우지 않고, 다음 실행도 캐시를 쓴다.
+    assert len(store.rows) == 2
+    assert client.stats.evicted == 0
+    again = _client(Scripted(), store)
+    assert _screen(again).obj is None
+    assert (again.stats.calls, again.stats.cache_hits) == (0, 2)
 
 
 def test_repair_success_is_used():

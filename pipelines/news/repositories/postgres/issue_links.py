@@ -111,6 +111,13 @@ SELECT_LLM_CALL_SQL = text(
     """
 )
 
+DELETE_LLM_CALL_SQL = text(
+    """
+    DELETE FROM news_issue_link_llm_calls
+     WHERE cache_key = :cache_key;
+    """
+)
+
 INSERT_LLM_CALL_SQL = text(
     """
     INSERT INTO news_issue_link_llm_calls (
@@ -356,3 +363,7 @@ class PostgresCallStore:
                 return row.response
             existing = session.execute(SELECT_LLM_CALL_SQL, {"cache_key": record.cache_key}).first()
         return existing.response if existing is not None else record.response
+
+    def delete(self, cache_key: str) -> None:
+        with session_scope() as session:
+            session.execute(DELETE_LLM_CALL_SQL, {"cache_key": cache_key})

@@ -16,7 +16,6 @@ from pipelines.news.transformers.issue_link_vote.issue import CompanyName, Issue
 from pipelines.news.transformers.issue_link_vote.kind import (
     EVENT,
     MARKET_REACTION,
-    UNPARSED_REASON,
     classify_kind,
     kind_input,
 )
@@ -432,9 +431,8 @@ def test_issue_kind_classification():
         issue, _kind_client({"main_news": "실적", "reason": "자기 사건", "kind": "EVENT"})
     )
     assert event.kind == "event"
-    # 읽지 못하면 연결에서 빼는 쪽(가장 보수적인 답)으로 분류한다.
-    unparsed = classify_kind(issue, _kind_client(None))
-    assert (unparsed.kind, unparsed.reason) == (MARKET_REACTION, UNPARSED_REASON)
+    # 읽지 못하면 분류하지 않는다.
+    assert classify_kind(issue, _kind_client(None)) is None
 
 
 def test_kind_input_puts_article_titles_before_summaries():
@@ -528,6 +526,26 @@ def test_screen_event_without_cue_is_final():
 
     assert invoke.models == [KIMI]
     assert (result.kind, result.model, result.escalated) == (EVENT, KIMI, False)
+
+
+def test_unparsed_screen_reply_is_escalated_to_the_kind_model():
+    issue = _issue(1, "가비아 공개매수 추진", 0, titles=("맥쿼리 가비아 공개매수",))
+    invoke = KindByModel(kimi=None, sonnet=EVENT)
+
+    result = classify_kind(issue, _hybrid_client(invoke), KIMI)
+
+    # 1차 모델은 형식 재요청까지 두 번 묻고, 그래도 읽지 못하면 성격 분류 모델에 묻는다.
+    assert invoke.models == [KIMI, KIMI, SONNET]
+    assert (result.kind, result.model, result.escalated) == (EVENT, SONNET, True)
+
+
+@pytest.mark.parametrize("screen", ["", KIMI])
+def test_unparsed_kind_model_reply_is_unknown(screen):
+    issue = _issue(1, "가비아 데이터센터 증설 발표", 0)
+    invoke = KindByModel(kimi=MARKET_REACTION, sonnet=None)
+
+    assert classify_kind(issue, _hybrid_client(invoke), screen) is None
+    assert invoke.models[-2:] == [SONNET, SONNET]
 
 
 @pytest.mark.parametrize("screen", ["", SONNET])

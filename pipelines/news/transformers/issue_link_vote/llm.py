@@ -18,12 +18,14 @@ chat_model(role))이 답한다.
   - 자유 텍스트 단계: 원래 프롬프트(이미 JSON 객체 하나를 요구한다)를 보내고 단계 스키마로 검증한다.
   - reasoningContent 블록과 본문의 <think> 블록은 읽지 않는다.
   - 검증에 실패한 응답(객체 없음, 스키마 오류, 빈 출력, 잘림)은 짧은 재요청 메시지로 한 번 더
-    묻는다. 그래도 실패하면 객체 없이 돌려주고, 호출한 곳은 가장 보수적인 답(연결 안 함, 통과
-    못 함)으로 읽는다.
+    묻는다. 그래도 실패하면 객체 없이 돌려준다. 투표자는 이를 가장 보수적인 답(연결 안 함, 통과
+    못 함)으로 읽고, 성격 분류는 분류하지 못한 것으로 본다.
 
 캐시: 키는 sha256(모델|단계|프롬프트 버전|호출 번호|요청 전체)이다. 요청 원문은 뉴스 텍스트를
 담고 있어 저장하지 않고 키(해시)만 남긴다. 같은 입력이면 다음 실행(재판정 포함)도 저장된 응답을
 그대로 쓴다. 두 실행이 같은 키를 동시에 쓰면 먼저 쓴 응답만 남고, 늦은 쪽도 그 응답을 쓴다.
+재요청 뒤에도 읽지 못한 응답은 캐시에서 지워 다음 실행이 다시 묻게 한다. 같은 실행에서는 메모리에
+남긴 답을 다시 쓴다. 모델이 거절한 요청(api_error)은 다시 물어도 같으므로 지우지 않는다.
 
 상한: Bedrock 을 새로 부른 횟수만 세고 캐시 적중은 세지 않는다. 상한에 닿으면 예외를 던지고, job 은
 이슈 상한이면 그 이슈만, 실행당 상한이면 남은 대상 전부를 다음 실행으로 미룬다. 이미 받은 응답은
@@ -171,6 +173,8 @@ class CallStore(Protocol):
 
     def put(self, record: CallRecord) -> dict[str, Any]: ...
 
+    def delete(self, cache_key: str) -> None: ...
+
 
 Invoker = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -295,6 +299,8 @@ class CallStats:
     output_tokens: int = 0
     cost_usd: float = 0.0
     parse_failures: int = 0
+    # 읽지 못해 캐시에서 지운 응답 수다.
+    evicted: int = 0
     by_stage: dict[str, int] = field(default_factory=dict)
 
 
@@ -491,6 +497,7 @@ class LlmClient:
 
     def _attempt(
         self,
+        key: str,
         model: str,
         stage: str,
         sample: int,
@@ -500,7 +507,6 @@ class LlmClient:
     ) -> tuple[dict[str, Any], bool]:
         """(응답, 새로 불렀는지) 를 돌려준다. 캐시에 없을 때만 상한을 확인하고 Bedrock 을 부른다."""
 
-        key = self.key(model, stage, sample, req)
         cached = self.store.get(key)
         if cached is not None:
             with self.lock:
@@ -553,6 +559,16 @@ class LlmClient:
             err = f"output truncated ({err})"
         return obj, err
 
+    def _evict(self, keys: list[str], attempts: list[dict[str, Any]]) -> None:
+        """읽지 못한 응답을 캐시에서 지운다. 모델이 거절한 응답은 남긴다."""
+
+        for key, response in zip(keys, attempts, strict=True):
+            if response.get("api_error"):
+                continue
+            self.store.delete(key)
+            with self.lock:
+                self.stats.evicted += 1
+
     # ── 호출 ──
     def call(
         self,
@@ -584,20 +600,25 @@ class LlmClient:
                     return self.replies[key]
             schema = tool["schema"] if tool is not None else schemas.STAGE_SCHEMAS[stage]
             tool_name = tool["name"] if tool is not None else None
-            first, fresh = self._attempt(model, stage, sample, req, cluster_id, candidate_id)
-            attempts, new = [first], int(fresh)
+            first, fresh = self._attempt(key, model, stage, sample, req, cluster_id, candidate_id)
+            keys, attempts, new = [key], [first], int(fresh)
             obj, err = self._evaluate(first, adapter, schema, tool_name)
             retries = 0
             if obj is None and self.retry:
+                rstage = f"{stage}.repair"
                 rreq = self.repair_wire(req, adapter, first.get("text") or "", err)
+                rkey = self.key(model, rstage, sample, rreq)
                 second, fresh = self._attempt(
-                    model, f"{stage}.repair", sample, rreq, cluster_id, candidate_id
+                    rkey, model, rstage, sample, rreq, cluster_id, candidate_id
                 )
+                keys.append(rkey)
                 attempts.append(second)
                 new += int(fresh)
                 retries = 1
                 obj, err2 = self._evaluate(second, adapter, schema, tool_name)
                 err = "" if obj is not None else f"{err}; after repair: {err2}"
+            if obj is None:
+                self._evict(keys, attempts)
             last = attempts[-1]
             reply = Reply(
                 stage=stage,

@@ -666,32 +666,37 @@ SELECT_RELINK_TAIL_SQL = text(
 
 # 연결을 처음부터 다시 만들 때(백필 DAG 의 reset=true) 지우는 범위다. 부모는 늘 더 먼저 시작한
 # 클러스터라, first_published_at 이 since 이후인 구간을 통째로 지우면 그 앞의 판정은 지워진
-# 클러스터를 가리키지 않는다. 임베딩도 지워 지금의 요약·설정으로 다시 만든다.
-_RESETTABLE_SQL = """
-      FROM news_clusters
+# 클러스터를 가리키지 않는다. 임베딩도 지워 지금의 요약·설정으로 다시 만든다. 성격 분류도 지우며,
+# 프롬프트와 입력이 같으면 LLM 응답 캐시를 써서 새 호출 없이 다시 분류한다.
+_RESETTABLE_WHERE = """
      WHERE first_published_at >= :since
-       AND (linked_at IS NOT NULL OR embedding IS NOT NULL)
+       AND (linked_at IS NOT NULL OR embedding IS NOT NULL OR issue_kind IS NOT NULL)
 """
 
 COUNT_RESETTABLE_SQL = text(
     f"""
     SELECT COUNT(*) AS clusters,
            COUNT(*) FILTER (WHERE linked_at IS NOT NULL) AS linked
-    {_RESETTABLE_SQL};
+      FROM news_clusters
+    {_RESETTABLE_WHERE};
     """
 )
 
 RESET_LINKS_SQL = text(
-    """
+    f"""
     UPDATE news_clusters
        SET embedding = NULL,
            parent_cluster_id = NULL,
            story_root_id = NULL,
            link_score = NULL,
            link_relation = NULL,
-           linked_at = NULL
-     WHERE first_published_at >= :since
-       AND (linked_at IS NOT NULL OR embedding IS NOT NULL);
+           linked_at = NULL,
+           issue_kind = NULL,
+           issue_kind_reason = NULL,
+           issue_kind_model = NULL,
+           issue_kind_prompt_version = NULL,
+           issue_kind_at = NULL
+    {_RESETTABLE_WHERE};
     """
 )
 
@@ -901,8 +906,8 @@ def record_link_decision(
 
 
 def count_resettable_clusters(since: datetime) -> dict[str, int]:
-    """first_published_at 이 since 이후이고 임베딩이나 판정이 있는 클러스터 수와 그중 판정된 수를
-    센다."""
+    """first_published_at 이 since 이후이고 임베딩, 판정, 성격 분류 중 하나라도 있는 클러스터 수와
+    그중 판정된 수를 센다."""
 
     with session_scope() as session:
         row = session.execute(COUNT_RESETTABLE_SQL, {"since": since}).one()
@@ -911,7 +916,8 @@ def count_resettable_clusters(since: datetime) -> dict[str, int]:
 
 
 def reset_cluster_links(since: datetime) -> int:
-    """since 이후 시작한 클러스터의 임베딩과 연결 판정을 지우고, 지운 클러스터 수를 돌려준다."""
+    """since 이후 시작한 클러스터의 임베딩, 연결 판정, 성격 분류를 지우고, 지운 클러스터 수를
+    돌려준다."""
 
     with session_scope() as session:
         return int(session.execute(RESET_LINKS_SQL, {"since": since}).rowcount)

@@ -46,7 +46,8 @@ def since_from_days(since_days: int | None) -> datetime:
 
 
 def reset_links(since: datetime, apply: bool) -> int:
-    """since 이후에 시작한 클러스터의 임베딩과 연결 판정을 지우고 지운 수를 돌려준다."""
+    """since 이후에 시작한 클러스터의 임베딩, 연결 판정, 성격 분류를 지우고 지운 수를 돌려준다.
+    프롬프트와 입력이 같으면 다시 분류할 때 LLM 응답 캐시를 쓴다."""
 
     from pipelines.news.repositories.postgres import news_clusters
 
@@ -56,7 +57,7 @@ def reset_links(since: datetime, apply: bool) -> int:
         return 0
 
     reset = news_clusters.reset_cluster_links(since)
-    logger.info("[초기화] 임베딩·연결 판정 지움 %d개", reset)
+    logger.info("[초기화] 임베딩·연결 판정·성격 분류 지움 %d개", reset)
     return reset
 
 

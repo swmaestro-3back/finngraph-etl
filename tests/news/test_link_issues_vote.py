@@ -20,6 +20,7 @@ from pipelines.news.repositories.postgres.issue_links import CandidateRow, Issue
 from pipelines.news.repositories.postgres.news_clusters import LinkTarget
 from pipelines.news.transformers.issue_link_vote.issue import CompanyName
 from pipelines.news.transformers.issue_linker import ClusterMember
+from pipelines.news.transformers.prompts import issue_kind as kind_prompt
 
 GABIA = 3
 MATCHER = CompanyMatcher({"가비아": GazetteerEntry(GABIA, 1, "079940", "가비아")})
@@ -308,6 +309,64 @@ def test_llm_failure_of_one_issue_does_not_fail_the_run(vote):
     assert stats["failed"] == 1
     assert not clusters[2].linked and clusters[2].kind is None
     assert clusters[3].parent == 1
+
+
+def _kind_rows(store: MemoryStore, cluster_id: int) -> list:
+    return [
+        r
+        for r in store.rows.values()
+        if r.stage.startswith("issue_kind") and r.cluster_id == cluster_id
+    ]
+
+
+def test_unparsed_target_kind_is_not_saved_and_the_target_is_retried(vote):
+    job, clusters, bedrock, saved, store = vote
+    _story(clusters, now_kst())
+    bedrock.garbled_kinds = {FAILURE}
+    bedrock.pairs = {(PROPOSAL, FAILURE): PairScript(rank_key="공개매수")}
+
+    stats = job.run()
+
+    # 읽지 못한 성격은 저장하지 않고, 대상은 실패로 세어 판정 전으로 남는다.
+    assert (stats["failed"], stats["kind_unknown"], stats["classified"]) == (1, 1, 2)
+    assert not clusters[3].linked and clusters[3].kind is None
+    assert all(cid != 3 for cid, *_ in saved["kinds"])
+    assert _kind_rows(store, 3) == []
+
+    # 다음 실행은 캐시가 아니라 모델에 다시 묻고 이어서 잇는다.
+    bedrock.garbled_kinds = set()
+    stats = job.run()
+
+    assert (stats["failed"], stats["kind_unknown"], stats["classified"]) == (0, 0, 1)
+    assert (clusters[3].kind, clusters[3].parent) == ("event", 1)
+
+
+def test_unparsed_candidate_kind_is_left_out_without_saving(vote):
+    job, clusters, bedrock, saved, store = vote
+    _story(clusters, now_kst())
+    # 1 은 성격 없이 이미 판정된 이슈다(예: cosine 방식으로 이은 이슈).
+    clusters[1].linked = True
+    bedrock.garbled_kinds = {PROPOSAL}
+    bedrock.pairs = {(PROPOSAL, FAILURE): PairScript(rank_key="공개매수")}
+
+    stats = job.run()
+
+    # 1 은 2·3 의 후보로 나오지만 한 번만 묻고 세며, 후보에서 빠져 3 은 루트가 된다.
+    assert (stats["failed"], stats["kind_unknown"], stats["roots"]) == (0, 1, 2)
+    assert clusters[1].kind is None
+    assert all(cid != 1 for cid, *_ in saved["kinds"])
+    assert (clusters[3].linked, clusters[3].parent) == (True, None)
+    assert _kind_rows(store, 1) == []
+    asked = [
+        r
+        for r in bedrock.requests
+        if r["system"][0]["text"] == kind_prompt.SYSTEM
+        and f"제목: {PROPOSAL}" in r["messages"][0]["content"][0]["text"]
+    ]
+    # 1차 모델과 성격 분류 모델에 형식 재요청까지 한 번씩 묻는다.
+    assert len(asked) == 4
+    _, _, rows = next(v for v in saved["votes"] if v[1] == 3)
+    assert 1 not in [r.candidate_cluster_id for r in rows]
 
 
 def test_run_cap_defers_the_rest_and_next_run_continues(vote, monkeypatch):

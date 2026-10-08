@@ -8,10 +8,11 @@ summarize_articles 가 대표 기사에 남긴 핵심 포인트를 그대로 쓴
 판정 방식은 NEWS_ISSUE_LINK_METHOD 로 정한다.
   vote    LLM 투표(transformers/issue_link_vote). 이슈마다 성격(event / market_reaction)을 한 번
           분류해 남기고, 주가 반응 이슈는 부모도 후보도 되지 않는다. 주가 반응 이슈 자신은 루트로
-          판정한다. 후보는 후보 범위 규칙(universe.py)을 통과한 앞선 event 이슈이고, 제안자
-          (pair·rank)가 받아들인 쌍만 확인자(judge·check)에게 묻는다. 후보별 표는
-          news_issue_link_votes, LLM 응답은 news_issue_link_llm_calls 에 남는다(같은 입력이면 다음
-          실행이 저장된 응답을 다시 쓴다).
+          판정한다. 분류 응답을 읽지 못한 이슈는 성격을 저장하지 않는다. 그런 대상은 실패로 세고,
+          그런 후보는 이번 실행의 후보에서만 뺀다. 후보는 후보 범위 규칙(universe.py)을 통과한 앞선
+          event 이슈이고, 제안자(pair·rank)가 받아들인 쌍만 확인자(judge·check)에게 묻는다. 후보별
+          표는 news_issue_link_votes, LLM 응답은 news_issue_link_llm_calls 에 남는다(같은 입력이면
+          다음 실행이 저장된 응답을 다시 쓴다).
   cosine  주요 기업 겹침과 코사인 임계값만 보는 이전 규칙이다. LLM 을 부르지 않으며, 되돌릴 때
           쓴다.
 
@@ -84,6 +85,7 @@ from pipelines.news.transformers.issue_link_vote import universe
 from pipelines.news.transformers.issue_link_vote.decide import CandidateVotes
 from pipelines.news.transformers.issue_link_vote.issue import CompanyName, Issue, Member
 from pipelines.news.transformers.issue_link_vote.kind import (
+    EVENT,
     MARKET_REACTION,
     IssueKind,
     classify_kind,
@@ -129,8 +131,9 @@ VOTE_CANDIDATE_LIMIT = 300
 # relinked 는 재판정한 이슈 수, relink_changed 는 그중 부모가 바뀐 수다. linked·roots 는 이번
 # 대상만 센다. 아래 투표 판정 통계에서 classified 는 이번 실행에서 새로 분류한 이슈 수(후보 포함),
 # market_reaction 은 그중 주가 반응으로 분류돼 연결에서 빠진 수, kind_escalated 는 그중 1차
-# 모델의 답을 성격 분류 모델이 다시 판정한 수, proposed·confirmed 는 제안자가 받아들인 쌍과
-# 확인자까지 통과한 쌍의 수, deferred 는 호출 상한으로 다음 실행에 미룬 대상·재판정 대상 수,
+# 모델의 답을 성격 분류 모델이 다시 판정한 수, kind_unknown 은 분류 응답을 읽지 못해 저장하지 않은
+# 이슈 수(대상은 실패로도 센다), proposed·confirmed 는 제안자가 받아들인 쌍과 확인자까지 통과한
+# 쌍의 수, deferred 는 호출 상한으로 다음 실행에 미룬 대상·재판정 대상 수,
 # llm_calls 는 새로 부른 LLM 호출 수, cache_hits 는 캐시에서 읽은 응답 수, llm_cost_usd 는 그 호출의
 # 추정 비용(성격 분류의 두 모델 포함)이다.
 STAT_KEYS = (
@@ -146,6 +149,7 @@ STAT_KEYS = (
     "classified",
     "market_reaction",
     "kind_escalated",
+    "kind_unknown",
     "proposed",
     "confirmed",
     "deferred",
@@ -414,6 +418,8 @@ class _VoteRun:
         self.rows: dict[int, IssueRow] = {}
         self.issues: dict[int, Issue] = {}
         self.kinds: dict[int, str | None] = {}
+        # 이번 실행에서 분류 응답을 읽지 못한 이슈다. 저장하지 않고 다음 실행에서 다시 분류한다.
+        self.unknown: set[int] = set()
         self.kind_screen_model = get_settings().chat_model(ISSUE_KIND_SCREEN)
         scorer = EventScorer(
             lambda texts: embed_texts(
@@ -479,16 +485,31 @@ class _VoteRun:
         )
 
     def kind(self, cluster_id: int) -> str:
-        """이슈 성격을 돌려준다. 분류 전이면 분류해 저장한다."""
+        """이슈 성격을 돌려준다. 분류 전이면 분류해 저장하고, 분류하지 못하면 예외를 던진다."""
 
         known = self.kinds.get(cluster_id)
         if known is not None:
             return known
-        self._store_kind(cluster_id, self._classify(cluster_id))
+        result = self._classify(cluster_id)
+        if result is None:
+            self._mark_unknown(cluster_id)
+            raise RuntimeError("성격 분류 응답을 읽지 못함")
+        self._store_kind(cluster_id, result)
         return self.kinds[cluster_id]
 
-    def _classify(self, cluster_id: int) -> IssueKind:
+    def _classify(self, cluster_id: int) -> IssueKind | None:
         return classify_kind(self.issues[cluster_id], self.client, self.kind_screen_model)
+
+    def _mark_unknown(self, cluster_id: int) -> None:
+        if cluster_id in self.unknown:
+            return
+        self.unknown.add(cluster_id)
+        self.stats["kind_unknown"] += 1
+        logger.warning(
+            "[link_issues] 성격 분류 응답을 읽지 못함(저장하지 않고 다음 런에 재시도): %s '%s'",
+            cluster_id,
+            self.issues[cluster_id].title,
+        )
 
     def _store_kind(self, cluster_id: int, result: IssueKind) -> None:
         save_issue_kind(cluster_id, result.kind, result.reason, result.model, result.prompt_version)
@@ -507,7 +528,8 @@ class _VoteRun:
 
     # ── 후보 ──
     def candidates(self, target: LinkTarget, embedding: str) -> list[universe.Candidate]:
-        """후보 범위 규칙을 통과한 앞선 event 이슈를 고른다. 분류 전인 후보는 여기서 분류한다."""
+        """후보 범위 규칙을 통과한 앞선 event 이슈를 고른다. 분류 전인 후보는 여기서 분류하고,
+        분류하지 못한 후보는 이번 실행의 후보에서만 뺀다."""
 
         child = self.issues[target.cluster_id]
         rows = fetch_vote_candidates(
@@ -529,16 +551,23 @@ class _VoteRun:
         for row in rows:
             self.kinds.setdefault(row.cluster_id, row.issue_kind)
 
-        unclassified = [cid for cid in ids if cid in self.issues and self.kinds.get(cid) is None]
+        unclassified = [
+            cid
+            for cid in ids
+            if cid in self.issues and self.kinds.get(cid) is None and cid not in self.unknown
+        ]
         results = parallel_map(self._classify, unclassified, self.workers)
         for cid, result in zip(unclassified, results, strict=True):
-            self._store_kind(cid, result)
+            if result is None:
+                self._mark_unknown(cid)
+            else:
+                self._store_kind(cid, result)
 
         window = timedelta(days=self.settings.issue_link_lookback_days)
         out = []
         for row in rows:
             parent = self.issues.get(row.cluster_id)
-            if parent is None or self.kinds.get(row.cluster_id) == MARKET_REACTION:
+            if parent is None or self.kinds.get(row.cluster_id) != EVENT:
                 continue
             if universe.eligible(parent, child, row.score, window):
                 out.append(universe.Candidate(parent, row.score))
@@ -612,11 +641,13 @@ class _VoteRun:
                 sorted(self.client.unpriced),
             )
         logger.info(
-            "[link_issues] LLM 새 호출 %d(단계별 %s), 캐시 %d, 읽지 못한 응답 %d, 추정 비용 $%.4f",
+            "[link_issues] LLM 새 호출 %d(단계별 %s), 캐시 %d, 읽지 못한 응답 %d"
+            "(캐시에서 지움 %d), 추정 비용 $%.4f",
             call_stats.calls,
             call_stats.by_stage,
             call_stats.cache_hits,
             call_stats.parse_failures,
+            call_stats.evicted,
             call_stats.cost_usd,
         )
 
@@ -765,7 +796,7 @@ def link_pending(
     logger.info(
         "[link_issues] (%s) 대상 %d → 임베딩 %d, 연결 %d(같은 사건 %d / 후속 %d), 루트 %d, "
         "꼬리 재판정 %d(부모 바뀜 %d), 실패 %d, 미룸 %d, 분류 %d(주가 반응 %d, 재판정 %d), "
-        "제안 %d / 확인 %d",
+        "분류 못 함 %d, 제안 %d / 확인 %d",
         settings.issue_link_method,
         stats["scanned"],
         stats["embedded"],
@@ -780,6 +811,7 @@ def link_pending(
         stats["classified"],
         stats["market_reaction"],
         stats["kind_escalated"],
+        stats["kind_unknown"],
         stats["proposed"],
         stats["confirmed"],
     )

@@ -5,6 +5,7 @@
 - 처음 배포한 뒤: `links=true, apply=true` 로 전체 기간을 잇고, 끝나면
   NEWS_ISSUE_LINK_ENABLED 를 켠다.
 - 판정 기준(임계값·임베딩 모델·판정 방식)을 바꾼 뒤: `reset=true, links=true, apply=true`.
+  초기화는 성격 분류도 지운다. 프롬프트와 입력이 같으면 LLM 응답 캐시를 써서 다시 분류한다.
 - 옛 기사 백필(news_backfill_krx100) 뒤:
   `reset=true, links=true, since_days=<백필 기간>, apply=true`.
 
@@ -43,7 +44,9 @@ if dag and task:
                 default=False,
                 type="boolean",
                 title="연결 초기화",
-                description="기간 안 이슈의 임베딩과 연결 판정을 지우고 처음부터 다시 만든다",
+                description=(
+                    "기간 안 이슈의 임베딩, 연결 판정, 성격 분류를 지우고 처음부터 다시 만든다"
+                ),
             ),
             "links": Param(
                 default=True,

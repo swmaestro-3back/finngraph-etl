@@ -1,8 +1,8 @@
 """이슈 타임라인 repository 를 검증하는 통합 테스트다. 연결 대상·멤버·후보(페이지) 조회, 재판정
-대상 조회, 임베딩·판정 쓰기(첫 판정·재판정), 초기화를 본다.
+대상 조회, 임베딩·판정 쓰기(첫 판정·재판정), 초기화(성격 분류 포함)를 본다.
 
 실제 Postgres(pgvector)에 news / news_clusters / news_companies 행을 만들고 SQL 을 직접 부른다.
-다른 행과 섞이지 않게 2101년 날짜와 uuid 마커를 쓴다. V12 마이그레이션이 적용된 DB 가 필요하다.
+다른 행과 섞이지 않게 2101년 날짜와 uuid 마커를 쓴다. V13 마이그레이션까지 적용된 DB 가 필요하다.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.common.utils.time import now_kst
+from pipelines.news.repositories.postgres.issue_links import save_issue_kind
 from pipelines.news.repositories.postgres.news_clusters import (
     count_link_targets,
     count_resettable_clusters,
@@ -433,6 +434,40 @@ def test_reset_links_clears_only_clusters_from_since(story):
         ) == (None, None, None, None, None)
         assert row["updated_at"] == STALE
     assert count_resettable_clusters(since) == {"clusters": 0, "linked": 0}
+
+
+def _kind(cluster_id: int) -> tuple:
+    with session_scope() as session:
+        return tuple(
+            session.execute(
+                text(
+                    "SELECT issue_kind, issue_kind_reason, issue_kind_model, "
+                    "issue_kind_prompt_version, issue_kind_at FROM news_clusters WHERE id = :id"
+                ),
+                {"id": cluster_id},
+            ).one()
+        )
+
+
+def test_reset_links_clears_issue_kind(story):
+    for key in ("root", "target"):
+        save_cluster_embedding(story[key], _unit(0))
+    record_link_decision(story["root"], None, None, None)
+    record_link_decision(story["target"], story["root"], 1.0, "follow_up")
+    for key in ("root", "target", "stale"):
+        assert save_issue_kind(story[key], "market_reaction", "사유", "m", "issue-kind-v4")
+    since = BASE + timedelta(days=3)
+
+    # 성격만 남은 클러스터(stale)도 초기화 대상이다.
+    assert count_resettable_clusters(since) == {"clusters": 2, "linked": 1}
+    assert reset_cluster_links(since) == 2
+
+    assert _kind(story["root"])[:4] == ("market_reaction", "사유", "m", "issue-kind-v4")
+    for key in ("target", "stale"):
+        assert _kind(story[key]) == (None, None, None, None, None)
+        assert _row(story[key])["updated_at"] == STALE
+    # 다시 분류한 성격은 저장된다.
+    assert save_issue_kind(story["target"], "event", "자기 사건", "m", "issue-kind-v4")
 
 
 def test_release_clears_only_linked_at_and_makes_a_target_again(story):

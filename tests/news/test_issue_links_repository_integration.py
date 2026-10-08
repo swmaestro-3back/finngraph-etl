@@ -1,5 +1,5 @@
 """투표 판정 저장소 통합 테스트다. 이슈 상세·기업 이름 정보·후보 범위 조회와 이슈 성격·투표·LLM
-응답 캐시 쓰기를 확인한다.
+응답 캐시 쓰기·삭제를 확인한다.
 
 실제 Postgres(pgvector)에 news / news_clusters / news_companies / companies / entity_gazetteer 행을
 만들고 SQL 을 직접 부른다. 다른 행과 섞이지 않게 2102년 날짜와 uuid 마커를 쓴다. V13 마이그레이션이
@@ -282,6 +282,23 @@ def test_llm_call_cache_first_writer_wins(story):
         2,
         120,
     )
+
+
+def test_llm_call_cache_delete(story):
+    store = PostgresCallStore()
+    key = f"test-{uuid.uuid4().hex}"
+    broken = {"text": "생각 중", "tool_input": None, "stop_reason": "end_turn"}
+    store.put(_record(key, story["target"], None, broken))
+
+    store.delete(key)
+    assert store.get(key) is None
+    # 없는 키를 지워도 오류가 아니다.
+    store.delete(key)
+
+    # 지운 뒤에는 새 응답을 쓸 수 있다.
+    fixed = {"text": '{"label": "DIFFERENT"}', "tool_input": None, "stop_reason": "end_turn"}
+    assert store.put(_record(key, story["target"], None, fixed)) == fixed
+    assert store.get(key) == fixed
 
 
 def _vote(candidate: int, *, chosen: bool) -> LinkVoteRow:
