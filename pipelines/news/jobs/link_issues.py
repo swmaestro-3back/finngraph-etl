@@ -39,11 +39,11 @@ summarize_articles 가 대표 기사에 남긴 핵심 포인트를 그대로 쓴
 두면 다음 실행이 더 늦게 시작한 대상을 기준으로 재판정 대상을 고를 때 그 이슈를 다시 판정하지
 못한다.
 
-스케줄 진입점 run() 은 NEWS_ISSUE_LINK_ENABLED 설정이 켜져 있을 때만 실행된다. 재판정 기간 밖의
-판정은 다시 만들지 않으므로, 연결 백필 전에 켜면 최근 이슈가 lookback 밖의 옛 이슈를 부모로 보지
-못한 채 루트로 남는다. 같은 이유로 옛 기사를 한꺼번에 들이는 백필(news_backfill_krx100) 뒤에는 그
-기간의 연결을 다시 만든다(pipelines/news/README.md "이슈 타임라인"). 백필 DAG
-(news_backfill_issue_timeline)는 활성화 설정을 거치지 않고 link_pending() 을 직접 부르며, 재판정
+스케줄 진입점 run() 은 지금부터 lookback 안의 대상만 판정한다. 재판정 기간 밖의 판정은 다시 만들지
+않으므로, lookback 밖의 옛 이슈를 아직 잇지 않은 상태에서 스케줄 연결이 먼저 돌면 최근 이슈가 그
+옛 이슈를 부모로 보지 못한 채 루트로 남는다. 같은 이유로 옛 기사를 한꺼번에 들이는
+백필(news_backfill_krx100) 뒤에는 그 기간의 연결을 다시 만든다(pipelines/news/README.md "이슈
+타임라인"). 백필 DAG(news_backfill_issue_timeline)는 link_pending() 을 직접 부르며, 재판정
 대상을 고르는 범위를 백필 기간 전체로 넓힌다. 실패하거나 미룬 옛 대상이 뒤 배치에서 판정되면 그보다
 뒤에 시작한 판정을 모두 다시 만들어야 시작 순서로 한 번에 이은 결과와 같아지기 때문이다.
 """
@@ -653,16 +653,9 @@ class _VoteRun:
 
 
 def run() -> dict[str, Any]:
-    """스케줄 진입점으로, 지금부터 lookback 안의 연결 대상을 실행당 상한만큼 잇는다.
-
-    NEWS_ISSUE_LINK_ENABLED 가 꺼져 있으면 아무것도 읽지 않고 모든 값이 0 인 통계를 돌려준다.
-    """
+    """스케줄 진입점으로, 지금부터 lookback 안의 연결 대상을 실행당 상한만큼 잇는다."""
 
     settings = get_news_settings()
-    if not settings.issue_link_enabled:
-        logger.info("[link_issues] NEWS_ISSUE_LINK_ENABLED=false — 건너뜀")
-        return dict.fromkeys(STAT_KEYS, 0)
-
     return link_pending(
         since=now_kst() - timedelta(days=settings.issue_link_lookback_days),
         limit=settings.issue_link_max_per_run,
@@ -679,7 +672,7 @@ def link_pending(
     """first_published_at 이 since 이후인 연결 대상을 limit 개까지 임베딩하고, 재판정 대상과 함께
     오래된 순으로 잇는다.
 
-    NEWS_ISSUE_LINK_ENABLED 와 무관하게 실행되며, 백필 DAG 는 기간을 넓혀 부른다. 통계의
+    백필 DAG 는 기간을 넓혀 부른다. 통계의
     linked 는 same_event 와 follow_up 의 합이고, 다른 실행이 먼저 판정한 대상은 어느 항목에도 세지
     않는다.
 

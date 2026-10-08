@@ -189,7 +189,6 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 
 | 설정 | 기본값 | 의미 |
 | --- | --- | --- |
-| `NEWS_ISSUE_LINK_ENABLED` | `false` | 스케줄 연결을 켜고 끄는 설정. 백필 DAG 는 이 값과 무관하게 실행됩니다 |
 | `NEWS_ISSUE_LINK_THRESHOLD` | `0.45` | 주요 기업이 겹치는 부모의 코사인 하한 |
 | `NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD` | `0.75` | 기업 없는 이슈끼리의 코사인 하한 |
 | `NEWS_ISSUE_LINK_LOOKBACK_DAYS` | `90` | 대상(지금부터)과 부모 후보(대상 첫 기사부터)를 찾는 기간 |
@@ -291,8 +290,8 @@ DAG 를 `reset=true, links=true, apply=true` 로 실행해 다시 만듭니다.
 같으므로 캐시에 남깁니다. 도구 강제 호출을 지원하지 않는 모델은
 도구 스키마를 메시지에 붙여 JSON 으로 받습니다(`issue_link_vote/llm.py` 의 `MODEL_CAPS`).
 
-이미 `cosine` 방식으로 이은 판정은 방식을 바꿔도 그대로 남습니다. 투표로 다시 판정하려면 연결 설정
-(`NEWS_ISSUE_LINK_ENABLED`)을 끄고 백필 DAG 를 `reset=true, links=true, apply=true` 로 실행해 다시
+이미 `cosine` 방식으로 이은 판정은 방식을 바꿔도 그대로 남습니다. 투표로 다시 판정하려면
+`news_cluster_articles` 를 멈추고 백필 DAG 를 `reset=true, links=true, apply=true` 로 실행해 다시
 만듭니다.
 
 LLM 새 호출은 실행당 상한과 이슈당 상한으로 제한합니다. 이슈당 상한에 닿으면 그 이슈만, 실행당
@@ -311,8 +310,8 @@ LLM 새 호출은 실행당 상한과 이슈당 상한으로 제한합니다. �
 
 1. `migrations/versions/V12__issue_timeline.sql` 과 `V13__issue_link_votes.sql` 을 적용합니다(컬럼·
    테이블·인덱스만 추가합니다).
-2. 연결 설정을 끈 채(`NEWS_ISSUE_LINK_ENABLED=false`, 기본값) 배포합니다. `link_issues` 는 0 통계로 끝납니다.
-   `vote` 방식을 쓰려면 실행 환경의 Bedrock 계정에서 제안자·확인자·성격 분류의 1차·확인 모델(기본값은
+2. Airflow 에서 `news_cluster_articles` 를 멈추고 배포합니다. 배포하면 스케줄 연결이 바로 돌기 때문입니다.
+   멈춘 동안 들어온 기사는 다시 켠 뒤 첫 실행이 클러스터에 넣습니다. `vote` 방식을 쓰려면 실행 환경의 Bedrock 계정에서 제안자·확인자·성격 분류의 1차·확인 모델(기본값은
    Kimi K2.5 와 Sonnet 4.6)을 호출할 수 있어야 합니다.
 3. 기존 이슈를 오래된 것부터 잇습니다. Airflow 에서 수동 DAG `news_backfill_issue_timeline` 을 실행합니다.
    기본값(`apply=false`)은 dry-run 이라 대상 수와 예시만 로그에 남기고, 쓰지도 Bedrock 을 부르지도
@@ -320,10 +319,10 @@ LLM 새 호출은 실행당 상한과 이슈당 상한으로 제한합니다. �
    번 부르므로, `max_llm_calls` 로 전체 새 호출 수를 제한해 여러 번에 나눠 실행할 수 있습니다. 멈췄다가
    다시 실행해도 받은 응답이 캐시에 남아 있으므로 이어서 진행합니다.
 
-4. 백필이 끝나면 `NEWS_ISSUE_LINK_ENABLED=true` 로 켭니다.
+4. 백필이 끝나면 `news_cluster_articles` 를 다시 켭니다.
 
-설정을 먼저 켜면 lookback 안의 최근 이슈만 보고 판정하므로, 백필 전의 옛 이슈를 부모로 보지 못한 이슈가
-루트로 남습니다. 그랬다면 설정을 끄고 `reset=true, links=true, apply=true`(기간을 좁히려면 `since_days`)로 다시
+스케줄 연결이 백필보다 먼저 돌면 lookback 안의 최근 이슈만 보고 판정하므로, 백필 전의 옛 이슈를 부모로
+보지 못한 이슈가 루트로 남습니다. 그랬다면 `news_cluster_articles` 를 멈추고 `reset=true, links=true, apply=true`(기간을 좁히려면 `since_days`)로 다시
 만듭니다. 초기화는 임베딩, 연결 컬럼, 성격 분류(`issue_kind*`)를 지우고 `updated_at` 은 그대로
 둡니다. 프롬프트와 입력이 같으면 다시 분류할 때 캐시를 쓰므로 성격 분류의 새 호출은 생기지 않습니다.
 

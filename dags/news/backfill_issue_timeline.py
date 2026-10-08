@@ -2,15 +2,15 @@
 
 수동 실행 전용이며, pipelines/news/jobs/backfill_issue_timeline.py 를 실행한다.
 
-- 처음 배포한 뒤: `links=true, apply=true` 로 전체 기간을 잇고, 끝나면
-  NEWS_ISSUE_LINK_ENABLED 를 켠다.
+- 처음 배포한 뒤: `links=true, apply=true` 로 전체 기간을 잇는다.
 - 판정 기준(임계값·임베딩 모델·판정 방식)을 바꾼 뒤: `reset=true, links=true, apply=true`.
   초기화는 성격 분류도 지운다. 프롬프트와 입력이 같으면 LLM 응답 캐시를 써서 다시 분류한다.
 - 옛 기사 백필(news_backfill_krx100) 뒤:
   `reset=true, links=true, since_days=<백필 기간>, apply=true`.
 
 apply 가 false 이면 쓰지 않고 대상 수와 예시만 로그에 남긴다. 실행하는 동안 스케줄 연결과 판정이
-겹치지 않게 NEWS_ISSUE_LINK_ENABLED 를 끈다.
+겹치지 않게 news_cluster_articles DAG 를 멈춰 둔다. 멈춘 동안 쌓인 기사는 다시 켠 뒤 첫 실행이
+클러스터에 넣는다.
 
 판정 방식이 vote(기본)이면 이슈마다 LLM 을 여러 번 부른다. `max_llm_calls` 를 주면 새 호출 수
 합계가 이 값에 닿을 때 남은 이슈를 두고 멈춘다. 받은 응답은 캐시에 남으므로 다시 실행하면 이어서

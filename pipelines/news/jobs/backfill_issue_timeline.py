@@ -66,7 +66,7 @@ def backfill_links(
 ) -> dict[str, Any]:
     """판정할 대상이 없어질 때까지 link_pending 을 오래된 것부터 반복하고 누적 통계를 돌려준다.
 
-    NEWS_ISSUE_LINK_ENABLED 와 무관하게 돈다. 재판정 대상은 NEWS_ISSUE_RELINK_WINDOW_HOURS 가
+    재판정 대상은 NEWS_ISSUE_RELINK_WINDOW_HOURS 가
     아니라 백필 기간 전체에서 고른다. max_llm_calls 를 주면 투표 판정의 LLM 새 호출 수 합계가 이
     값에 닿을 때 남은 대상을 두고 멈춘다.
     """

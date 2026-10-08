@@ -69,7 +69,6 @@ def vote(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
     common_config.get_settings.cache_clear()
-    monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "true")
     monkeypatch.setenv("NEWS_ISSUE_LINK_METHOD", "vote")
     monkeypatch.setenv("NEWS_ISSUE_RELINK_WINDOW_HOURS", "0")
     monkeypatch.setenv("NEWS_LLM_MAX_CONCURRENCY", "4")

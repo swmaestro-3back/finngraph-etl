@@ -85,7 +85,6 @@ def test_body_candidate_max_default(monkeypatch):
 
 
 ISSUE_LINK_ENV = (
-    "NEWS_ISSUE_LINK_ENABLED",
     "NEWS_ISSUE_LINK_THRESHOLD",
     "NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD",
     "NEWS_ISSUE_LINK_LOOKBACK_DAYS",
@@ -109,8 +108,6 @@ def test_issue_link_defaults(monkeypatch):
 
     settings = NewsSettings(_env_file=None)
 
-    # NEWS_ISSUE_LINK_ENABLED 는 꺼진 채로 배포하고, 연결 백필이 끝난 뒤 켠다.
-    assert settings.issue_link_enabled is False
     assert settings.issue_link_threshold == 0.45
     assert settings.issue_link_no_company_threshold == 0.75
     assert settings.issue_link_lookback_days == 90
@@ -130,7 +127,6 @@ def test_issue_link_defaults(monkeypatch):
 def test_issue_link_settings_read_env(monkeypatch):
     from pipelines.news.config import NewsSettings
 
-    monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "true")
     monkeypatch.setenv("NEWS_ISSUE_LINK_THRESHOLD", "0.5")
     monkeypatch.setenv("NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD", "0.8")
     monkeypatch.setenv("NEWS_ISSUE_LINK_LOOKBACK_DAYS", "30")
@@ -146,7 +142,6 @@ def test_issue_link_settings_read_env(monkeypatch):
 
     settings = NewsSettings(_env_file=None)
 
-    assert settings.issue_link_enabled is True
     assert settings.issue_link_threshold == 0.5
     assert settings.issue_link_no_company_threshold == 0.8
     assert settings.issue_link_lookback_days == 30
