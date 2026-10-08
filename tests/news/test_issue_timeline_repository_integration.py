@@ -25,6 +25,7 @@ from pipelines.news.repositories.postgres.news_clusters import (
     fetch_link_targets,
     fetch_relink_tail,
     record_link_decision,
+    release_link_decisions,
     reset_cluster_links,
     save_cluster_embedding,
 )
@@ -254,15 +255,18 @@ def test_targets_need_title_representative_and_summary_or_wait(story):
 def test_members_candidates_first_by_published_at_with_companies(story):
     members = fetch_cluster_members([story["root"], story["plain"], -1])
 
+    def at(hours: int) -> datetime:
+        return BASE + timedelta(hours=hours)
+
     # 후보 기사(승격 뒤에 바뀌지 않는다)를 먼저, 그 안에서는 발행 시각순으로 읽는다.
     assert members == {
         story["root"]: [
-            ClusterMember("첫 기사", frozenset({story["a"]})),
-            ClusterMember("셋째 기사", frozenset()),
-            ClusterMember("둘째 기사", frozenset({story["a"], story["b"]})),
-            ClusterMember("넷째 기사", frozenset()),
+            ClusterMember("첫 기사", frozenset({story["a"]}), at(1)),
+            ClusterMember("셋째 기사", frozenset(), at(3)),
+            ClusterMember("둘째 기사", frozenset({story["a"], story["b"]}), at(2)),
+            ClusterMember("넷째 기사", frozenset(), at(4)),
         ],
-        story["plain"]: [ClusterMember("건설지출 기사", frozenset())],
+        story["plain"]: [ClusterMember("건설지출 기사", frozenset(), at(50))],
     }
     assert fetch_cluster_members([]) == {}
 
@@ -429,3 +433,30 @@ def test_reset_links_clears_only_clusters_from_since(story):
         ) == (None, None, None, None, None)
         assert row["updated_at"] == STALE
     assert count_resettable_clusters(since) == {"clusters": 0, "linked": 0}
+
+
+def test_release_clears_only_linked_at_and_makes_a_target_again(story):
+    for key in ("root", "target"):
+        save_cluster_embedding(story[key], _unit(0))
+    record_link_decision(story["root"], None, None, None)
+    record_link_decision(story["target"], story["root"], 0.9, "follow_up")
+
+    assert release_link_decisions([story["target"], story["stale"]]) == 1
+    assert release_link_decisions([]) == 0
+
+    # 지난 판정과 임베딩은 남고 linked_at 만 비워진다. updated_at 은 그대로다.
+    row = _row(story["target"])
+    assert (row["parent_cluster_id"], row["story_root_id"], row["link_relation"]) == (
+        story["root"],
+        story["root"],
+        "follow_up",
+    )
+    assert row["linked_at"] is None and not row["no_embedding"]
+    assert row["updated_at"] == STALE
+    # 다시 대상이 되고, 재판정 대상에서는 빠지며, 첫 판정으로 덮어쓴다.
+    targets = fetch_link_targets(BASE - timedelta(days=1), 100, _deadline())
+    assert story["target"] in [t.cluster_id for t in targets]
+    tail = fetch_relink_tail(BASE, story["root"], BASE - timedelta(days=1))
+    assert story["target"] not in [t.cluster_id for t in tail]
+    assert record_link_decision(story["target"], None, None, None)
+    assert _row(story["target"])["story_root_id"] == story["target"]
