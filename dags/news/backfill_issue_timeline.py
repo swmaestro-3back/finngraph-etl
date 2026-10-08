@@ -10,6 +10,10 @@
 
 apply 가 false 이면 쓰지 않고 대상 수와 예시만 로그에 남긴다. 실행하는 동안 스케줄 연결과 판정이
 겹치지 않게 NEWS_ISSUE_LINK_ENABLED 를 끈다.
+
+판정 방식이 vote(기본)이면 이슈마다 LLM 을 여러 번 부른다. `max_llm_calls` 를 주면 새 호출 수
+합계가 이 값에 닿을 때 남은 이슈를 두고 멈춘다. 받은 응답은 캐시에 남으므로 다시 실행하면 이어서
+진행한다.
 """
 
 from __future__ import annotations
@@ -61,6 +65,14 @@ if dag and task:
                 title="연결 수 상한",
                 description="이번 실행에서 판정할 이슈 수 상한. 비우면 전부",
             ),
+            "max_llm_calls": Param(
+                default=None,
+                type=["null", "integer"],
+                minimum=1,
+                title="LLM 새 호출 수 상한",
+                description="투표 판정의 LLM 새 호출 수 합계 상한. 닿으면 남은 이슈를 두고 멈춘다. "
+                "비우면 상한 없음",
+            ),
             "apply": Param(
                 default=False,
                 type="boolean",
@@ -72,7 +84,7 @@ if dag and task:
     def news_backfill_issue_timeline():
         # 판정마다 커밋하므로 task 가 중간에 끊겨도 다시 실행하면 남은 이슈만 이어서 판정한다.
         @task(retries=2, retry_delay=timedelta(minutes=5))
-        def backfill_issue_timeline(params: dict | None = None) -> dict[str, int]:
+        def backfill_issue_timeline(params: dict | None = None) -> dict:
             from pipelines.news.jobs.backfill_issue_timeline import run
 
             return run(
@@ -81,6 +93,7 @@ if dag and task:
                 since_days=params["since_days"],
                 limit=params["limit"],
                 apply=params["apply"],
+                max_llm_calls=params["max_llm_calls"],
             )
 
         backfill_issue_timeline()

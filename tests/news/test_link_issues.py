@@ -32,6 +32,15 @@ ZERO = {
     "relinked": 0,
     "relink_changed": 0,
     "failed": 0,
+    "classified": 0,
+    "market_reaction": 0,
+    "kind_escalated": 0,
+    "proposed": 0,
+    "confirmed": 0,
+    "deferred": 0,
+    "llm_calls": 0,
+    "cache_hits": 0,
+    "llm_cost_usd": 0,
 }
 
 MATCHER = CompanyMatcher(
@@ -90,6 +99,8 @@ def fake(monkeypatch):
     from pipelines.news.jobs import link_issues as job
 
     monkeypatch.setenv("NEWS_ISSUE_LINK_ENABLED", "true")
+    # 이 파일은 코사인 규칙(되돌리기용)을 검증한다. 투표 판정은 test_link_issues_vote.py 에서 검증한다.
+    monkeypatch.setenv("NEWS_ISSUE_LINK_METHOD", "cosine")
     monkeypatch.setenv("NEWS_ISSUE_LINK_THRESHOLD", "0.45")
     monkeypatch.setenv("NEWS_ISSUE_LINK_NO_COMPANY_THRESHOLD", "0.75")
     monkeypatch.setenv("NEWS_ISSUE_LINK_LOOKBACK_DAYS", "90")
