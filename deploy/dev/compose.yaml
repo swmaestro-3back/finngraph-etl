@@ -84,9 +84,8 @@ services:
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
-    # 인스턴스 로컬에만 연다. SSM 포트포워딩으로 접근한다.
     ports:
-      - "127.0.0.1:${AIRFLOW_WEB_PORT:?Parameter Store 에 AIRFLOW_WEB_PORT 가 없습니다}:8080"
+      - "${AIRFLOW_WEB_PORT:?Parameter Store 에 AIRFLOW_WEB_PORT 가 없습니다}:8080"
     healthcheck:
       test:
         ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
