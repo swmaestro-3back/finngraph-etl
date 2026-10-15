@@ -49,12 +49,6 @@ if dag and task:
 
             return run()
 
-        @task(retries=2, retry_delay=timedelta(minutes=2))
-        def publish_briefing() -> dict:
-            from pipelines.briefings.jobs.publish_briefing import run
-
-            return run()
-
-        compute_derived() >> publish_hot_themes() >> publish_briefing()
+        compute_derived() >> publish_hot_themes()
 
     stocks_compute_derived()

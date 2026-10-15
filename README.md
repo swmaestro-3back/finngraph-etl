@@ -21,7 +21,6 @@ finngraph-etl/
 │   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis · dart)
 │   │   ├── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
 │   │   └── gazetteer.py  # 개체 사전 매처 — 본문 기업 표기 → company_id·stock_id·ticker
-│   ├── briefings/        # 백엔드 브리핑 발행 트리거
 │   ├── companies/        # 법인 ETL
 │   ├── disclosures/      # DART 공시 ETL
 │   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
