@@ -44,10 +44,8 @@ UPSERT_FINANCIAL_SQL = text(
 # 종목별 조회라 전 종목을 매일 돌 수 없다. 갱신이 오래된 것부터 batch_size만큼 처리하면
 # 회차를 거듭하며 전체가 고르게 채워진다(재무는 분기에 한 번 바뀌므로 이 정도로 충분하다).
 #
-# **service_companies로 대상을 좁힌다.** 1차 MVP는 반도체·2차전지 361법인이라 상장사 전량을
-# 돌 이유가 없다. KIS 재무는 종목코드로 조회하므로 법인 → 종목으로 한 번 내려간다.#
-# JOIN이 아니라 EXISTS다. service_companies는
-# 두 테마에 걸친 법인이 두 행이다(실측 25곳). JOIN하면 그 종목을 두 번 수집한다.
+# **service_companies로 대상을 좁힌다.** KIS 재무는 종목코드로 조회하므로 법인 → 종목으로
+# 한 번 내려간다.
 SELECT_STALE_FINANCIAL_TARGETS_SQL = text(
     """
     SELECT s.company_id, s.ticker
