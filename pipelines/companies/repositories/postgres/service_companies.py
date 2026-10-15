@@ -5,8 +5,6 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-# 종류는 여기서 판정하지 않는다. 수집 경계(kis_stock_master.is_collectible)가
-# 보통주만 들이므로 stocks 에 있는 것은 이미 다룰 종목이다.
 SYNC_SERVICE_COMPANIES_SQL = text(
     """
     INSERT INTO service_companies (company_id, name)
@@ -14,6 +12,7 @@ SYNC_SERVICE_COMPANIES_SQL = text(
       FROM stocks AS s
       JOIN companies AS c ON c.id = s.company_id
      WHERE s.is_active
+       AND s.market IN ('KOSPI', 'KOSDAQ')
     ON CONFLICT (company_id) DO NOTHING
     """
 )
@@ -34,7 +33,8 @@ SERVICE_UNIVERSE_SQL = text(
     """
     SELECT (SELECT count(*) FROM service_companies)                    AS service_companies,
            (SELECT count(*) FROM stocks
-             WHERE is_active AND company_id IS NOT NULL)               AS linked_stocks
+             WHERE is_active AND company_id IS NOT NULL
+               AND market IN ('KOSPI', 'KOSDAQ'))                      AS linked_stocks
     """
 )
 
