@@ -3,14 +3,18 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 ENV_FILES = (ROOT_DIR / ".env", ROOT_DIR / ".env.news")
+
+# 쉼표 구분 실수 목록. NoDecode 가 없으면 pydantic-settings 가 JSON 으로 해석해 "1,1,1,1" 을
+# 거부한다.
+Weights = Annotated[tuple[float, ...], NoDecode]
 
 
 class NewsSettings(BaseSettings):
@@ -47,37 +51,49 @@ class NewsSettings(BaseSettings):
         default="redis://localhost:16379/0", validation_alias="HOT_THEMES_REDIS_URL"
     )
 
-    cluster_threshold: float = Field(default=0.35, validation_alias="NEWS_CLUSTER_THRESHOLD")
-    cluster_description_weight: float = Field(
-        default=0.4,
-        validation_alias="NEWS_CLUSTER_DESCRIPTION_WEIGHT",
+    # 클러스터 판정(transformers/clustering/online.py). 점수 Γ = Σ 서브벡터(title·body·all·entities)
+    # 코사인×text_weights + Σ 시간 피처(last·mean·first)×time_weights. 편입 조건은 Γ > threshold.
+    # 기본값은 텍스트 1×4 에 시간을 보조 신호(0.1×3)로 둔 추정치다 — 운영값은 .env 에 둔다.
+    cluster_threshold: float = Field(default=1.0, validation_alias="NEWS_CLUSTER_THRESHOLD")
+    # title, body, all, entities 순
+    cluster_text_weights: Weights = Field(
+        default=(1.0, 1.0, 1.0, 1.0), validation_alias="NEWS_CLUSTER_TEXT_WEIGHTS"
     )
-    # 클러스터 판정에 쓰는 본문 리드 길이(자). 제목이 주 신호이고, 본문 앞 이만큼을
-    # NEWS_CLUSTER_DESCRIPTION_WEIGHT 로 낮춰 더한다.
-    cluster_lead_chars: int = Field(default=200, validation_alias="NEWS_CLUSTER_LEAD_CHARS")
-
-    cluster_window_days: int = Field(default=7, validation_alias="NEWS_CLUSTER_WINDOW_DAYS")
-    # 클러스터 첫 기사보다 먼저 발행된 기사를 받아 주는 여유(일). 상대방 기업을 나중 런에서
-    # 검색하면 같은 사건의 조금 이른 기사가 뒤늦게 들어온다.
-    cluster_backward_days: int = Field(default=1, validation_alias="NEWS_CLUSTER_BACKWARD_DAYS")
-    # 전역 IDF 를 집계하는 범위(일). 이 기간에 수집된 후보 기사의 cluster_terms 만 센다.
+    # last, mean, first 순
+    cluster_time_weights: Weights = Field(
+        default=(0.1, 0.1, 0.1), validation_alias="NEWS_CLUSTER_TIME_WEIGHTS"
+    )
+    # 시간 피처 가우시안 폭(시간). 논문 σ=72h. 바꾸면 cluster_candidate_days 도 3σ 이상으로 맞춘다
+    cluster_time_sigma_hours: float = Field(
+        default=72.0, validation_alias="NEWS_CLUSTER_TIME_SIGMA_HOURS"
+    )
+    # 후보 클러스터 조회·활성 컷(일): last_published_at >= 기사 발행 − 이 값. 점수에는 영향이 없는
+    # 성능용 컷이다
+    cluster_candidate_days: int = Field(default=10, validation_alias="NEWS_CLUSTER_CANDIDATE_DAYS")
+    # 클러스터 수명(일): first_published_at >= 기사 발행 − 이 값 인 클러스터만 후보다. 같은 기업
+    # 기사가 며칠에 한 번씩 나오면 last 가 계속 밀려 클러스터가 몇 달을 사는 체인을 끊는다
+    cluster_max_span_days: int = Field(default=10, validation_alias="NEWS_CLUSTER_MAX_SPAN_DAYS")
+    # IDF 사전 코퍼스 기간(일). rebuild_idf 가 이 기간의 term_weights 있는 뉴스 전체를 집계한다
     cluster_idf_days: int = Field(default=90, validation_alias="NEWS_CLUSTER_IDF_DAYS")
-    # 후보 기사가 이 수에 이르면 대표 기사를 정한다(승격). 클러스터는 이 수까지만 후보를 받는다.
+    # 멤버 기사가 이 수에 이르면 대표 기사를 정한다(승격).
     cluster_promote_size: int = Field(default=3, validation_alias="NEWS_CLUSTER_PROMOTE_SIZE")
     # 승격을 다시 시도하는 범위(일). updated_at 이 이 안인 클러스터만 본다.
     cluster_promote_retry_days: int = Field(
         default=3, validation_alias="NEWS_CLUSTER_PROMOTE_RETRY_DAYS"
     )
-    # 대표 후보 본문의 글자 수 하한. 이보다 긴 본문이 하나라도 있으면
-    # 짧은 본문은 대표가 되지 않는다.
+    # 대표 후보 본문의 글자 수 하한. 이보다 긴 본문이 하나라도 있으면 짧은 본문은 대표가 되지
+    # 않는다.
     cluster_representative_min_chars: int = Field(
         default=200, validation_alias="NEWS_CLUSTER_REPRESENTATIVE_MIN_CHARS"
     )
-
     cluster_keyword_count: int = Field(default=6, validation_alias="NEWS_CLUSTER_KEYWORD_COUNT")
     # 클러스터 이름 길이 상한. 시스템 프롬프트에 주입되고 검증에도 같은 값을 쓴다.
     cluster_title_max_chars: int = Field(
         default=25, validation_alias="NEWS_CLUSTER_TITLE_MAX_CHARS"
+    )
+    # 제목 생성에 넣는 멤버 제목 수(발행 시각순 앞에서부터).
+    cluster_title_headlines: int = Field(
+        default=10, validation_alias="NEWS_CLUSTER_TITLE_HEADLINES"
     )
 
     # 이슈 타임라인 연결(jobs/link_issues.py). 아래 임계값은 dev 데이터로 고른 초기값이다.
@@ -120,9 +136,10 @@ class NewsSettings(BaseSettings):
     issue_same_event_score: float = Field(
         default=0.75, validation_alias="NEWS_ISSUE_SAME_EVENT_SCORE"
     )
-    # 코사인만으로 같은 사건이라고 보는 간격 상한(시간)이며, 클러스터 기간
-    # (NEWS_CLUSTER_WINDOW_DAYS, 7일)과 같다. 한 사건이 클러스터 둘로 나뉘는 일은 그 기간 안에서
-    # 일어나지만, 시리즈 지표의 다음 회차(7월 → 8월 건설지출)는 코사인이 높아도 몇 주 떨어져 있다.
+    # 코사인만으로 같은 사건이라고 보는 간격 상한(시간, 7일). 클러스터 수명
+    # (NEWS_CLUSTER_MAX_SPAN_DAYS, 10일) 안의 값이다. 한 사건이 클러스터 둘로 나뉘는 일은 그 기간
+    # 안에서 일어나지만, 시리즈 지표의 다음 회차(7월 → 8월 건설지출)는 코사인이 높아도 몇 주 떨어져
+    # 있다.
     # 상한이 없으면 기업 없는 연결은 하한(0.75)이 점수 기준과 같아서 전부 같은 사건으로 합쳐진다.
     issue_same_event_score_max_gap_hours: float = Field(
         default=168, validation_alias="NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS"
@@ -157,6 +174,27 @@ class NewsSettings(BaseSettings):
     news_llm_max_concurrency: int = Field(default=8, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
     # 관련성 필터가 한 번의 LLM 호출에 넣는 기사 수. 시스템 프롬프트 반복과 요청 수를 줄인다.
     news_llm_batch_size: int = Field(default=10, validation_alias="NEWS_LLM_BATCH_SIZE")
+
+    @field_validator("cluster_text_weights", "cluster_time_weights", mode="before")
+    @classmethod
+    def _split_weights(cls, value):
+        if isinstance(value, str):
+            return tuple(float(part) for part in value.split(",") if part.strip())
+        return value
+
+    @field_validator("cluster_text_weights")
+    @classmethod
+    def _four_text_weights(cls, value: tuple[float, ...]) -> tuple[float, ...]:
+        if len(value) != 4:
+            raise ValueError("NEWS_CLUSTER_TEXT_WEIGHTS 는 title,body,all,entities 4개여야 한다")
+        return value
+
+    @field_validator("cluster_time_weights")
+    @classmethod
+    def _three_time_weights(cls, value: tuple[float, ...]) -> tuple[float, ...]:
+        if len(value) != 3:
+            raise ValueError("NEWS_CLUSTER_TIME_WEIGHTS 는 last,mean,first 3개여야 한다")
+        return value
 
     @field_validator("anchor_host", mode="after")
     @classmethod
