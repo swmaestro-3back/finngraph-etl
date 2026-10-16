@@ -363,8 +363,10 @@ SELECT_UNCLUSTERED_NEWS_SQL = text(
     """
 )
 
+# 백필 DAG 가 하류를 깨울지 정하는 수. 벡터화 전 기사도 본문만 있으면 곧 판정되므로 센다 — 백필 수집
+# 직후에는 아무 기사도 벡터화되지 않았다. 본문 없는 옛 행은 벡터화·판정 모두 하지 않으므로 뺀다.
 COUNT_UNCLUSTERED_NEWS_SQL = text(
-    "SELECT COUNT(*) FROM news WHERE cluster_id IS NULL AND term_weights IS NOT NULL;"
+    "SELECT COUNT(*) FROM news WHERE cluster_id IS NULL AND text IS NOT NULL AND BTRIM(text) <> '';"
 )
 
 # 클러스터별 멤버 기사(발행 시각순). 대표 선정과 제목 생성의 입력이다. 본문은 길이만 읽는다.
@@ -443,7 +445,7 @@ def fetch_unclustered_news() -> list[dict[str, Any]]:
 
 
 def count_unclustered_news() -> int:
-    """클러스터 판정 대상 기사 수. 백필 DAG 가 하류를 깨울지 정할 때 쓴다."""
+    """클러스터가 없고 본문이 있는 기사 수(벡터화 전 포함). 백필 DAG 의 하류 발행 판단에 쓴다."""
 
     with session_scope() as session:
         return int(session.execute(COUNT_UNCLUSTERED_NEWS_SQL).scalar_one())

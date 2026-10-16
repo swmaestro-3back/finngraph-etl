@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.repositories.postgres.news import (
+    count_unclustered_news,
     fetch_cluster_member_articles,
     fetch_unclustered_news,
     fetch_unvectorized_news,
@@ -162,15 +163,19 @@ def test_unclustered_news_fall_back_to_collected_at():
     """Review Focus 2: 발행 시각이 없으면 수집 시각(지금)으로 보고, 벡터화 전 기사는 대상이 아니다."""
     marker = uuid.uuid4().hex
     with session_scope() as session:
+        before = count_unclustered_news()
         dated = _insert_news(session, marker, 0, None)
         undated = _insert_news(session, marker, 1, None, published_at=None)
         unvectorized = _insert_news(session, marker, 2, None, weights=None)
+        _insert_news(session, marker, 3, None, weights=None, body=None)  # 옛 구조, 판정 안 함
 
     try:
         rows = {row["_news_id"]: row for row in fetch_unclustered_news()}
         order = list(rows)
 
         assert dated in rows and undated in rows and unvectorized not in rows
+        # 백필 DAG 의 발행 판단: 벡터화 전이라도 본문이 있으면 곧 판정될 기사라 센다. 본문 없는 행은 안 센다
+        assert count_unclustered_news() == before + 3
         assert rows[dated] == {
             "_news_id": dated,
             "title": f"승격 {marker} 0",

@@ -210,17 +210,20 @@ def test_joining_a_seed_updates_centroids_and_time_bounds(rows):
 
 
 def test_record_assignments_isolates_failures(rows):
-    """Review Focus 4: 한 클러스터의 기록 실패가 다른 클러스터의 커밋을 막지 않는다."""
+    """Review Focus 4: 한 클러스터의 기록 실패가 다른 클러스터의 커밋을 막지 않는다.
+
+    실패는 트랜잭션 안에서, 클러스터 INSERT 와 첫 멤버 UPDATE 뒤에 일어나야 한다 — 둘째 멤버의 피처가
+    JSON 으로 직렬화되지 않아 터진다. 그래야 INSERT 까지 롤백되는지가 검증된다.
+    """
     token, ids = rows
     items = _items(ids)
-    items[3] = {}  # _news_id 가 없는 항목 → 그 클러스터만 실패한다
 
-    def assignment(members):
+    def assignment(members, features):
         return ClusterAssignment(
             seed=None,
             members=members,
-            scores=[None] * len(members),
-            features=[None] * len(members),
+            scores=[None] + [1.2] * (len(members) - 1),
+            features=features,
             centroids=_centroids(token, 2.0),
             article_count=len(members),
             first_published_at=PUBLISHED,
@@ -228,10 +231,15 @@ def test_record_assignments_isolates_failures(rows):
             last_published_at=PUBLISHED,
         )
 
-    result = record_assignments([assignment([3]), assignment([2])], items, 6)
+    broken = assignment([2, 3], [None, {"x": object()}])  # object() 는 json.dumps 가 못 쓴다
+    healthy = assignment([1], [None])
+
+    result = record_assignments([broken, healthy], items, 6)
 
     assert result == {"created": 1, "updated": 0, "failed": 1}
-    assert _news_row(ids[2])["cluster_id"] is not None
+    assert _news_row(ids[1])["cluster_id"] is not None
+    # 첫 멤버(ids[2])의 UPDATE 는 이미 실행됐지만 같은 트랜잭션이라 함께 롤백된다
+    assert _news_row(ids[2])["cluster_id"] is None
     assert _news_row(ids[3])["cluster_id"] is None  # 다음 런에 다시 판정된다
     with session_scope() as session:
         count = session.execute(

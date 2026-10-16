@@ -83,7 +83,8 @@ class FakeStore:
         ]
 
     def count_unclustered_news(self):
-        return len(self.fetch_unclustered_news())
+        # SQL 과 같은 조건: 클러스터가 없고 본문이 있는 기사(벡터화 전이라도 곧 판정된다)
+        return sum(1 for n in self.news.values() if n["cluster_id"] is None and n["text"].strip())
 
     def fetch_cluster_member_articles(self, cluster_ids):
         return {
@@ -249,7 +250,8 @@ def test_rebuild_idf_uses_idf_days(store, monkeypatch):
 def test_assign_skips_articles_that_are_not_vectorized(store):
     store.add()
     assert assign_job.run() == {"articles": 0, "created": 0, "updated": 0, "failed": 0}
-    assert assign_job.count_unclustered() == 0
+    # 백필 DAG 는 벡터화 전에 이 수로 하류를 깨울지 정하므로, 벡터화 전 기사도 센다
+    assert assign_job.count_unclustered() == 1
 
 
 def test_assign_creates_and_joins_clusters_across_runs(store):
