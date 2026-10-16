@@ -1,13 +1,14 @@
-"""백필 뉴스 클러스터 판정 → 대표 선정 → Event 생성·요약 → 이슈 타임라인 연결.
+"""백필 뉴스 벡터화 → IDF 재구축 → 클러스터 판정 → 대표 선정 → Event 생성·요약 → 이슈 타임라인 연결.
 
 `news_backfill_krx100` 이 모든 청크의 수집을 끝낸 뒤 한 번 발행하는 `etl://news/backfill-articles`
 Asset 으로 깨어난다. task 구성은 `news_cluster_articles` 와 같고, 다른 점은 둘이다.
 
-- **한 번에 판정한다.** 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터의 시간
-  창(기준점 1일 전 ~ 7일 뒤)보다 이르게 도착해 같은 사건에 클러스터가 하나 더 생긴다. 수집이 다
-  끝난 뒤 cluster_id 가 없는 기사 전량을 발행 시각순으로 한 번에 본다.
-- **IDF 에 배치 문서 수를 더한다.** 초기 백필에는 저장된 IDF 표가 비어 있어, 그대로 쓰면 기업명
-  같은 흔한 토큰이 눌리지 않는다(`assign(include_batch_idf=True)`).
+- **한 번에 판정한다.** 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터보다 이르게
+  도착해 같은 사건에 클러스터가 하나 더 생긴다. 수집이 다 끝난 뒤 cluster_id 가 없는 기사 전량을
+  발행 시각순으로 한 번에 본다.
+- **판정 앞에 IDF 사전을 다시 만든다(`rebuild_idf`).** 초기 백필에는 표가 비어 있어, 그대로 쓰면
+  모든 토큰의 IDF 가 같아져 기업명 같은 흔한 토큰이 눌리지 않는다. 벡터화 뒤 한 번 재구축하면 백필
+  배치 전체가 코퍼스에 든다.
 
 **백필 중에는 `news_cluster_articles` 를 꺼 둔다.** 두 DAG 모두 출처를 가리지 않고 cluster_id 가
 없는 기사 전량을 읽는다. 켜 두면 정시 수집이 깨운 `news_cluster_articles` 가 수집 중인 백필 기사를
@@ -52,16 +53,28 @@ if dag and task:
     )
     def news_backfill_cluster_articles():
         @task(retries=1, retry_delay=timedelta(minutes=5))
-        def assign_clusters() -> dict[str, int]:
-            from pipelines.news.jobs.cluster_articles import assign
+        def vectorize_articles() -> dict[str, int]:
+            from pipelines.news.jobs.vectorize_articles import run
 
-            return assign(include_batch_idf=True)
+            return run()
+
+        @task(retries=1, retry_delay=timedelta(minutes=10))
+        def rebuild_idf() -> dict[str, int]:
+            from pipelines.news.jobs.rebuild_idf import run
+
+            return run()
+
+        @task(retries=1, retry_delay=timedelta(minutes=5))
+        def assign_clusters() -> dict[str, int]:
+            from pipelines.news.jobs.assign_clusters import run
+
+            return run()
 
         @task(retries=1, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
         def promote_clusters() -> dict[str, int]:
-            from pipelines.news.jobs.cluster_articles import promote
+            from pipelines.news.jobs.promote_clusters import run
 
-            result = promote()
+            result = run()
             if result["pending_triples"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "삼중항이 할 일이 없다"다.
                 raise AirflowSkipException("삼중항 미처리 대표 0건 — 삼중항 DAG 를 깨우지 않는다")
@@ -99,7 +112,7 @@ if dag and task:
 
         promoted = promote_clusters()
         summarized = summarize_articles()
-        assign_clusters() >> promoted
+        vectorize_articles() >> rebuild_idf() >> assign_clusters() >> promoted
         promoted >> [generate_events(), summarized]
         summarized >> [link_issues(), finish()]
 
