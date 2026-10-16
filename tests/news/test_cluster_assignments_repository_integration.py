@@ -1,7 +1,6 @@
-"""news_clusters repository 통합 테스트 — 시드 조회, 온라인 판정 기록, df 집계.
+"""news_clusters repository 통합 테스트 — 시드 조회, 판정 기록, 실패 격리.
 
-실제 Postgres 에 news 행을 만들고 repository 함수를 직접 호출한다. 마이그레이션이 적용된 DB 가
-필요하다.
+실제 Postgres(V14 적용)에 news 행을 만들고 repository 함수를 직접 호출한다.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from sqlalchemy import text
 from pipelines.common.clients.postgres import session_scope
 from pipelines.news.repositories.postgres.news_clusters import (
     fetch_cluster_seeds,
-    fetch_idf_table,
     record_assignments,
 )
 from pipelines.news.transformers.clustering.online import ClusterAssignment, ClusterSeed
@@ -24,11 +22,14 @@ from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 pytestmark = pytest.mark.integration
 
 PUBLISHED = datetime(2026, 9, 2, 9, 0, tzinfo=SEOUL_TIMEZONE)
+FEATURES = {
+    "title": 0.9, "body": 0.5, "all": 0.7, "entities": 1.0, "last": 0.99, "mean": 0.98, "first": 0.97,
+}  # fmt: skip
 
 
 @pytest.fixture
 def rows():
-    """본문 없는 뉴스 4건과 테스트 전용 토큰. 테스트가 만든 클러스터까지 함께 지운다."""
+    """뉴스 4건과 테스트 전용 토큰. 테스트가 만든 클러스터까지 함께 지운다."""
     marker = uuid.uuid4().hex
     with session_scope() as session:
         ids = [
@@ -36,8 +37,8 @@ def rows():
                 session.execute(
                     text(
                         """
-                        INSERT INTO news (title, link, published_at)
-                        VALUES (:title, :link, :published_at)
+                        INSERT INTO news (title, text, link, published_at)
+                        VALUES (:title, '본문', :link, :published_at)
                         RETURNING id;
                         """
                     ),
@@ -72,220 +73,195 @@ def _items(ids: list[int]) -> list[dict]:
     return [{"_news_id": news_id} for news_id in ids]
 
 
-def _cluster_row(cluster_id: int) -> dict:
-    with session_scope() as session:
-        row = session.execute(
-            text(
-                """
-                SELECT representative_news_id, keywords, term_weights, original_size,
-                       member_count, first_published_at, last_published_at
-                  FROM news_clusters
-                 WHERE id = :id;
-                """
-            ),
-            {"id": cluster_id},
-        ).one()
-    return dict(row._mapping)
+def _centroids(token: str, weight: float) -> dict:
+    return {"title": {token: weight}, "body": {"공급": 1.0}, "entities": {"7": 1.0}}
 
 
-def _news_columns(news_id: int) -> tuple[int | None, dict | None]:
-    with session_scope() as session:
-        row = session.execute(
-            text("SELECT cluster_id, cluster_terms FROM news WHERE id = :id"), {"id": news_id}
-        ).one()
-    return row[0], row[1]
-
-
-def _new_cluster(token: str, ids: list[int]) -> int:
-    """기사 0·1 을 후보로, 2 를 count 만 올리는 기사로 가진 새 클러스터를 기록하고 id 를 돌려준다."""
-    documents = [[(token, 2.0), ("공급", 1.0)], [(token, 2.0)], [(token, 2.0)], []]
+def _new_cluster(token: str, ids: list[int], members: list[int]) -> int:
+    """members(items 인덱스)로 새 클러스터를 기록하고 cluster_id 를 돌려준다."""
     assignment = ClusterAssignment(
         seed=None,
-        candidates=[0, 1],
-        followers=[2],
-        term_weights={token: 4.0, "공급": 1.0},
+        members=members,
+        scores=[None] + [1.8] * (len(members) - 1),
+        features=[None] + [FEATURES] * (len(members) - 1),
+        centroids=_centroids(token, 2.0 * len(members)),
+        article_count=len(members),
         first_published_at=PUBLISHED,
-        last_published_at=PUBLISHED + timedelta(hours=2),
+        mean_published_at=PUBLISHED + timedelta(minutes=30),
+        last_published_at=PUBLISHED + timedelta(hours=len(members) - 1),
     )
-    result = record_assignments([assignment], _items(ids), documents, keyword_count=6)
-    assert result == {"created": 1, "updated": 0, "failed": 0}
-    return _news_columns(ids[0])[0]
+    assert record_assignments([assignment], _items(ids), 6) == {
+        "created": 1,
+        "updated": 0,
+        "failed": 0,
+    }
+    with session_scope() as session:
+        return int(
+            session.execute(
+                text("SELECT cluster_id FROM news WHERE id = :id"), {"id": ids[members[0]]}
+            ).scalar_one()
+        )
 
 
-def _seed_of(cluster_id: int) -> ClusterSeed:
-    [seed] = [
-        seed
-        for seed in fetch_cluster_seeds(PUBLISHED - timedelta(days=1), PUBLISHED)
-        if seed.cluster_id == cluster_id
-    ]
-    return seed
+def _cluster_row(cluster_id: int) -> dict:
+    with session_scope() as session:
+        return dict(
+            session.execute(
+                text(
+                    """
+                    SELECT representative_news_id, keywords, centroids, member_count,
+                           first_published_at, mean_published_at, last_published_at
+                      FROM news_clusters WHERE id = :id;
+                    """
+                ),
+                {"id": cluster_id},
+            )
+            .mappings()
+            .one()
+        )
 
 
-def test_new_cluster_records_candidates_followers_and_is_read_back_as_seed(rows):
+def _news_row(news_id: int) -> dict:
+    with session_scope() as session:
+        return dict(
+            session.execute(
+                text("SELECT cluster_id, cluster_score, cluster_features FROM news WHERE id = :id"),
+                {"id": news_id},
+            )
+            .mappings()
+            .one()
+        )
+
+
+def test_new_cluster_is_recorded_with_centroids_scores_and_features(rows):
     token, ids = rows
 
-    cluster_id = _new_cluster(token, ids)
-
-    # 후보는 토큰 가중치까지, count 만 올리는 기사는 cluster_id 만 받는다
-    assert _news_columns(ids[0]) == (cluster_id, {token: 2.0, "공급": 1.0})
-    assert _news_columns(ids[1]) == (cluster_id, {token: 2.0})
-    assert _news_columns(ids[2]) == (cluster_id, None)
-    assert _news_columns(ids[3]) == (None, None)
+    cluster_id = _new_cluster(token, ids, [0, 1])
 
     row = _cluster_row(cluster_id)
     assert row["representative_news_id"] is None
-    assert (row["member_count"], row["original_size"]) == (2, 3)
-    assert row["term_weights"] == {token: 4.0, "공급": 1.0}
-    assert row["keywords"] == [token, "공급"]
-    assert row["first_published_at"] == PUBLISHED
-    assert row["last_published_at"] == PUBLISHED + timedelta(hours=2)
+    assert row["member_count"] == 2
+    assert row["centroids"] == _centroids(token, 4.0)
+    assert token in row["keywords"]
+    assert (row["first_published_at"], row["last_published_at"]) == (
+        PUBLISHED,
+        PUBLISHED + timedelta(hours=1),
+    )
+    assert row["mean_published_at"] == PUBLISHED + timedelta(minutes=30)
+    first, second = _news_row(ids[0]), _news_row(ids[1])
+    assert first == {"cluster_id": cluster_id, "cluster_score": None, "cluster_features": None}
+    assert second["cluster_id"] == cluster_id
+    assert float(second["cluster_score"]) == pytest.approx(1.8)
+    assert second["cluster_features"] == FEATURES
 
-    seed = _seed_of(cluster_id)
-    assert seed.promoted is False
-    assert seed.member_count == 2
-    assert seed.term_weights == {token: 4.0, "공급": 1.0}
-    assert seed.first_published_at == PUBLISHED
 
-
-def test_candidate_joining_seed_updates_profile_and_counters_but_not_anchor(rows):
+def test_seeds_are_filtered_by_last_and_first_published_at(rows):
     token, ids = rows
-    cluster_id = _new_cluster(token, ids)
-    seed = _seed_of(cluster_id)
+    cluster_id = _new_cluster(token, ids, [0, 1])
 
-    earlier = PUBLISHED - timedelta(hours=5)
+    seeds = {s.cluster_id: s for s in fetch_cluster_seeds(PUBLISHED, PUBLISHED - timedelta(days=1))}
+    assert seeds[cluster_id].article_count == 2
+    assert seeds[cluster_id].centroids == _centroids(token, 4.0)
+    assert seeds[cluster_id].mean_published_at == PUBLISHED + timedelta(minutes=30)
+
+    # last_published_at(=PUBLISHED+1h) 이 since 보다 이르면 후보가 아니다
+    later = PUBLISHED + timedelta(hours=2)
+    assert cluster_id not in {s.cluster_id for s in fetch_cluster_seeds(later, PUBLISHED)}
+    # first_published_at(=PUBLISHED) 이 first_since 보다 이르면(수명이 다하면) 후보가 아니다
+    assert cluster_id not in {
+        s.cluster_id for s in fetch_cluster_seeds(PUBLISHED, PUBLISHED + timedelta(minutes=1))
+    }
+
+
+def test_joining_a_seed_updates_centroids_and_time_bounds(rows):
+    token, ids = rows
+    cluster_id = _new_cluster(token, ids, [0, 1])
+    seed = ClusterSeed(
+        cluster_id=cluster_id,
+        centroids=_centroids(token, 4.0),
+        article_count=2,
+        first_published_at=PUBLISHED,
+        mean_published_at=PUBLISHED + timedelta(minutes=30),
+        last_published_at=PUBLISHED + timedelta(hours=1),
+    )
     assignment = ClusterAssignment(
         seed=seed,
-        candidates=[3],
-        followers=[],
-        term_weights={token: 6.0, "공급": 1.0},
-        first_published_at=seed.first_published_at,
-        last_published_at=earlier,
+        members=[2],
+        scores=[1.6],
+        features=[FEATURES],
+        centroids=_centroids(token, 6.0),
+        article_count=3,
+        first_published_at=PUBLISHED,
+        mean_published_at=PUBLISHED + timedelta(hours=1),
+        last_published_at=PUBLISHED + timedelta(hours=2),
     )
-    documents = [[], [], [], [(token, 2.0)]]
 
-    result = record_assignments([assignment], _items(ids), documents, keyword_count=6)
-
-    assert result == {"created": 0, "updated": 1, "failed": 0}
+    assert record_assignments([assignment], _items(ids), 6) == {
+        "created": 0,
+        "updated": 1,
+        "failed": 0,
+    }
     row = _cluster_row(cluster_id)
-    assert (row["member_count"], row["original_size"]) == (3, 4)
-    assert row["term_weights"] == {token: 6.0, "공급": 1.0}
-    # 기준점은 옮겨지지 않고, 마지막 발행 시각은 더 늦은 값만 받는다
-    assert row["first_published_at"] == PUBLISHED
+    assert row["member_count"] == 3
+    assert row["centroids"] == _centroids(token, 6.0)
     assert row["last_published_at"] == PUBLISHED + timedelta(hours=2)
-    assert _news_columns(ids[3]) == (cluster_id, {token: 2.0})
+    assert row["mean_published_at"] == PUBLISHED + timedelta(hours=1)
+    assert _news_row(ids[2])["cluster_id"] == cluster_id
 
 
-def test_follower_only_bumps_original_size(rows):
+def test_record_assignments_isolates_failures(rows):
+    """Review Focus 4: 한 클러스터의 기록 실패가 다른 클러스터의 커밋을 막지 않는다."""
     token, ids = rows
-    cluster_id = _new_cluster(token, ids)
-    seed = _seed_of(cluster_id)
+    items = _items(ids)
+    items[3] = {}  # _news_id 가 없는 항목 → 그 클러스터만 실패한다
 
-    later = PUBLISHED + timedelta(days=1)
-    assignment = ClusterAssignment(
-        seed=seed,
-        candidates=[],
-        followers=[3],
-        term_weights=seed.term_weights,
-        first_published_at=seed.first_published_at,
-        last_published_at=later,
-    )
-
-    result = record_assignments([assignment], _items(ids), [[], [], [], []], keyword_count=6)
-
-    assert result == {"created": 0, "updated": 1, "failed": 0}
-    row = _cluster_row(cluster_id)
-    assert (row["member_count"], row["original_size"]) == (2, 4)
-    assert row["term_weights"] == {token: 4.0, "공급": 1.0}
-    assert row["last_published_at"] == later
-    assert _news_columns(ids[3]) == (cluster_id, None)
-
-
-def test_seeds_report_promoted_and_respect_window(rows):
-    token, ids = rows
-    cluster_id = _new_cluster(token, ids)
-
-    with session_scope() as session:
-        session.execute(
-            text("UPDATE news_clusters SET representative_news_id = :n WHERE id = :c"),
-            {"n": ids[0], "c": cluster_id},
+    def assignment(members):
+        return ClusterAssignment(
+            seed=None,
+            members=members,
+            scores=[None] * len(members),
+            features=[None] * len(members),
+            centroids=_centroids(token, 2.0),
+            article_count=len(members),
+            first_published_at=PUBLISHED,
+            mean_published_at=PUBLISHED,
+            last_published_at=PUBLISHED,
         )
 
-    assert _seed_of(cluster_id).promoted is True
-    # 시작이 창보다 이르거나 늦으면 빠진다
-    before = fetch_cluster_seeds(PUBLISHED + timedelta(seconds=1), PUBLISHED + timedelta(days=1))
-    after = fetch_cluster_seeds(PUBLISHED - timedelta(days=1), PUBLISHED - timedelta(seconds=1))
-    assert all(seed.cluster_id != cluster_id for seed in before + after)
-
-
-def test_idf_table_counts_only_candidate_rows_within_range(rows):
-    token, ids = rows
-    _new_cluster(token, ids)  # 후보 2건에만 cluster_terms 가 있다
-
-    since = datetime.now(SEOUL_TIMEZONE) - timedelta(hours=1)
-    table = fetch_idf_table(since)
-
-    assert table.document_frequency[token] == 2
-    assert table.document_count >= 2
-
-    # 집계 범위 밖으로 밀어내면 세지 않는다
-    with session_scope() as session:
-        session.execute(
-            text("UPDATE news SET collected_at = :old WHERE id = ANY(:ids)"),
-            {"old": datetime(2020, 1, 1, tzinfo=SEOUL_TIMEZONE), "ids": ids},
-        )
-
-    assert token not in fetch_idf_table(since).document_frequency
-
-
-def test_failed_cluster_is_counted_and_the_rest_are_recorded(rows):
-    token, ids = rows
-    broken = ClusterAssignment(
-        seed=None,
-        candidates=[0],
-        followers=[],
-        term_weights={token: 2.0},
-        first_published_at=PUBLISHED,
-        last_published_at=PUBLISHED,
-    )
-    good = ClusterAssignment(
-        seed=None,
-        candidates=[1],
-        followers=[],
-        term_weights={token: 2.0},
-        first_published_at=PUBLISHED,
-        last_published_at=PUBLISHED,
-    )
-    # 기사 0 은 저장에 실패해 _news_id 가 없다
-    items = [{}, {"_news_id": ids[1]}]
-
-    result = record_assignments([broken, good], items, [[(token, 2.0)]] * 2, keyword_count=6)
+    result = record_assignments([assignment([3]), assignment([2])], items, 6)
 
     assert result == {"created": 1, "updated": 0, "failed": 1}
-    assert _news_columns(ids[0]) == (None, None)
-    assert _news_columns(ids[1])[0] is not None
-
-
-def test_failure_midway_rolls_back_the_whole_cluster(rows):
-    token, ids = rows
-    assignment = ClusterAssignment(
-        seed=None,
-        candidates=[0, 1],
-        followers=[],
-        term_weights={token: 4.0},
-        first_published_at=PUBLISHED,
-        last_published_at=PUBLISHED,
-    )
-    # 클러스터 INSERT 와 기사 0 UPDATE 가 성공한 뒤, 기사 1 의 NaN 이 jsonb 변환에서 실패한다
-    documents = [[(token, 2.0)], [(token, float("nan"))], [], []]
-
-    result = record_assignments([assignment], _items(ids), documents, keyword_count=6)
-
-    assert result == {"created": 0, "updated": 0, "failed": 1}
-    assert _news_columns(ids[0]) == (None, None)
-    assert _news_columns(ids[1]) == (None, None)
+    assert _news_row(ids[2])["cluster_id"] is not None
+    assert _news_row(ids[3])["cluster_id"] is None  # 다음 런에 다시 판정된다
     with session_scope() as session:
-        survivors = session.execute(
-            text("SELECT COUNT(*) FROM news_clusters WHERE jsonb_exists(term_weights, :token)"),
-            {"token": token},
+        count = session.execute(
+            text("SELECT COUNT(*) FROM news_clusters WHERE jsonb_exists(centroids -> 'title', :t)"),
+            {"t": token},
         ).scalar_one()
-    assert survivors == 0
+    assert count == 1  # 실패한 클러스터는 INSERT 도 롤백된다
+
+
+def test_seed_from_legacy_row_has_empty_centroid_fields(rows):
+    """Review Focus 5: V14 직후 옛 행(centroids '{}')도 필드 세 개가 빈 dict 인 시드가 된다."""
+    _, ids = rows
+    with session_scope() as session:
+        cluster_id = int(
+            session.execute(
+                text(
+                    """
+                    INSERT INTO news_clusters (member_count, first_published_at, mean_published_at,
+                                               last_published_at)
+                    VALUES (3, :p, :p, :p) RETURNING id;
+                    """
+                ),
+                {"p": PUBLISHED},
+            ).scalar_one()
+        )
+        session.execute(
+            text("UPDATE news SET cluster_id = :c WHERE id = :n"), {"c": cluster_id, "n": ids[0]}
+        )
+
+    seeds = {s.cluster_id: s for s in fetch_cluster_seeds(PUBLISHED, PUBLISHED)}
+
+    assert seeds[cluster_id].centroids == {"title": {}, "body": {}, "entities": {}}
+    assert seeds[cluster_id].article_count == 3

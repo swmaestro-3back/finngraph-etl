@@ -201,10 +201,10 @@ def test_only_cluster_representative_is_summarize_target(link):
                 text(
                     """
                     INSERT INTO news_clusters (
-                        representative_news_id, original_size, member_count,
-                        first_published_at, last_published_at
+                        representative_news_id, member_count,
+                        first_published_at, mean_published_at, last_published_at
                     )
-                    VALUES (:representative, 2, 2, now(), now())
+                    VALUES (:representative, 2, now(), now(), now())
                     RETURNING id;
                     """
                 ),

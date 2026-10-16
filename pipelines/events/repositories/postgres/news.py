@@ -8,16 +8,14 @@ from sqlalchemy import text
 
 from pipelines.common.clients.postgres import session_scope
 
-# 클러스터 후보 기사(cluster_terms 가 있는 행) 중 min_articles 건 이상에 연결된 기업.
-# news_companies 는 수집 잡이 제목·본문 판정을 통과한 기업만 담는다. 승격 후 기사의 연결은 세지
-# 않는다. 많은 후보에 나온 기업이 먼저다.
+# 클러스터 멤버 기사 중 min_articles 건 이상에 연결된 기업. news_companies 는 수집 잡이 제목·본문
+# 판정을 통과한 기업만 담는다. 많은 기사에 나온 기업이 먼저다.
 SELECT_CLUSTER_COMPANY_IDS_SQL = text(
     """
     SELECT n.cluster_id, nco.company_id
       FROM news n
       JOIN news_companies nco ON nco.news_id = n.id
      WHERE n.cluster_id = ANY(:cluster_ids)
-       AND n.cluster_terms IS NOT NULL
      GROUP BY n.cluster_id, nco.company_id
     HAVING COUNT(DISTINCT n.id) >= :min_articles
      ORDER BY n.cluster_id, COUNT(DISTINCT n.id) DESC, nco.company_id;
