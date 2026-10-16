@@ -601,8 +601,8 @@ def count_link_targets(since: datetime, summary_deadline: datetime) -> dict[str,
 
 
 def fetch_cluster_members(cluster_ids: list[int]) -> dict[int, list[ClusterMember]]:
-    """클러스터별 멤버 기사의 제목, 연결 기업, 발행 시각(없으면 수집 시각)을 후보 기사 먼저, 그
-    안에서 발행 시각순으로 읽는다. 멤버가 없는 클러스터는 결과에 키가 없다."""
+    """클러스터별 멤버 기사의 제목, 연결 기업, 발행 시각(없으면 수집 시각)을 발행 시각순으로 읽는다.
+    멤버가 없는 클러스터는 결과에 키가 없다."""
 
     if not cluster_ids:
         return {}

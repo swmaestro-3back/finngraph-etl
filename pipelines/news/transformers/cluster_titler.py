@@ -1,7 +1,8 @@
-"""클러스터 이름 생성 — 후보 기사 제목들로 사건 이름을 짓는다.
+"""클러스터 이름 생성 — 멤버 기사 제목들로 사건 이름을 짓는다.
 
-승격된(대표 기사가 정해진) 클러스터에만 부른다. 입력은 후보 기사 전부의 제목이고 본문은 넣지
-않는다 — 주가 반응형 제목들에서 공통된 사건 하나를 골라 라벨로 다듬는 역할이다. 길이 상한
+승격된(대표 기사가 정해진) 클러스터에만 부른다. 입력은 멤버 기사 제목(발행 시각순 앞
+NEWS_CLUSTER_TITLE_HEADLINES 건)이고 본문은 넣지 않는다 — 주가 반응형 제목들에서 공통된 사건
+하나를 골라 라벨로 다듬는 역할이다. 길이 상한
 (NEWS_CLUSTER_TITLE_MAX_CHARS)은 시스템 프롬프트에 주입되고, 그래도 넘치면 같은 입력에 축약
 지시를 붙여 한 번 더 요청한다(온도 0 이라 그냥 재시도하면 같은 답이 나온다). 실패한 클러스터는
 title 이 NULL 로 남아 다음 런에 다시 시도된다. Bedrock 은 부르지 않고 titler 를 갈아끼울 수 있어
@@ -37,7 +38,7 @@ Titler = Callable[[str], Awaitable[ClusterTitle]]
 
 @dataclass(frozen=True)
 class Headline:
-    """제목 생성 입력 한 줄 — 후보 기사의 제목과 발행 시각."""
+    """제목 생성 입력 한 줄 — 멤버 기사의 제목과 발행 시각."""
 
     title: str
     published_at: datetime | None
@@ -48,7 +49,7 @@ def _collapse(text: str) -> str:
 
 
 def build_title_input(headlines: list[Headline]) -> str:
-    """후보 기사마다 프롬프트 USER 줄(`[기사 N] 날짜 | 제목`)을 줄바꿈으로 잇는다.
+    """멤버 기사마다 프롬프트 USER 줄(`[기사 N] 날짜 | 제목`)을 줄바꿈으로 잇는다.
 
     빈 제목은 건너뛴다. 전부 비면 빈 문자열이다.
     """
@@ -176,7 +177,7 @@ def title_clusters(
     max_concurrency: int = 4,
     max_chars: int = 25,
 ) -> dict[int, str]:
-    """클러스터별 사건 제목. 입력은 후보 기사 제목 전부이고 본문은 넣지 않는다.
+    """클러스터별 사건 제목. 입력은 멤버 기사 제목(호출자가 고른 앞 N 건)이고 본문은 넣지 않는다.
 
     실패했거나 제목이 하나도 없는 클러스터는 결과에 없다. titler 를 안 주면 Bedrock 싱글톤이다.
     """

@@ -23,13 +23,13 @@ news_collect_articles ──► etl://news/articles ──► news_cluster_artic
 
 task 하나(`generate_events`, `jobs/generate_events.py`)가 돕니다. LLM 을 부르지 않습니다.
 
-1. **후보** — `news_clusters` 에서 대표와 제목이 있고 후보가 `NEWS_CLUSTER_PROMOTE_SIZE` 건 이상이며
+1. **후보** — `news_clusters` 에서 대표와 제목이 있고 멤버가 `NEWS_CLUSTER_PROMOTE_SIZE` 건 이상이며
    최근 `NEWS_EVENT_SCAN_DAYS` 안에 갱신된 클러스터를 읽고, Neo4j 에 `Event {cluster_id}` 가 있는지로
    나눕니다(`scan.py` 의 `scan_events`). 노드가 있는 클러스터는 `last_published_at` 만 갱신하고(아래),
    없는 클러스터가 2·3 단계로 갑니다.
-2. **당사자** — 클러스터 후보 기사 중 `NEWS_EVENT_COMPANY_MIN_ARTICLES`(기본 2)건 이상의
-   `news_companies` 에 든 기업입니다. 사건의 당사자는 후보 대부분에 나오고 지나가는 언급은 한두 건에만
-   나오므로, 한 기사의 오판정이 결과를 바꾸지 못합니다. 승격 후 기사의 연결은 세지 않습니다. 당사자가
+2. **당사자** — 클러스터 멤버 기사 중 `NEWS_EVENT_COMPANY_MIN_ARTICLES`(기본 2)건 이상의
+   `news_companies` 에 든 기업입니다. 사건의 당사자는 멤버 대부분에 나오고 지나가는 언급은 한두 건에만
+   나오므로, 한 기사의 오판정이 결과를 바꾸지 못합니다. 승격 뒤에 붙은 기사도 셉니다. 당사자가
    0개면 노드를 만들지 않고(`skipped_no_companies`) 다음 런에 다시 봅니다.
 3. **쓰기** — `Event` 노드를 만들고 `Company.company_id`(Postgres `companies.id` 미러)로 `is_listed` 인
    노드를 찾아 `HAS_EVENT` 로 잇습니다. 클러스터 하나가 실패 단위이고, 실패한 클러스터는 노드가 없으니
