@@ -1,8 +1,4 @@
-"""온라인 클러스터 판정(online.py) 단위 테스트 (DB/외부 인프라 불필요).
-
-문서는 손으로 만든 (토큰, 가중치) 목록이다. IdfTable() 은 모든 토큰의 IDF 가 1 이라 유사도를
-손으로 따져 볼 수 있다.
-"""
+"""온라인 클러스터 판정(online.py) 단위 테스트. idf_tables={} 는 모든 토큰의 IDF 가 1 이다."""
 
 from __future__ import annotations
 
@@ -10,65 +6,86 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from pipelines.news.transformers.clustering.features import TEXT_FEATURES, TIME_FEATURES
 from pipelines.news.transformers.clustering.online import (
     ClusterSeed,
+    add_document,
     assign_online,
-    profile_vector,
+    centroid_vectors,
+    empty_centroids,
     sum_terms,
     top_keywords,
 )
-from pipelines.news.transformers.clustering.vectorize import IdfTable
 from pipelines.news.utils.date_utils import SEOUL_TIMEZONE
 
-IDF = IdfTable()
-
-SUPPLY = [("엘앤에프", 3.0), ("양극재", 1.0), ("공급", 1.0)]
-EARNINGS = [("삼성전자", 3.0), ("실적", 1.0)]
+IDF: dict = {}
+SUPPLY = {
+    "title": {"엘앤에프": 3.0, "양극재": 1.0, "공급": 1.0},
+    "body": {"양극재": 1.0, "계약": 1.0},
+    "entities": {"1": 1.0},
+}
+EARNINGS = {"title": {"삼성전자": 3.0, "실적": 1.0}, "body": {"실적": 1.0}, "entities": {"2": 1.0}}
+EMPTY = {"title": {}, "body": {}, "entities": {}}
+# 기본 설정값과 같다: 텍스트 1×4, 시간 0.1×3, σ=72h, τ=1.0, 후보 10일, 수명 10일
+OPTIONS = {
+    "text_weights": (1.0, 1.0, 1.0, 1.0),
+    "time_weights": (0.1, 0.1, 0.1),
+    "sigma_hours": 72.0,
+    "threshold": 1.0,
+    "candidate_days": 10,
+    "max_span_days": 10,
+}
 
 
 def _at(day: int, hour: int = 9) -> datetime:
     return datetime(2026, 9, day, hour, tzinfo=SEOUL_TIMEZONE)
 
 
-def _seed(terms=SUPPLY, **overrides) -> ClusterSeed:
+def _seed(document=SUPPLY, **overrides) -> ClusterSeed:
     fields = {
         "cluster_id": 1,
-        "term_weights": sum_terms(terms),
-        "member_count": 1,
-        "promoted": False,
+        "centroids": add_document(empty_centroids(), document),
+        "article_count": 1,
         "first_published_at": _at(1),
+        "mean_published_at": _at(1),
+        "last_published_at": _at(1),
     }
     fields.update(overrides)
     return ClusterSeed(**fields)
 
 
 def _assign(documents, published_ats, seeds=(), **overrides):
-    options = {"threshold": 0.35, "promote_size": 10, "window_days": 7, "backward_days": 1}
+    options = dict(OPTIONS)
     options.update(overrides)
     return assign_online(documents, published_ats, list(seeds), IDF, **options)
 
 
-# ── 헬퍼 ────────────────────────────────────────────────────────────────────
-
-
 def test_sum_terms_and_top_keywords():
-    summed = sum_terms([("삼성전자", 2.0), ("실적", 1.0)], [("삼성전자", 1.0)])
-
-    assert summed == {"삼성전자": 3.0, "실적": 1.0}
-    # 가중치가 같으면 토큰 사전순
-    assert top_keywords({"b": 1.0, "a": 1.0, "c": 5.0}, 2) == ["c", "a"]
+    assert sum_terms([("a", 1.0), ("b", 2.0)], [("a", 0.5)]) == {"a": 1.5, "b": 2.0}
+    assert top_keywords({"a": 1.0, "b": 3.0, "c": 3.0}, 2) == ["b", "c"]
 
 
-def test_profile_vector_scales_profile_to_average_article():
-    # 같은 기사 4건의 합은 기사 1건과 같은 방향이어야 한다
-    one = profile_vector(sum_terms(SUPPLY), 1, IDF)
-    four = profile_vector(sum_terms(SUPPLY, SUPPLY, SUPPLY, SUPPLY), 4, IDF)
+def test_add_document_sums_stored_fields_only():
+    centroids = add_document(add_document(empty_centroids(), SUPPLY), SUPPLY)
+    assert set(centroids) == {"title", "body", "entities"}
+    assert centroids["title"]["엘앤에프"] == 6.0 and centroids["entities"] == {"1": 2.0}
+    # 필드가 빠진 문서도 더할 수 있다
+    assert add_document(empty_centroids(), {"title": {"a": 1.0}})["body"] == {}
 
-    assert four == pytest.approx(one)
-    assert profile_vector({}, 0, IDF) == {}
 
+def test_centroid_vectors_scale_to_average_article():
+    single = add_document(empty_centroids(), SUPPLY)
+    triple = add_document(add_document(single, SUPPLY), SUPPLY)
+    one = centroid_vectors(single, 1, IDF)
+    three = centroid_vectors(triple, 3, IDF)
 
-# ── 편입 / 신규 ──────────────────────────────────────────────────────────────
+    assert set(one) == set(TEXT_FEATURES)
+    for field in TEXT_FEATURES:
+        assert one[field] == pytest.approx(three[field])
+    assert one["all"]["양극재"] > one["all"]["계약"]  # all = title+body 합
+    # article_count 0 이나 빈 centroids 는 빈 벡터 — 0 으로 나누지 않는다
+    assert centroid_vectors(empty_centroids(), 0, IDF) == {}
+    assert centroid_vectors({}, 2, IDF) == {field: {} for field in TEXT_FEATURES}
 
 
 def test_empty_input_returns_nothing():
@@ -81,128 +98,129 @@ def test_length_mismatch_raises():
 
 
 def test_similar_documents_form_one_cluster_and_others_get_their_own():
-    assignments = _assign([SUPPLY, SUPPLY, EARNINGS], [_at(2), _at(2, 10), _at(2, 11)])
+    result = _assign([SUPPLY, SUPPLY, EARNINGS], [_at(1), _at(1, 10), _at(1, 11)])
 
-    assert len(assignments) == 2
-    supply, earnings = assignments
-    assert supply.seed is None
-    assert (supply.candidates, supply.followers) == ([0, 1], [])
-    assert supply.term_weights == {"엘앤에프": 6.0, "양극재": 2.0, "공급": 2.0}
-    assert (supply.first_published_at, supply.last_published_at) == (_at(2), _at(2, 10))
-    assert (earnings.candidates, earnings.term_weights) == ([2], {"삼성전자": 3.0, "실적": 1.0})
+    assert [a.members for a in result] == [[0, 1], [2]]
+    first, second = result[0].scores
+    assert first is None  # 새 클러스터의 첫 기사
+    assert 4.0 < second <= 4.3  # 텍스트 4개 모두 1 + 시간 피처 ≈ 0.3
+    assert result[0].features[0] is None
+    assert set(result[0].features[1]) == set(TEXT_FEATURES) | set(TIME_FEATURES)
+    assert result[0].article_count == 2 and result[1].article_count == 1
+    assert result[0].first_published_at == _at(1) and result[0].last_published_at == _at(1, 10)
+    assert result[0].mean_published_at == _at(1) + timedelta(minutes=30)
+    assert result[1].scores == [None]
 
 
-def test_document_joins_matching_seed_and_keeps_seed_anchor():
+def test_time_alone_does_not_join_unrelated_articles():
+    # 같은 시각의 무관한 기사: φ 전부 0, 시간 피처 3×0.1 = 0.3 < τ
+    result = _assign([SUPPLY, EARNINGS], [_at(1), _at(1)])
+    assert [a.members for a in result] == [[0], [1]]
+
+
+def test_document_joins_seed_and_updates_centroids_and_times():
     seed = _seed()
-
-    [assignment] = _assign([SUPPLY], [_at(2)], [seed])
+    [assignment] = _assign([SUPPLY], [_at(3)], [seed])
 
     assert assignment.seed is seed
-    assert (assignment.candidates, assignment.followers) == ([0], [])
-    assert assignment.term_weights == {"엘앤에프": 6.0, "양극재": 2.0, "공급": 2.0}
-    # 기준점은 시드의 것 그대로다
+    assert assignment.members == [0] and assignment.scores[0] > 4.0
+    assert assignment.article_count == 2
+    assert assignment.centroids == add_document(seed.centroids, SUPPLY)
     assert assignment.first_published_at == _at(1)
-    assert assignment.last_published_at == _at(2)
-    # 시드 객체는 바뀌지 않는다
-    assert seed.term_weights == sum_terms(SUPPLY)
+    assert assignment.mean_published_at == _at(2)  # (9/1 + 9/3) / 2
+    assert assignment.last_published_at == _at(3)
+
+
+def test_earlier_document_moves_first_published_at():
+    seed = _seed(first_published_at=_at(3), mean_published_at=_at(3), last_published_at=_at(3))
+    [assignment] = _assign([SUPPLY], [_at(2)], [seed])
+    assert assignment.seed is seed
+    assert assignment.first_published_at == _at(2)
+    assert assignment.last_published_at == _at(3)
+
+
+def test_far_in_time_scores_lower_than_near_but_identical_text_still_joins():
+    seed = _seed()
+    [near] = _assign([SUPPLY], [_at(1, 10)], [_seed()])
+    [far] = _assign([SUPPLY], [_at(1) + timedelta(days=8)], [seed])
+    assert near.scores[0] > far.scores[0]
+    assert far.seed is seed  # 텍스트 4.0 만으로도 τ=1.0 을 넘는다
+    assert far.features[0]["last"] < 0.05  # Δ=192h: exp(-192²/2·72²) ≈ 0.03
+
+
+def test_cluster_outside_candidate_days_is_not_a_candidate():
+    seed = _seed()
+    result = _assign([SUPPLY], [_at(1) + timedelta(days=10, seconds=1)], [seed])
+    assert result[0].seed is None
+
+
+def test_cluster_starting_after_candidate_days_is_not_a_candidate():
+    # 신규 종목의 180일 lookback 처럼 옛 기사가 늦게 도착한 경우: 기사보다 candidate_days 넘게 뒤에
+    # 시작한 클러스터는 텍스트가 같아도 후보가 아니다 — 컷은 가우시안처럼 대칭이다
+    seed = _seed(first_published_at=_at(20), mean_published_at=_at(20), last_published_at=_at(20))
+    result = _assign([SUPPLY], [_at(1)], [seed])
+    assert result[0].seed is None
+    # 10일 안이면 후보다
+    near = _seed(first_published_at=_at(10), mean_published_at=_at(10), last_published_at=_at(10))
+    assert _assign([SUPPLY], [_at(1)], [near])[0].seed is near
+
+
+def test_cluster_stays_alive_while_members_keep_arriving_within_max_span():
+    # 6일 간격으로 세 기사. 셋째는 첫째보다 12일 뒤지만 둘째가 last 를 밀어 여전히 후보다 —
+    # 수명(max_span_days) 안이라면
+    result = _assign([SUPPLY] * 3, [_at(1), _at(7), _at(13)], max_span_days=20)
+    assert [a.members for a in result] == [[0, 1, 2]]
+
+
+def test_cluster_older_than_max_span_stops_taking_members():
+    # 같은 세 기사라도 수명 10일이면 셋째(첫째보다 12일 뒤)는 last 가 6일 전이어도 새 클러스터다.
+    # 같은 종목 기사가 며칠에 한 번씩 나오면 last 가 계속 밀려 클러스터가 몇 달을 사는 체인을 끊는다
+    result = _assign([SUPPLY] * 3, [_at(1), _at(7), _at(13)])
+    assert [a.members for a in result] == [[0, 1], [2]]
+    assert result[1].seed is None and result[1].first_published_at == _at(13)
+
+
+def test_seed_older_than_max_span_is_not_a_candidate():
+    # 시드도 같은 규칙: first 가 기사보다 max_span_days 넘게 이르면 last 가 가까워도 후보가 아니다
+    seed = _seed(first_published_at=_at(1), mean_published_at=_at(6), last_published_at=_at(12))
+    assert _assign([SUPPLY], [_at(13)], [seed])[0].seed is None
+    assert _assign([SUPPLY], [_at(13)], [seed], max_span_days=15)[0].seed is seed
+
+
+def test_threshold_blocks_joining():
+    result = _assign([SUPPLY, SUPPLY], [_at(1), _at(1, 10)], threshold=10.0)
+    assert [a.members for a in result] == [[0], [1]]
+
+
+def test_text_weights_change_the_score():
+    [assignment] = _assign([SUPPLY], [_at(1, 10)], [_seed()], text_weights=(2.0, 0.0, 0.0, 0.0))
+    assert assignment.scores[0] == pytest.approx(2.0 + 0.3, abs=0.01)
 
 
 def test_seed_without_new_documents_is_omitted():
-    assignments = _assign([EARNINGS], [_at(2)], [_seed()])
-
-    assert [assignment.seed for assignment in assignments] == [None]
+    assert _assign([EARNINGS], [_at(2)], [_seed()])[0].seed is None
 
 
-def test_document_joins_the_most_similar_cluster():
-    exact = _seed(cluster_id=1)
-    partial = _seed(SUPPLY + [("lfp", 3.0), ("수주", 3.0)], cluster_id=2)
+def test_document_joins_the_highest_scoring_cluster():
+    near = _seed(cluster_id=1, document=SUPPLY)
+    far = _seed(
+        cluster_id=2, document={"title": {"엘앤에프": 3.0, "실적": 1.0}, "body": {}, "entities": {}}
+    )
+    [assignment] = _assign([SUPPLY], [_at(2)], [far, near])
+    assert assignment.seed.cluster_id == 1
 
-    [assignment] = _assign([SUPPLY], [_at(2)], [partial, exact])
 
-    assert assignment.seed is exact
-
-
-def test_later_document_sees_profile_updated_by_earlier_one():
-    first = [("엘앤에프", 3.0), ("양극재", 1.0)]
-    second = [("엘앤에프", 3.0), ("양극재", 1.0), ("삼성sdi", 3.0)]
-    third = [("삼성sdi", 3.0), ("공급", 1.0)]
-
-    # third 는 first 하고만 있으면 겹치는 토큰이 없어 따로 간다
-    assert len(_assign([first, third], [_at(2), _at(3)])) == 2
-    # second 가 프로필에 삼성sdi 를 더한 뒤에는 같은 클러스터에 붙는다
-    [assignment] = _assign([first, second, third], [_at(2), _at(2, 10), _at(3)])
-    assert assignment.candidates == [0, 1, 2]
+def test_ties_go_to_the_earlier_cluster():
+    [assignment] = _assign([SUPPLY], [_at(2)], [_seed(cluster_id=1), _seed(cluster_id=2)])
+    assert assignment.seed.cluster_id == 1
 
 
 def test_documents_are_processed_in_published_order():
-    assignments = _assign([SUPPLY, SUPPLY], [_at(3), _at(2)])
-
-    [assignment] = assignments
-    assert assignment.candidates == [1, 0]
-    assert assignment.first_published_at == _at(2)
+    result = _assign([SUPPLY, SUPPLY], [_at(2), _at(1)])
+    assert result[0].members == [1, 0]
+    assert result[0].first_published_at == _at(1)
 
 
 def test_documents_without_tokens_never_match():
-    assignments = _assign([[], [], SUPPLY], [_at(2), _at(2, 10), _at(2, 11)])
-
-    assert [assignment.candidates for assignment in assignments] == [[0], [1], [2]]
-    assert assignments[0].term_weights == {}
-
-
-# ── 승격된 클러스터 / 후보 상한 ──────────────────────────────────────────────
-
-
-def test_promoted_seed_only_counts_and_keeps_profile():
-    seed = _seed(member_count=10, promoted=True)
-
-    [assignment] = _assign([SUPPLY], [_at(2)], [seed])
-
-    assert (assignment.candidates, assignment.followers) == ([], [0])
-    assert assignment.term_weights == seed.term_weights
-
-
-def test_full_seed_without_representative_only_counts():
-    # 후보가 다 찼는데 크롤링 실패로 대표가 없는 클러스터 — 후보를 더 받지 않는다
-    seed = _seed(sum_terms(*[SUPPLY] * 10).items(), member_count=10, promoted=False)
-
-    [assignment] = _assign([SUPPLY], [_at(2)], [seed])
-
-    assert (assignment.candidates, assignment.followers) == ([], [0])
-
-
-def test_candidates_stop_at_promote_size_within_one_run():
-    documents = [SUPPLY] * 12
-    published_ats = [_at(2) + timedelta(minutes=minute) for minute in range(12)]
-
-    [assignment] = _assign(documents, published_ats)
-
-    assert assignment.candidates == list(range(10))
-    assert assignment.followers == [10, 11]
-    assert assignment.term_weights["엘앤에프"] == 30.0
-
-
-# ── 시간 창 ──────────────────────────────────────────────────────────────────
-
-
-def test_document_joins_within_window_after_cluster_start():
-    seed = _seed(first_published_at=_at(1))
-
-    assert _assign([SUPPLY], [_at(8)], [seed])[0].seed is seed  # 정확히 7일 뒤
-    assert _assign([SUPPLY], [_at(8, 10)], [seed])[0].seed is None  # 7일 + 1시간
-
-
-def test_document_published_shortly_before_cluster_start_joins():
-    seed = _seed(first_published_at=_at(5))
-
-    [joined] = _assign([SUPPLY], [_at(4)], [seed])  # 정확히 1일 전
-    assert joined.seed is seed
-    assert joined.first_published_at == _at(5)  # 기준점은 앞으로 옮겨지지 않는다
-
-    assert _assign([SUPPLY], [_at(4, 8)], [seed])[0].seed is None  # 25시간 전
-
-
-def test_new_cluster_window_starts_at_its_first_document():
-    # 2일에 시작한 클러스터는 9일까지만 자란다. 10일 기사는 새 클러스터다.
-    assignments = _assign([SUPPLY, SUPPLY, SUPPLY], [_at(2), _at(9), _at(10)])
-
-    assert [assignment.candidates for assignment in assignments] == [[0, 1], [2]]
+    result = _assign([EMPTY, SUPPLY, EMPTY], [_at(1), _at(1, 10), _at(1, 11)])
+    assert [a.members for a in result] == [[0], [1], [2]]
