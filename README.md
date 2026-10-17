@@ -1,67 +1,188 @@
-# ETL Platform
+# finngraph-etl
 
-Airflow로 실행되는 팀 공용 ETL 레포입니다. 이 레포는 데이터 수집, 변환, 적재 로직을 도메인별 패키지로 관리합니다.
-
-FastAPI는 포함하지 않습니다. ETL 실행, 스케줄, 재시도, 로그 확인은 Airflow가 담당합니다.
+뉴스·기업·주가·테마·트리플관계 데이터를 수집 > 가공 > 적재하는 Airflow 기반 ETL 파이프라인.
 
 ## Structure
 
 ```text
-etl/
-├── dags/                 # Airflow DAG 정의
+finngraph-etl/
+├── dags/                 # Airflow DAG 정의 (도메인별 디렉토리)
+│   ├── companies/        # 법인 마스터 동기화 · 그래프 시드 · 개체 사전 생성 · 미국 상장사 크롤링
+│   ├── disclosures/      # DART 공시(단일판매ㆍ공급계약체결) 수집
+│   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
+│   ├── health/           # 운영 헬스체크
+│   ├── market_calendar/  # 휴장일 · 예탁원 일정 · 공모주 · DART 공모 신고서 수집
+│   ├── news/             # 뉴스 수집 · 필터 · 요약
+│   ├── stocks/           # 종목 마스터 · 주가 캔들 수집 · 집계 · 파생지표
+│   ├── themes/           # 테마 크롤링 · 테마 지수 봉 백필
+│   └── triples/          # 트리플(관계) 추출
 ├── pipelines/            # 도메인별 ETL 구현
-│   ├── common/           # 설정, DB, 로깅, 재시도, 레이트리밋 공통 코드
-│   ├── stocks/           # 국내 주식 OHLCV 수집
-│   ├── disclosures/      # 공시 수집
-│   └── news/             # 뉴스/이벤트 수집
-├── migrations/           # DB migration
+│   ├── common/           # ETL 내 사용되는 공통 모듈
+│   │   ├── clients/      # 외부 시스템 클라이언트 (postgres · neo4j · http · bedrock · kis · dart)
+│   │   ├── utils/        # 외부 의존 없는 순수 유틸 (batching · retry · rate_limit · time)
+│   │   └── gazetteer.py  # 개체 사전 매처 — 본문 기업 표기 → company_id·stock_id·ticker
+│   ├── companies/        # 법인 ETL
+│   ├── disclosures/      # DART 공시 ETL
+│   ├── events/           # 뉴스 클러스터 → Neo4j Event 승격
+│   ├── market_calendar/  # 증시 일정 ETL (휴장일 · 배당 · 증자 · 주총 · 공모)
+│   ├── news/             # 뉴스 ETL
+│   ├── stocks/           # 주식 및 주가 ETL
+│   ├── themes/           # 테마 ETL
+│   └── triples/          # 트리플관계 ETL
+├── migrations/           # DB migration (versions/ = Postgres, neo4j/ = Neo4j)
 ├── scripts/              # 로컬 실행/검증 스크립트
 └── tests/                # 테스트
 ```
 
-## Conventions
+## 컨벤션
 
-- `dags/`에는 DAG 정의만 둡니다.
-- 실제 ETL 로직은 `pipelines/{domain}/jobs/`에 둡니다.
-- 외부 데이터 조회는 `extractors/`, 변환은 `transformers/`, 저장은 `loaders/`가 담당합니다.
-- 여러 도메인에서 공유하는 코드는 `pipelines/common/`에 둡니다.
-- Airflow task는 job 함수를 호출하고, job 함수가 extract-transform-load 흐름을 조립합니다.
+- `dags/`에는 DAG 정의만 둡니다. Airflow를 아는 코드는 여기까지고, `pipelines/` 아래로는
+  Airflow가 존재하지 않습니다.
+- Airflow task 하나당 `pipelines/{domain}/jobs/` 파일 하나를 두고, 진입점 함수 이름은 `run`,
+  파일명은 `task_id`와 같게 맞춥니다. job은 조립만 하고 로직을 갖지 않습니다.
 
-## Stock Pipeline Policy
+### 네이밍
 
-- 과거 일봉은 FinanceDataReader로 초기 적재합니다.
-- 오늘 이후 장중 데이터는 한국투자증권 Open API의 1분봉 조회로 누적합니다.
-- 5분봉은 API에서 직접 받지 않고 1분봉에서 내부 집계합니다.
-- 1분봉은 기본 60일 보관, 5분봉은 3년 보관, 일봉은 영구 보관합니다.
-- 사용자-facing 차트는 최대 5분 지연을 허용합니다.
+**DAG는 명사(존재), task와 job은 동사구(행위), 동사는 아래 사전에 있는 것만 씁니다.**
 
-## Local Checks
+- **job 파일명 = `<동사>_<목적어>.py`.** 도메인은 경로(`pipelines/news/`)가 이미 말하므로
+  반복하지 않되, 목적어는 생략하지 않습니다(`summarize.py` ✗ → `summarize_articles.py` ✓).
+  동사가 두 개 필요해지면 이름 문제가 아니라 job 분리를 고민할 신호입니다.
+- **task_id = 호출하는 job 파일명.** Airflow UI에서 실패한 task 이름만 보고 해당 파일을
+  바로 찾을 수 있어야 합니다.
+- **dag_id = `<도메인>_<나머지>`.** UI가 평면 네임스페이스라 도메인 접두사를 유지합니다.
+  - 단일 task DAG → job 이름을 그대로 씁니다: `companies_collect_kis_financials`.
+  - 복수 task 오케스트레이션 DAG → `<수식어>_pipeline` 명사형: `stocks_daily_pipeline`.
+  - 주기(`daily`·`weekly`)는 그 주기 자체가 이름의 본질일 때만 넣습니다. 스케줄은
+    `schedule` 파라미터가 이미 말해줍니다(`weekly_dividends` ✗ → `collect_dividends` ✓).
+- **DAG 파일명 = dag_id에서 도메인 접두사를 뺀 것.** 예: `companies_collect_kis_financials`
+  ↔ `dags/companies/collect_kis_financials.py`.
+
+**동사 사전** — 같은 뜻의 동사가 늘어나지 않게, 새 동사가 필요하면 여기에 먼저 추가합니다.
+
+| 동사 | 의미 |
+|------|------|
+| `collect` | 외부 API/크롤링 → RDB 적재 |
+| `crawl` | 웹 크롤링 → 파일 산출 (적재는 별도 `load`) |
+| `sync` | 원천 마스터 데이터 최신화 (멱등, 전체 갱신) |
+| `backfill` | 과거분 소급 수집 (주로 수동) |
+| `compute` / `calculate` | 기존 데이터에서 파생값 계산 (종목 파생지표는 `compute`, 봉·등락률은 `calculate`) |
+| `aggregate` | 하위 주기 데이터를 상위 주기로 집계 (일봉 → 주·월봉) |
+| `select` | 이번 런의 처리 대상 선정 |
+| `resolve` | 앞 단계 산출물 위치 등 실행 입력 확정 |
+| `publish` | 외부 시스템(백엔드 API·Redis)에 결과 발행을 트리거 |
+| `promote` | 한 저장소의 데이터를 상위 개념으로 승격 (클러스터 → Event) |
+| `generate` | LLM 생성 |
+| `embed` | 벡터 임베딩 생성·적재 |
+| `extract` / `merge` / `load` | 단계 분리형 파이프라인의 ETL 각 단계 |
+| `summarize` | LLM 요약 |
+| `link` / `seed` | 그래프 간선 연결(이슈 타임라인의 부모 연결 포함) / 초기 노드 적재 |
+- task를 나누는 기준은 **재시도 경계**입니다 — "여기가 깨졌을 때 앞 단계를 다시 돌리고
+  싶은가?"에 아니라고 답하면 태스크를 나눕니다. DAG를 나누는 기준은 **트리거**입니다.
+  스케줄이나 Asset이 다르면 태스크가 하나뿐이어도 별개 DAG입니다.
+- ETL 파이프라인에서 데이터 수집 및 추출은 `extractors/`, 저장 전 데이터 전처리 작업은 `transformers/`, 스토리지 조회·저장은 `repositories/`가 담당합니다.
+- `repositories/`는 저장소별(`postgres/`·`neo4j/`·`redis/`)로 나누고, 그 안의 파일은 테이블(Neo4j는 노드·간선) 이름을 따릅니다. 한 테이블의 조회·적재 쿼리를 같은 파일에 두며, 여러 테이블을 조인하는 조회는 주 FROM 테이블 파일에, 여러 테이블에 쓰는 적재는 주 테이블 파일에 둡니다. 다른 도메인이 소유한 테이블을 읽을 때는, 쓰는 쪽의 조건이 들어 있지 않고 기본 타입을 돌려주는 범용 조회면 소유 도메인의 리포지토리에 두고 가져다 씁니다(예: 거래일 캘린더, 활성 종목 티커). 쓰는 쪽의 규칙이 담기거나 쓰는 쪽 모델을 돌려주는 조회는 쓰는 쪽 파이프라인에 같은 테이블명 파일로 둡니다.
+
+## Running Airflow locally
+
+Airflow 3.3(LocalExecutor) 스택을 docker compose 프로파일로 띄운다. 프로젝트 코드는 Airflow와
+같은 파이썬 환경에 설치된다(Airflow 3.x부터 SQLAlchemy 2.0을 써서 의존성 충돌이 없다).
 
 ```bash
-python -m compileall pipelines dags scripts
+# 환경변수 설정
+cp .env.example .env
+
+# 이미지 빌드
+# 최초 1회 수행 (또는 의존성/Dockerfile 변경된 경우)
+docker compose --profile airflow build
+
+# Airflow 관련 스택 기동
+docker compose --profile airflow up -d
+
+# Airflow 컨테이너 중지
+docker compose --profile airflow down
+
+# Airflow 컨테이너 중지 및 볼륨(메타DB/로그)까지 삭제
+docker compose --profile airflow down -v
 ```
 
-## Database
+- Airflow Web UI는 `http://localhost:8080`로 접속한다.
+  - 기본 계정은 airflow/airflow이다.
+- `dags/`, `pipelines/`, `scripts/`는 컨테이너에 마운트되므로 코드 수정이 즉시 반영된다.
+  `pyproject.toml` 의존성이 바뀌면 `airflow build`로 이미지를 다시 빌드해야 한다.
+- 컨테이너 안에서 ETL DB 접속은 `db:5432`다(compose가 `DATABASE_URL`/`DB_HOST`/`DB_PORT`를 덮어씀).
+- 타임존은 `Asia/Seoul` 고정 — 주식 장중 cron(`8-19 * * 1-5` 등)이 KST 기준으로 해석된다.
+- DAG는 생성 시 일시정지 상태로 등록된다(`DAGS_ARE_PAUSED_AT_CREATION`). UI에서 unpause 후 사용한다.
 
-The local database image is built from `timescale/timescaledb` with `pgvector` added.
-This gives one PostgreSQL-compatible database for:
+### 스택 구성
 
-- relational tables such as symbols, calendars, jobs, and source metadata
-- TimescaleDB hypertables for OHLCV time-series data
-- pgvector tables for embeddings and semantic search
+`--profile airflow`는 Airflow 컨테이너 하나가 아니라 역할별로 분리된 여러 서비스를 함께 띄운다
+(Airflow 3.x 방식). `dags/`의 파이썬 파일은 "무엇을 언제 어떤 순서로 실행할지"를 **정의만** 하고,
+실제 실행은 아래 컨테이너들이 담당한다.
 
-Start the database:
+| 서비스 | 역할 |
+| --- | --- |
+| `airflow-init` | 최초 1회 DB 마이그레이션 + admin 계정 생성 후 종료 |
+| `airflow-apiserver` | 웹 UI + Execution API (포트 8080) |
+| `airflow-scheduler` | 스케줄 판단 + LocalExecutor라 태스크 실제 실행도 여기서 수행 |
+| `airflow-dag-processor` | `dags/`를 파싱해 DAG 등록 (Airflow 3부터 scheduler에서 분리) |
+| `airflow-db` | Airflow 메타데이터 전용 Postgres (ETL 데이터 `db`와 분리) |
+
+- `apache-airflow`는 `pyproject.toml`의 optional-dependency라 기본 `uv sync`엔 설치되지 않는다.
+  DAG 파일이 `from airflow.sdk import ...`를 `try/except`로 감싸는 것은, airflow가 없는 로컬 편집·CI
+  문법검사 환경에서도 파싱이 깨지지 않게 하기 위함이다. 실제 실행은 airflow가 설치된 컨테이너 안에서만 된다.
+- 데코레이터로 정의한 DAG 함수는 파일 최상단에서 한 번 호출해야 dag-processor가 인식·등록한다.
+
+## Running Neo4j locally
 
 ```bash
-docker compose up --build db
+# Neo4j 컨테이너 + migrations 스키마 베이스라인 적용
+docker compose up -d neo4j neo4j-init
+
+# Neo4j 컨테이너 중지 및 볼륨까지 삭제
+docker compose down -v
 ```
 
-The default host port is `15432` to avoid colliding with local PostgreSQL
-instances on `5432` or `5433`. Override it with `ETL_DB_PORT` when needed.
+- neo4j:5 community 버전은 username은 무조건 neo4j여야한다.
+- 기본 계정 정보는 처음 이미지 빌드 시 `.env` 정보로 인해 초기화된다.
+  - 비밀번호가 바뀐 경우 `docker compose down -v` 옵션으로 볼륨을 내리고 다시 실행시켜야 한다.
 
-On first initialization, `docker/db/initdb/001_extensions.sql` enables:
+## Local Checks Before Commit
 
-```sql
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-CREATE EXTENSION IF NOT EXISTS vector;
+```bash
+uv sync
+```
+- CI와 동일한 검사를 로컬에서 돌리기 위해 먼저 관련 의존성 패키지(pytest/ruff/pre-commit)를 설치해야 한다.
+- CI 관련 패키지는 `dev dependency-groups`로 지정되어 
+`uv sync`시 필수 패키지와 같이 설치된다.
+
+### 자동 (pre-commit)
+
+한 번 설정하면 commit·push 때 검사가 자동으로 돈다.
+
+```bash
+uv run pre-commit install                       # commit 시 ruff(자동수정) + ruff-format
+uv run pre-commit install --hook-type pre-push  # push 시 pytest
+```
+
+### 수동
+
+```bash
+uv run ruff check . && uv run ruff format --check .   # lint (CI: lint job)
+uv run pytest -m "not integration"                    # 유닛 테스트 (CI: unit-test job)
+uv run python -m compileall pipelines dags scripts
+```
+
+DAG 파싱 검증은 airflow가 필요하다(CI: dag-validation job).
+
+```bash
+uv sync --extra airflow
+uv run python scripts/validate_dags.py
+```
+
+DB 통합 테스트는 로컬 DB를 띄운 뒤 실행한다.
+
+```bash
+docker compose up -d db
+uv run pytest -m integration
 ```

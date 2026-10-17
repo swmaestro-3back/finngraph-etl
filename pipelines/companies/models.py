@@ -1,0 +1,166 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+
+@dataclass(frozen=True)
+class CompanySyncResult:
+    """국내 상장 기업 마스터 동기화 결과.
+
+    법인 행을 만드는 단계가 아니므로 삽입 수를 세지 않는다. 세는 것은 상태 변화다.
+
+    Attributes:
+        listed_count (int): 상장으로 표시되거나 이름·시장이 갱신된 법인 수.
+        delisted_count (int): 활성 종목 목록에서 사라져 상장폐지로 내린 법인 수.
+        linked_count (int): stocks.company_id가 새로 연결되거나 바뀐 종목 수.
+            이미 같은 법인을 가리키던 종목은 세지 않는다.
+        alias_count (int): company_aliases에 새로 추가된 별칭 수.
+            이미 있던 별칭은 ON CONFLICT DO NOTHING으로 빠지므로 세지 않는다.
+    """
+
+    listed_count: int
+    delisted_count: int
+    linked_count: int
+    alias_count: int
+
+
+@dataclass(frozen=True)
+class CompanyFinancial:
+    """기업 재무 한 기간치. 원천은 KIS와 DART 둘이다.
+
+    금액 단위는 전부 원(KRW)이다. KIS는 억원으로 주고 DART는 원으로 주는데, 적재 전에
+    원으로 맞춘다. 단위가 섞이면 두 원천을 한 화면에서 비교할 수 없다.
+
+    손익은 누적 기준으로 통일한다. KIS 분기 행이 누적이고 DART의 당기 누계도 누적이라,
+    분기 단독 값이 필요하면 파생 단계에서 차분으로 만든다.
+
+    Attributes:
+        source (str): 'KIS' | 'DART'.
+        fs_div (str): 'CFS'(연결) | 'OFS'(별도). KIS는 연결만 제공한다.
+        fiscal_yymm (str): 'YYYYMM' 결산 기준월.
+        period_type (str): 'Q'(분기 누적) | 'A'(연간).
+        disclosed_at (date | None): 공시일. DART 접수번호 앞 8자리에서 얻는다.
+            KIS는 공시 시점을 주지 않아 None이며, 그래서 KIS 데이터로는
+            point-in-time(look-ahead bias 회피)을 보장할 수 없다.
+        rcept_no (str | None): DART 접수번호. 정정공시가 새 행이 되는 근거다.
+    """
+
+    company_id: int
+    source: str
+    fiscal_yymm: str
+    period_type: str
+    fs_div: str = "CFS"
+    disclosed_at: date | None = None
+    rcept_no: str | None = None
+    revenue: int | None = None
+    operating_income: int | None = None
+    net_income: int | None = None
+    total_assets: int | None = None
+    total_liabilities: int | None = None
+    total_equity: int | None = None
+    roe: Decimal | None = None
+    eps: Decimal | None = None
+    bps: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class CompanyProfile:
+    """DART 기업개황.
+
+    Attributes:
+        corp_code (str): DART 고유번호 8자리. 이 값으로 companies 행을 찾는다.
+        fiscal_month (str | None): 결산월 'MM'.
+    """
+
+    corp_code: str
+    name: str
+    name_eng: str | None = None
+    ceo_name: str | None = None
+    industry_code: str | None = None
+    established_on: date | None = None
+    fiscal_month: str | None = None
+    homepage: str | None = None
+    address: str | None = None
+
+
+@dataclass(frozen=True)
+class DartCorp:
+    """corpCode.xml 한 행.
+
+    Attributes:
+        stock_code (str | None): KRX 단축코드. 상장 이력이 있는 법인만 갖는다.
+            상장사 매핑은 이 값으로 한다 — 법인명 매칭은 동명이인 때문에 위험하다.
+        modify_date (date | None): DART 최종변경일.
+    """
+
+    corp_code: str
+    name: str
+    name_eng: str | None = None
+    stock_code: str | None = None
+    modify_date: date | None = None
+
+
+@dataclass(frozen=True)
+class UsCompany:
+    """미국 상장사 한 곳. 인덱스 크롤링(위키·한경)과 네이버 overview를 합친 결과.
+
+    Attributes:
+        name (str): 한경 한글명 표기 그대로. stocks.name에 들어가고, companies.name과 Neo4j
+            Company.name 키는 로더가 괄호·공백을 뺀 값(clean_company_name)으로 만든다.
+        name_eng (str): Wikipedia 영문명. company_aliases(lang='en')로 들어간다.
+        homepage (str | None): 네이버 url. 끝의 '/'는 뗀다.
+        raw_attributes (dict): stocks 칼럼이 없는 값. name_eng·index_market은 항상, 나머지
+            (reuters_code 포함)는 overview가 있을 때만 들어간다. stocks.standard_code는 US에서
+            NULL이다 — 원천이 위키피디아 인덱스라 표준코드가 없다.
+    """
+
+    ticker: str
+    market: str
+    name: str
+    name_eng: str
+    description: str | None = None
+    ceo_name: str | None = None
+    industry_code: str | None = None
+    homepage: str | None = None
+    address: str | None = None
+    fiscal_month: str | None = None
+    listed_date: date | None = None
+    listed_shares: int | None = None
+    raw_attributes: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class UsSyncResult:
+    """미국 상장사 Postgres 적재 결과. 세 문장 각각의 영향 행 수."""
+
+    company_count: int
+    stock_count: int
+    alias_count: int
+
+
+@dataclass(frozen=True)
+class GazetteerAlias:
+    """개체 사전의 별칭 한 줄 — 본문 표기 하나가 상장 기업 하나를 가리킨다.
+
+    추출 단계에서는 같은 alias 가 여러 기업에 걸린 후보가 섞여 있고, 변환 단계가
+    우선순위로 정리해 alias 당 한 줄만 남긴다.
+
+    Attributes:
+        alias (str): 본문에서 매칭할 표기. 앞뒤 공백을 뺀 값이다.
+        company_id (int): companies.id.
+        stock_id (int): 그 기업의 활성 종목 stocks.id. 국내는 보통주만 수집해 1:1 이다.
+        ticker (str): 종목 단축코드(국내 6자리) 또는 미국 티커.
+        canonical_name (str): companies.name — 그래프 노드명·원장 엔드포인트와 같은 값.
+        source (str): 별칭 출처.
+            NAME(companies.name) | STOCK_NAME(종목명 파생) | KIS_MASTER | DART | CURATED.
+    """
+
+    alias: str
+    company_id: int
+    stock_id: int
+    ticker: str
+    canonical_name: str
+    source: str

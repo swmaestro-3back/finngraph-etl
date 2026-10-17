@@ -1,0 +1,58 @@
+name: Jira Sync
+
+# PR 이벤트에서 브랜치명의 Jira 이슈 키(예: SCRUM-123)를 읽어 티켓 상태를 자동 전환한다.
+#   - PR 열림/재오픈/리뷰 준비 → "리뷰 요청"  (진행 중 → 리뷰)
+#   - PR merge                 → "작업 완료"  (리뷰 → 완료)
+# 키를 못 찾거나(브랜치명에 키 없음) 티켓이 해당 전환이 불가능한 상태면 조용히 넘어간다.
+#
+# 필요한 Repository Secrets (Settings → Secrets and variables → Actions):
+#   JIRA_BASE_URL    예: https://asmteam18.atlassian.net
+#   JIRA_USER_EMAIL  Atlassian 계정 이메일
+#   JIRA_API_TOKEN   https://id.atlassian.com/manage-profile/security/api-tokens 에서 발급
+#
+# transition 값은 "상태 이름"이 아니라 워크플로 편집기의 "전환(transition) 이름"이다.
+# 우리 보드의 전환: 작업 시작(해야 할 일→진행 중) · 리뷰 요청(진행 중→리뷰) · 작업 완료(리뷰→완료)
+# 주의: "작업 취소"는 같은 이름의 전환이 2개(→완료, →해야 할 일)라 자동화에 사용 금지.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  transition:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Jira 로그인
+        uses: atlassian/gajira-login@v3
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+      - name: 이슈 키 추출 (브랜치명에서)
+        id: find
+        continue-on-error: true
+        uses: atlassian/gajira-find-issue-key@v3
+        with:
+          from: branch
+
+      # 티켓이 "진행 중"이 아니면 이 전환이 불가능하므로 실패해도 워크플로를 막지 않는다.
+      - name: 리뷰로 전환 (PR 열림/재오픈/리뷰준비)
+        if: ${{ steps.find.outputs.issue != '' && github.event.action != 'closed' }}
+        continue-on-error: true
+        uses: atlassian/gajira-transition@v3
+        with:
+          issue: ${{ steps.find.outputs.issue }}
+          transition: "리뷰 요청"
+
+      # 티켓이 "리뷰"가 아니면 이 전환이 불가능하므로 실패해도 워크플로를 막지 않는다.
+      - name: 완료로 전환 (PR merge)
+        if: ${{ steps.find.outputs.issue != '' && github.event.action == 'closed' && github.event.pull_request.merged == true }}
+        continue-on-error: true
+        uses: atlassian/gajira-transition@v3
+        with:
+          issue: ${{ steps.find.outputs.issue }}
+          transition: "작업 완료"

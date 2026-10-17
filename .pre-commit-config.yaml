@@ -1,0 +1,31 @@
+# pre-commit 훅 설정.
+#
+# 설치(최초 1회):
+#   python -m pip install -e ".[dev]"
+#   pre-commit install                       # commit 시 ruff 훅 활성화
+#   pre-commit install --hook-type pre-push  # push 시 pytest 훅 활성화
+#
+# - commit 시: ruff(자동수정) + ruff-format  — 빠르므로 매 커밋 검사
+# - push 시:  pytest                          — 느릴 수 있어 pre-push 단계에만
+#
+# ruff rev는 pyproject의 ruff 버전과 맞춰 CI와 포맷 결과가 어긋나지 않게 한다.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+        args: [--fix]
+        stages: [pre-commit]
+      - id: ruff-format
+        stages: [pre-commit]
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (unit, integration 제외)
+        # 유닛 테스트가 0개면 pytest는 exit 5(no tests collected)를 반환한다. 이는 실패가
+        # 아니므로 통과로 처리한다(CI unit-test job과 동일). venv 활성화 상태에서 push할 것.
+        entry: bash -c 'python -m pytest -m "not integration"; code=$?; [ "$code" -eq 5 ] && exit 0 || exit $code'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

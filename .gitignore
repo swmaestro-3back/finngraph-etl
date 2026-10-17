@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env.*
 .venv/
 __pycache__/
 *.py[cod]
@@ -7,7 +8,11 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# Docker / local database
+# Python 빌드 산출물 (editable install 시 생성)
+*.egg-info/
+build/
+dist/
+
 *.log
 
 # Airflow local state
@@ -15,3 +20,20 @@ airflow.db
 airflow.cfg
 logs/
 
+# Claude
+CLAUDE.md
+AGENTS.md
+.claude/
+.bkit/
+.superpowers/
+
+# 로컬 테스트 데이터 푸시 방지용
+pipelines/themes/data/*
+pipelines/companies/data/*
+tests/triples/*
+
+# 프롬프트 및 온톨로지 푸시 방지용
+docs/
+
+scripts/dev-tunnel.sh
+dev-tunnel.sh

@@ -1,0 +1,111 @@
+name: finngraph-etl
+
+x-hardening: &hardening
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-airflow: &airflow
+  <<: *hardening
+  image: ${AIRFLOW_IMAGE:?AIRFLOW_IMAGE 를 .env 에 지정하세요}
+  platform: linux/arm64
+  user: "50000:0"
+  env_file:
+    - path: etl.env
+      required: true
+  environment: &airflow-env
+    TZ: Asia/Seoul
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+  volumes:
+    - airflow-logs:/opt/airflow/logs
+  restart: unless-stopped
+
+services:
+  migrate:
+    <<: *hardening
+    image: ${MIGRATIONS_IMAGE:?MIGRATIONS_IMAGE 를 .env 에 지정하세요}
+    platform: linux/arm64
+    env_file:
+      - path: migrate.env
+        required: true
+    restart: "no"
+    profiles: ["tools"]
+
+  neo4j-init:
+    <<: *airflow
+    command: ["python", "-m", "pipelines.common.neo4j_migrations"]
+    restart: "no"
+    profiles: ["tools"]
+
+  airflow-init:
+    <<: *airflow
+    command: version
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+    restart: "no"
+    profiles: ["tools"]
+
+  airflow-apiserver:
+    <<: *airflow
+    command: api-server
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  airflow-scheduler:
+    <<: *airflow
+    command: scheduler
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      airflow-apiserver:
+        condition: service_healthy
+    stop_grace_period: 60s
+
+  airflow-dag-processor:
+    <<: *airflow
+    command: dag-processor
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  airflow-logs:

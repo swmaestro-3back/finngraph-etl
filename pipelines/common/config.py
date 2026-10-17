@@ -3,34 +3,171 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
+CHAT_MODEL_ROLES = (
+    "relevance",
+    "entity",
+    "cluster_title",
+    "summary",
+    "triples",
+    "issue_link_proposer",
+    "issue_link_confirmer",
+    "issue_kind",
+    "issue_kind_screen",
+)
+# 비어 있으면 그 단계를 끄는 역할이다. 이때 BEDROCK_CHAT_MODEL 을 대신 쓰지 않는다.
+OPTIONAL_CHAT_MODEL_ROLES = ("issue_kind_screen",)
+
 
 class Settings(BaseSettings):
+    # .env 파일을 읽어오기 위한 설정
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+
     database_url: str = Field(
-        default="postgresql+psycopg://etl:etl@localhost:15432/etl",
+        default="postgresql+psycopg://threeback:12345678@localhost:15432/finngraph",
         validation_alias="DATABASE_URL",
     )
 
     kis_app_key: str = Field(default="", validation_alias="KIS_APP_KEY")
     kis_app_secret: str = Field(default="", validation_alias="KIS_APP_SECRET")
-    kis_account_no: str = Field(default="", validation_alias="KIS_ACCOUNT_NO")
     kis_rate_limit_per_second: int = Field(default=15, validation_alias="KIS_RATE_LIMIT_PER_SECOND")
-
-    stock_intraday_retention_days: int = Field(
-        default=60,
-        validation_alias="STOCK_INTRADAY_RETENTION_DAYS",
+    kis_base_url: str = Field(
+        default="https://openapi.koreainvestment.com:9443",
+        validation_alias="KIS_BASE_URL",
     )
-    stock_intraday_target_delay_minutes: int = Field(
+    # 접근토큰은 발급 자체에 분당 1회 제한이 있고 유효기간이 24시간이다. job마다 새로 발급하면
+    # 곧바로 한도에 걸리므로 파일에 캐시해 프로세스 간에 재사용한다.
+    kis_token_cache_path: str = Field(
+        default="/tmp/etl-kis-token.json",
+        validation_alias="KIS_TOKEN_CACHE_PATH",
+    )
+
+    # === OpenDART ===
+    # 인증키는 일 20,000건 한도다. 회차당 상한은 두지 않는다 — 대상 정렬이 "갱신 오래된
+    # 순"이라 상한을 두면 한 바퀴에 며칠이 걸리고(2,000법인 · 재무 배치 100이면 20일),
+    # 한도에 닿으면 잡이 스스로 멈춰 다음 회차가 이어받는다.
+    # 같은 인증키를 두 이름으로 받는다. 별도 키로 두면 한쪽만 설정한 배포에서 다른 쪽
+    # 파이프라인이 빈 키로 조용히 실패한다. 둘 다 있으면 DART_API_KEY 가 우선이다.
+    dart_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("DART_API_KEY", "OPENDART_API_KEY"),
+    )
+    dart_base_url: str = Field(
+        default="https://opendart.fss.or.kr/api",
+        validation_alias="DART_BASE_URL",
+    )
+    # 공식 한도는 분당 1,000회다. 여유를 두고 초당 10회로 잡는다.
+    dart_rate_limit_per_second: int = Field(
+        default=10,
+        validation_alias="DART_RATE_LIMIT_PER_SECOND",
+    )
+    # 사업연도 몇 개를 받을지. 법인·연도당 CFS/OFS 2회라 늘리면 호출 수가 비례해 는다.
+    dart_financial_years: int = Field(default=3, validation_alias="DART_FINANCIAL_YEARS")
+
+    # === disclosures: 단일판매ㆍ공급계약체결 공시 ===
+    # 백필 소급 연수와 일별 갱신 시 되짚어볼 구간. 근거는 STOCK_DAILY_* 와 같다 — 짧으면
+    # 장애로 빠진 날을 못 채우고, 길면 매일 그만큼 재조회한다. rcept_no UNIQUE 덕에 재조회
+    # 비용은 목록 API 페이지 수뿐이라 겹쳐 잡아도 원문을 다시 받지는 않는다.
+    disclosure_backfill_years: int = Field(
+        default=1,
+        validation_alias="DISCLOSURE_BACKFILL_YEARS",
+    )
+    disclosure_daily_lookback_days: int = Field(
+        default=3,
+        validation_alias="DISCLOSURE_DAILY_LOOKBACK_DAYS",
+    )
+    # 한 회차에 새로 조회할 원문 문서 수 상한. 인증키의 일 호출 한도를 지키는 안전판으로,
+    # 백필(3개년 기준 문서 ~1.1만 건)이 다른 DART job 과 하루 한도를 나눠 쓰게 한다.
+    disclosure_fetch_batch_size: int = Field(
+        default=8000,
+        validation_alias="DISCLOSURE_FETCH_BATCH_SIZE",
+    )
+
+    # 일봉 백필 소급 연수와, 일별 갱신 시 되짚어볼 구간. 갱신 구간이 짧으면 휴장·장애로 빠진
+    # 날을 영영 못 채우고, 길면 매일 그만큼 재조회한다.
+    stock_daily_backfill_years: int = Field(
         default=5,
-        validation_alias="STOCK_INTRADAY_TARGET_DELAY_MINUTES",
+        validation_alias="STOCK_DAILY_BACKFILL_YEARS",
+    )
+    stock_daily_lookback_days: int = Field(
+        default=10,
+        validation_alias="STOCK_DAILY_LOOKBACK_DAYS",
+    )
+    stock_period_lookback_days: int = Field(
+        default=120,
+        validation_alias="STOCK_PERIOD_LOOKBACK_DAYS",
+    )
+    # 테마 지수 일봉 재계산 구간. 구간 첫 거래일은 t-1 로만 쓰므로
+    # stock_daily_lookback_days 이하여야 모든 수익률 쌍이 수정주가로 다시 받은 종목 일봉 안에
+    # 들어간다.
+    theme_daily_lookback_days: int = Field(
+        default=10,
+        validation_alias="THEME_DAILY_LOOKBACK_DAYS",
     )
 
-    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    bedrock_region: str = Field(default="", validation_alias="BEDROCK_REGION")
+    bedrock_embedding_model: str = Field(
+        default="amazon.titan-embed-text-v2:0",
+        validation_alias="BEDROCK_EMBEDDING_MODEL",
+    )
+    bedrock_embedding_max_workers: int = Field(
+        default=32, validation_alias="BEDROCK_EMBEDDING_MAX_WORKERS"
+    )
+    bedrock_chat_model: str = Field(default="", validation_alias="BEDROCK_CHAT_MODEL")
+    # 역할별 채팅 모델. 비어 있으면 BEDROCK_CHAT_MODEL 을 쓴다 — chat_model(role) 로 읽는다.
+    # 출력이 짧고 호출이 많은 판정·라벨은 작은 모델로 내려 지연과 비용을 줄일 수 있다.
+    bedrock_relevance_model: str = Field(default="", validation_alias="BEDROCK_RELEVANCE_MODEL")
+    bedrock_entity_model: str = Field(default="", validation_alias="BEDROCK_ENTITY_MODEL")
+    bedrock_cluster_title_model: str = Field(
+        default="", validation_alias="BEDROCK_CLUSTER_TITLE_MODEL"
+    )
+    bedrock_summary_model: str = Field(default="", validation_alias="BEDROCK_SUMMARY_MODEL")
+    bedrock_triples_model: str = Field(default="", validation_alias="BEDROCK_TRIPLES_MODEL")
+    # 이슈 연결 투표 판정(pipelines/news/transformers/issue_link_vote)에 쓰는 모델이다. 제안자
+    # 모델은 screen(1차 거르기)·evidence·matter 관점 판정·계획 경로·rank 단계를, 확인자 모델은
+    # judge·check·계획 이행 확인 단계를 맡는다.
+    # 확인자 둘이 모두 통과해야 연결되므로 연결 정밀도는 주로 확인자 모델이 정한다. 성격 분류는 주가
+    # 반응 이슈를 연결에서 빼는 판정이며 두 모델이 나눠 맡는다. 1차 모델(Kimi)이 모든 이슈를 먼저
+    # 분류하고, 1차 답이 market_reaction 이거나 리포트·전망 단서가 있는 event 이면 성격 분류 모델
+    # (Sonnet)이 다시 판정해 그 답을 쓴다. 1차 모델을 비우거나 성격 분류 모델과 같게 두면 성격 분류
+    # 모델 하나로만 분류한다.
+    bedrock_issue_link_proposer_model: str = Field(
+        default="moonshotai.kimi-k2.5", validation_alias="BEDROCK_ISSUE_LINK_PROPOSER_MODEL"
+    )
+    bedrock_issue_link_confirmer_model: str = Field(
+        default="us.anthropic.claude-sonnet-4-6",
+        validation_alias="BEDROCK_ISSUE_LINK_CONFIRMER_MODEL",
+    )
+    bedrock_issue_kind_model: str = Field(
+        default="us.anthropic.claude-sonnet-4-6", validation_alias="BEDROCK_ISSUE_KIND_MODEL"
+    )
+    bedrock_issue_kind_screen_model: str = Field(
+        default="moonshotai.kimi-k2.5", validation_alias="BEDROCK_ISSUE_KIND_SCREEN_MODEL"
+    )
+    bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
+    aws_bearer_token_bedrock: str = Field(default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK")
+
+    neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
+    neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
+    neo4j_password: str = Field(default="", validation_alias="NEO4J_PASSWORD")
+    neo4j_database: str = Field(default="", validation_alias="NEO4J_DATABASE")
+
+    def chat_model(self, role: str) -> str:
+        """역할(CHAT_MODEL_ROLES)에 쓸 Bedrock 채팅 모델 ID 를 돌려준다.
+        OPTIONAL_CHAT_MODEL_ROLES 의 역할은 비어 있으면 "" 를 돌려준다."""
+
+        if role not in CHAT_MODEL_ROLES:
+            raise ValueError(f"알 수 없는 모델 역할: {role}")
+        model = getattr(self, f"bedrock_{role}_model")
+        if role in OPTIONAL_CHAT_MODEL_ROLES:
+            return model
+        return model or self.bedrock_chat_model
 
 
 @lru_cache

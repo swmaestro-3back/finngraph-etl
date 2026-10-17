@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from typing import Any
+
+
+@dataclass(frozen=True)
+class CorpMasterRow:
+    """companies 한 행. 계약상대 역매칭과 제출사 자기 식별에 함께 쓴다.
+
+    Attributes:
+        company_id (int): companies.id.
+        corp_code (str): DART 고유번호(8자리).
+        name (str): 법인명.
+        ticker (str | None): 상장 종목 단축코드. 비상장이면 None.
+    """
+
+    company_id: int
+    corp_code: str
+    name: str
+    ticker: str | None
+
+
+@dataclass(frozen=True)
+class SupplyContractEdge:
+    """SUPPLIES_TO 근거 원장 행 한 개의 재료 — 계약상대 ticker 매칭에 성공한 공시를
+    정정 체인당 최신 회차 1행으로 접은 것.
+
+    relation_sources(근거 원장)의 disclosure 행이 되고, 간선 자연키의 정규명은
+    companies 조인으로 해석한다 — Neo4j 시드 노드의 name과 같은 원천이라 일치한다.
+
+    Attributes:
+        rcept_no (str): 체인 최신 회차의 접수번호(계약 내용의 최종 확정본). 원장의 출처
+            키. 뷰어 URL 은 disclosures.link 조인으로 얻는다.
+        rcept_dt (date): 체인 루트(원공시)의 접수일자 — 계약이 처음 알려진 시점. 원장의
+            mentioned_at.
+        item (str | None): COALESCE(contract_name, contract_type).
+        filer_ticker (str): 제출사(공급자) 종목 단축코드.
+        filer_name (str): 제출사 정규명 (companies.name).
+        counterparty_ticker (str): 계약상대(수요자) 종목 단축코드.
+        counterparty_name (str): 계약상대 정규명 (companies.name).
+    """
+
+    rcept_no: str
+    rcept_dt: date
+    item: str | None
+    filer_ticker: str
+    filer_name: str
+    counterparty_ticker: str
+    counterparty_name: str
+
+
+@dataclass(frozen=True)
+class DisclosureRecord:
+    """disclosures 한 행. fields/meta는 JSONB로 그대로 들어간다.
+
+    Attributes:
+        rcept_no (str): 접수번호. 테이블의 유일키이자 수집 재개 상태다.
+        corp_code (str): 제출사 DART 고유번호.
+        company_id (int | None): 제출사 companies.id. corp_code 동기화 전이면 None.
+        ticker (str | None): 제출사 종목 단축코드. 비상장이면 None.
+        corp_cls (str | None): 'KOSPI' | 'KOSDAQ' | 'KONEX' | 'UNLISTED'.
+        report_nm (str | None): 보고서명. 정정이면 '[기재정정]' 류 접두가 붙는다.
+        is_correction (bool): 원문에 정정신고 블록이 있는지.
+        correction_target_report (str | None): 정정신고 블록의 "정정관련 공시서류".
+        correction_target_date (date | None): 정정신고 블록의 "정정관련 공시서류제출일" —
+            직전 회차의 접수일. 체인 해소(원공시 찾기)의 매칭 키다.
+        correction_reason (str | None): 정정신고 블록의 "정정사유".
+        original_rcept_no (str | None): 체인 루트(최초 원공시) 접수번호. 원공시는 자기
+            자신으로 확정하고, 정정공시는 원문에 부모 접수번호가 없어 None 으로 두면
+            link job 의 체인 해소가 채운다.
+        rcept_dt (date): 접수일자.
+        flr_nm (str | None): 공시 제출인명.
+        link (str): DART 뷰어 URL.
+        contract_type (str | None): 판매ㆍ공급계약 구분.
+        contract_name (str | None): 체결계약명.
+        counterparty (str | None): 계약상대 원문 표기(자유 텍스트).
+        counterparty_corp_name (str | None): 역매칭된 법인명.
+        counterparty_corp_code (str | None): 역매칭된 DART 고유번호.
+        counterparty_ticker (str | None): 역매칭된 종목 단축코드(상장사만).
+        start_date (date | None): 계약 시작일. 비정형 기재는 None(원문은 fields 에 남음).
+        end_date (date | None): 계약 종료일. 위와 같다.
+        order_date (date | None): 계약(수주)일자. 위와 같다.
+        fields (dict[str, Any]): 승격되지 않은 나머지 계약 내용(금액류ㆍ조건ㆍ정정 블록 등).
+        meta (dict[str, Any]): fetched_at, parser_version.
+    """
+
+    rcept_no: str
+    corp_code: str
+    company_id: int | None
+    ticker: str | None
+    corp_cls: str | None
+    report_nm: str | None
+    is_correction: bool
+    correction_target_report: str | None
+    correction_target_date: date | None
+    correction_reason: str | None
+    original_rcept_no: str | None
+    rcept_dt: date
+    flr_nm: str | None
+    link: str
+    contract_type: str | None
+    contract_name: str | None
+    counterparty: str | None
+    counterparty_corp_name: str | None
+    counterparty_corp_code: str | None
+    counterparty_ticker: str | None
+    start_date: date | None
+    end_date: date | None
+    order_date: date | None
+    fields: dict[str, Any]
+    meta: dict[str, Any]

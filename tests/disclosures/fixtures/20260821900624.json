@@ -1,0 +1,56 @@
+{
+  "id": "20260821900624",
+  "link": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260821900624",
+  "corp_code": "00132318",
+  "corp_name": "성광벤드",
+  "stock_code": "014620",
+  "corp_cls": "KOSDAQ",
+  "report_nm": "단일판매ㆍ공급계약체결",
+  "is_correction": false,
+  "rcept_dt": "2026-08-21",
+  "flr_nm": "성광벤드",
+  "fields": {
+    "contract_type": "캐나다 LNGC Phase 2 (STAINLESS STEEL BUTT WELDING FITTINGS 공급계약)",
+    "contract_name": null,
+    "contract_amount": 25493641806,
+    "fixed_amount": 25493641806,
+    "conditional_amount": null,
+    "is_conditional": "미해당",
+    "recent_sales": 245669879092,
+    "sales_ratio": 10.38,
+    "is_large_corp": null,
+    "counterparty": "JGC Fluor BC LNG ll JV",
+    "counterparty_corp_name": null,
+    "counterparty_corp_code": null,
+    "counterparty_stock_code": null,
+    "counterparty_match_rule": null,
+    "counterparty_relation": null,
+    "counterparty_business": "LNGC Phase-2",
+    "counterparty_recent_sales": null,
+    "counterparty_prior_contract": "미해당",
+    "region": "캐나다",
+    "start_date": "2026-08-20",
+    "end_date": "2027-04-21",
+    "order_date": "2026-08-20",
+    "conditions": {
+      "계약금ㆍ선급금 유무": "유",
+      "대금지급 조건 등": "공급계약 진행에 따른 청구 및 지급(t/t)"
+    },
+    "supply_method": {
+      "자체생산": "해당",
+      "외주생산": "미해당",
+      "기타": "-"
+    },
+    "reservation": {
+      "유보기한": "-",
+      "유보사유": "-"
+    },
+    "note": "- 상기2. 계약내역의 '최근 매출액'은 당사의 2025년도 기말 연결재무제표 기준입니다. - 상기2. 계약내역의 '확정 계약금액'은 USD 18,177,284.71이며, 2026년 08월 20일자 매매기준율 USD 1 = 1402.50원을 적용하여 계산하였습니다. - 상기5. 계약기간 시작일은 최초 계약체결일이고, 종료일은 최종 납품일입니다. - 상기 계약금액 및 계약기간은 공사 진행에 따라 변동될 수 있습니다.",
+    "related_disclosures": null,
+    "correction": null
+  },
+  "meta": {
+    "fetched_at": "2026-08-22T20:31:41+09:00",
+    "parser_version": 3
+  }
+}
