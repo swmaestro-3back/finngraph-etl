@@ -198,6 +198,12 @@ jobs:
       contents: read
 
     steps:
+      - name: environment secret 확인
+        env:
+          DEPLOY_INSTANCE_ID: ${{ secrets.DEPLOY_INSTANCE_ID }}
+        run: |
+          : "${DEPLOY_INSTANCE_ID:?prod environment secret DEPLOY_INSTANCE_ID 가 없습니다}"
+
       - name: main 포함 여부 확인
         env:
           GH_TOKEN: ${{ github.token }}
@@ -213,6 +219,20 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/finngraph-github-cd-etl
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: main 빌드 완료 대기
+        run: |
+          for _ in $(seq 1 90); do
+            missing=""
+            for repo in "$AIRFLOW_REPOSITORY" "$MIGRATIONS_REPOSITORY"; do
+              aws ecr describe-images --repository-name "$repo" --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1 || missing+=" $repo"
+            done
+            [ -z "$missing" ] && exit 0
+            echo "main CD 빌드 대기:$missing:$GITHUB_SHA"
+            sleep 10
+          done
+          echo "::error::15분 안에 main CD 가 이미지를 만들지 않았습니다:$missing:$GITHUB_SHA"
+          exit 1
 
       - uses: actions/checkout@v4
         with:
