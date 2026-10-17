@@ -28,3 +28,4 @@ def test_repository_migrations_are_idempotent_statements():
         for stmt in statements:
             assert stmt.startswith("CREATE "), (path.name, stmt)
             assert "IF NOT EXISTS" in stmt, (path.name, stmt)
+            assert "//" not in stmt, (path.name, stmt)

@@ -32,4 +32,4 @@ def apply(directory: Path) -> None:
 
 
 if __name__ == "__main__":
-    apply(Path(os.environ.get("NEO4J_MIGRATIONS_DIR", DEFAULT_DIR)))
+    apply(Path(os.environ.get("NEO4J_MIGRATIONS_DIR") or DEFAULT_DIR))
