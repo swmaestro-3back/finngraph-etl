@@ -12,6 +12,7 @@ COPY --chown=airflow:root pipelines /opt/airflow/pipelines
 COPY --chown=airflow:root scripts /opt/airflow/scripts
 # cluster policy(태스크 실패 Slack 알림). Airflow 가 $AIRFLOW_HOME/config 를 자동 탐색한다.
 COPY --chown=airflow:root config /opt/airflow/config
+COPY --chown=airflow:root migrations/neo4j /opt/airflow/migrations/neo4j
 
 # 잡 실행 시 /opt/airflow의 사본(마운트/베이크)이 site-packages 사본보다 우선하게 한다.
 ENV PYTHONPATH=/opt/airflow
