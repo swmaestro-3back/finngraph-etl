@@ -4,12 +4,14 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [develop]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       sha:
-        description: "빌드할 커밋 SHA (비우면 develop 최신)"
+        description: "빌드할 커밋 SHA (비우면 실행한 브랜치의 최신)"
         required: false
+  release:
+    types: [published]
 
 concurrency:
   group: cd-${{ github.event.workflow_run.head_sha || github.sha }}
@@ -19,16 +21,17 @@ permissions: {}
 
 env:
   AWS_REGION: ap-northeast-2
-  DEPLOY_INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
   ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com
-  ECR_REPOSITORY: finngraph/etl-airflow
+  AIRFLOW_REPOSITORY: finngraph/etl-airflow
+  MIGRATIONS_REPOSITORY: finngraph/etl-migrations
 
 jobs:
   build-push:
     name: Build and push to ECR
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
 
@@ -38,11 +41,14 @@ jobs:
       id-token: write
       contents: read
 
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      branch: ${{ steps.meta.outputs.branch }}
+
     steps:
       - name: 저장소 변수 확인
         run: |
           : "${AWS_ACCOUNT_ID:?저장소 변수 AWS_ACCOUNT_ID 가 없습니다}"
-          : "${DEPLOY_INSTANCE_ID:?저장소 변수 DEPLOY_INSTANCE_ID 가 없습니다}"
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
 
@@ -53,17 +59,24 @@ jobs:
 
       - name: 빌드 대상 확인
         id: meta
+        env:
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         run: |
+          case "$BRANCH" in
+            develop|main) ;;
+            *) echo "::error::develop·main 에서만 빌드합니다: $BRANCH"; exit 1 ;;
+          esac
           SHA=$(git rev-parse HEAD)
-          git merge-base --is-ancestor "$SHA" origin/develop || {
-            echo "::error::develop 에 없는 커밋은 빌드하지 않습니다: $SHA"
+          git merge-base --is-ancestor "$SHA" "origin/$BRANCH" || {
+            echo "::error::$BRANCH 에 없는 커밋은 빌드하지 않습니다: $SHA"
             exit 1
           }
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "빌드 커밋: $SHA"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "빌드 커밋: $BRANCH $SHA"
           git log --oneline -1
 
-      - name: AWS 자격증명 (OIDC — 장기 키 없음)
+      - name: AWS 자격증명
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/finngraph-github-cd-etl
@@ -74,7 +87,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: 빌드 · push
+      - name: airflow 이미지 빌드 · push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -82,14 +95,62 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.sha }}
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:develop
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.ECR_REGISTRY }}/${{ env.AIRFLOW_REPOSITORY }}:${{ steps.meta.outputs.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.AIRFLOW_REPOSITORY }}:${{ steps.meta.outputs.branch }}
+          cache-from: type=gha,scope=airflow
+          cache-to: type=gha,mode=max,scope=airflow
+
+      - name: 마이그레이션 이미지 빌드 · push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/migrations/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.MIGRATIONS_REPOSITORY }}:${{ steps.meta.outputs.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.MIGRATIONS_REPOSITORY }}:${{ steps.meta.outputs.branch }}
+
+      - name: 요약
+        run: |
+          {
+            echo "### ECR push 완료"
+            echo '```'
+            echo "${ECR_REGISTRY}/${AIRFLOW_REPOSITORY}:${SHA}"
+            echo "${ECR_REGISTRY}/${MIGRATIONS_REPOSITORY}:${SHA}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+
+  deploy-dev:
+    name: Deploy to dev
+    needs: build-push
+    if: needs.build-push.outputs.branch == 'develop'
+    runs-on: ubuntu-24.04-arm
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      DEPLOY_INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
+
+    steps:
+      - name: 저장소 변수 확인
+        run: |
+          : "${DEPLOY_INSTANCE_ID:?저장소 변수 DEPLOY_INSTANCE_ID 가 없습니다}"
+
+      - name: AWS 자격증명
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/finngraph-github-cd-etl
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: 서버 배포 (SSM)
+        env:
+          SHA: ${{ needs.build-push.outputs.sha }}
         run: |
-          SHA='${{ steps.meta.outputs.sha }}'
           REMOTE=$(cat <<EOS
           set -euo pipefail
           cd /opt/finngraph-etl
@@ -123,13 +184,72 @@ jobs:
             --query '[StandardOutputContent,StandardErrorContent]' --output text
           [ "$ST" = "Success" ] || exit 1
 
-      - name: 요약
+  release:
+    name: Deploy to prod
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-24.04-arm
+    environment: prod
+    concurrency:
+      group: release-prod
+      cancel-in-progress: false
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: main 포함 여부 확인
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          {
-            echo "### ECR push 완료"
-            echo '```'
-            echo "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.sha }}"
-            echo '```'
-            echo "### 배포 완료"
-            echo "서버가 이 이미지로 교체되었다."
-          } >> "$GITHUB_STEP_SUMMARY"
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" --jq .status)
+          case "$status" in
+            ahead|identical) ;;
+            *) echo "::error::릴리스 커밋이 main 에 없다 ($status)"; exit 1 ;;
+          esac
+
+      - name: AWS 자격증명
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/finngraph-github-cd-etl
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy
+
+      - name: airflow 릴리스 태그
+        id: airflow
+        uses: swmaestro-3back/github-actions/actions/ecr-tag@main
+        with:
+          image_name: ${{ env.AIRFLOW_REPOSITORY }}
+          source_tag: ${{ github.sha }}
+          tags: ${{ github.event.release.tag_name }}
+
+      - name: 마이그레이션 릴리스 태그
+        id: migrations
+        uses: swmaestro-3back/github-actions/actions/ecr-tag@main
+        with:
+          image_name: ${{ env.MIGRATIONS_REPOSITORY }}
+          source_tag: ${{ github.sha }}
+          tags: ${{ github.event.release.tag_name }}
+
+      - name: 배포
+        uses: swmaestro-3back/github-actions/actions/ssm-deploy@main
+        with:
+          instance_id: ${{ secrets.DEPLOY_INSTANCE_ID }}
+          compose_dir: /home/ubuntu/finngraph-etl
+          compose_file: compose.yaml
+          compose_source: deploy/prod/compose.yaml
+          env_ssm_prefix: /finngraph/prod/etl
+          env_file: etl.env
+          env_required_keys: DATABASE_URL AIRFLOW__DATABASE__SQL_ALCHEMY_CONN AIRFLOW__CORE__FERNET_KEY AIRFLOW__API_AUTH__JWT_SECRET _AIRFLOW_WWW_USER_USERNAME _AIRFLOW_WWW_USER_PASSWORD NEO4J_URI NEO4J_USERNAME NEO4J_PASSWORD NEO4J_DATABASE INTERNAL_API_TOKEN BACKEND_INTERNAL_URL HOT_THEMES_REDIS_URL
+          extra_env: migrate.env=/finngraph/prod/etl-migrate
+          service: airflow-apiserver airflow-scheduler airflow-dag-processor
+          pre_deploy_service: migrate neo4j-init airflow-init
+          image_env_var: AIRFLOW_IMAGE
+          image_name: ${{ env.AIRFLOW_REPOSITORY }}
+          image_digest: ${{ steps.airflow.outputs.image_digest }}
+          extra_images: MIGRATIONS_IMAGE=${{ env.MIGRATIONS_REPOSITORY }}@${{ steps.migrations.outputs.image_digest }}
+          health_url: http://127.0.0.1:8080/api/v2/monitor/health
+          command_timeout_seconds: "900"
