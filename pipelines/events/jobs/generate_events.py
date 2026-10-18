@@ -1,7 +1,7 @@
 """
 EVENT 노드 생성과 last_published_at 갱신
 승격된 클러스터(대표와 제목이 있는 것) 중 Neo4j 에 없는 것을 EVENT 노드로 올린다.
-제목은 cluster_articles 잡이 채운 news_clusters.title, 당사자는 클러스터 후보 기사 중
+제목은 promote_clusters 잡이 채운 news_clusters.title, 당사자는 클러스터 멤버 기사 중
 NEWS_EVENT_COMPANY_MIN_ARTICLES 건 이상의 news_companies 에 든 기업이다. LLM 을 부르지 않는다.
 
 이미 노드가 있는 클러스터는 last_published_at 만 RDB 값으로 올린다. 승격 뒤 기사가 붙으면
@@ -103,7 +103,7 @@ async def _run() -> dict[str, int]:
         if not clusters:
             return stats
 
-        # 3. 당사자 — 후보 기사 여러 건에 걸쳐 연결된 기업 (기업 0 은 노드를 만들지 않는다)
+        # 3. 당사자 — 멤버 기사 여러 건에 걸쳐 연결된 기업 (기업 0 은 노드를 만들지 않는다)
         company_ids = fetch_cluster_company_ids(
             [cluster.cluster_id for cluster in clusters], settings.company_min_articles
         )

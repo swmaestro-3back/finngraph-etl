@@ -108,7 +108,7 @@ def collect(
     마킹한다.
 
     클러스터 판정은 하지 않는다 — news_cluster_articles DAG 가 cluster_id 없는 기사를 읽어
-    판정한다(jobs/cluster_articles.py).
+    판정한다(jobs/vectorize_articles.py → assign_clusters.py → promote_clusters.py).
     """
 
     if not queries:

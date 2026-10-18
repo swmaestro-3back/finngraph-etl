@@ -24,13 +24,13 @@ LAST_PUBLISHED = PUBLISHED + timedelta(days=3)
 SINCE = datetime(2026, 1, 1, tzinfo=SEOUL_TIMEZONE)
 
 
-def _insert_news(session, marker: str, index: int, *, candidate: bool) -> int:
+def _insert_news(session, marker: str, index: int) -> int:
     return int(
         session.execute(
             text(
                 """
-                INSERT INTO news (title, text, link, published_at, cluster_terms)
-                VALUES (:title, '본문', :link, :published_at, CAST(:terms AS jsonb))
+                INSERT INTO news (title, text, link, published_at)
+                VALUES (:title, '본문', :link, :published_at)
                 RETURNING id;
                 """
             ),
@@ -38,7 +38,6 @@ def _insert_news(session, marker: str, index: int, *, candidate: bool) -> int:
                 "title": f"기사 {marker} {index}",
                 "link": f"https://example.com/ev/{marker}/{index}",
                 "published_at": PUBLISHED,
-                "terms": '{"엘앤에프": 2.0}' if candidate else None,
             },
         ).scalar_one()
     )
@@ -52,10 +51,10 @@ def _insert_cluster(
             text(
                 """
                 INSERT INTO news_clusters (
-                    representative_news_id, title, original_size, member_count,
-                    first_published_at, last_published_at
+                    representative_news_id, title, member_count,
+                    first_published_at, mean_published_at, last_published_at
                 )
-                VALUES (:representative, :title, :members, :members, :published, :last)
+                VALUES (:representative, :title, :members, :published, :published, :last)
                 RETURNING id;
                 """
             ),
@@ -92,12 +91,12 @@ def _insert_company(session, name: str) -> int:
 
 @pytest.fixture
 def fixture_rows():
-    """promoted: 대표·제목 있고 후보 3건 + 승격 후 기사 1건(승격 기준 3).
-    untitled: 제목 없음. collecting: 대표 없음. legacy: 옛 로직의 클러스터(후보 1건)."""
+    """promoted: 대표·제목 있고 멤버 4건(승격 기준 3).
+    untitled: 제목 없음. collecting: 대표 없음. legacy: 멤버 1건."""
     marker = uuid.uuid4().hex
     with session_scope() as session:
-        # news[0..2] 후보, news[3] 승격 후 기사, news[4..6] 다른 클러스터의 후보
-        news = [_insert_news(session, marker, i, candidate=i != 3) for i in range(7)]
+        # news[0..3] promoted 의 멤버 4건, news[4..6] 다른 클러스터의 멤버
+        news = [_insert_news(session, marker, i) for i in range(7)]
         promoted = _insert_cluster(
             session, news[0:4], representative=news[0], title="엘앤에프 공급계약", members=3
         )
@@ -109,7 +108,7 @@ def fixture_rows():
             session, [news[6]], representative=news[6], title="옛 클러스터", members=1
         )
         a, b, c = (_insert_company(session, f"기업{marker[:8]}{suffix}") for suffix in "ABC")
-        # A: 후보 3건, B: 후보 2건, C: 후보 1건 + 승격 후 기사 1건
+        # A: 3건, B: 2건, C: 2건(news[2]·news[3])
         links = [
             (news[0], a), (news[1], a), (news[2], a),
             (news[0], b), (news[1], b),
@@ -159,14 +158,14 @@ def test_fetch_promoted_clusters_respects_scan_range(fixture_rows):
     }
 
 
-def test_cluster_companies_need_enough_candidate_articles(fixture_rows):
+def test_cluster_companies_need_enough_member_articles(fixture_rows):
     a, b, c = fixture_rows["companies"]
     cluster_id = fixture_rows["promoted"]
 
-    # 후보 3건 이상: A 만. C 는 승격 후 기사까지 세면 2건이지만 후보로는 1건이다.
+    # 멤버 3건 이상: A 만
     assert fetch_cluster_company_ids([cluster_id], 3) == {cluster_id: [a]}
-    # 기준을 낮추면 많은 후보에 나온 기업이 먼저 온다
-    assert fetch_cluster_company_ids([cluster_id], 2) == {cluster_id: [a, b]}
+    # 기준을 낮추면 많은 기사에 나온 기업이 먼저, 같으면 id 순
+    assert fetch_cluster_company_ids([cluster_id], 2) == {cluster_id: [a, b, c]}
     assert fetch_cluster_company_ids([cluster_id], 1) == {cluster_id: [a, b, c]}
 
 

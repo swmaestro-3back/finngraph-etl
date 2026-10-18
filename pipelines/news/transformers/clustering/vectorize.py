@@ -21,12 +21,12 @@ class IdfTable:
     """
 
     document_frequency: dict[str, int] = field(default_factory=dict)
-    document_count: int = 0
+    article_count: int = 0
 
     def idf(self, token: str) -> float:
         """처음 보는 토큰은 df=0 으로 본다 — 가장 큰 값이다."""
         df = self.document_frequency.get(token, 0)
-        return math.log((1.0 + self.document_count) / (1.0 + df)) + 1.0
+        return math.log((1.0 + self.article_count) / (1.0 + df)) + 1.0
 
 
 def vectorize(terms: Iterable[tuple[str, float]], idf: IdfTable) -> dict[str, float]:
@@ -52,3 +52,19 @@ def cosine(left: dict[str, float], right: dict[str, float]) -> float:
     if len(left) > len(right):
         left, right = right, left
     return sum(value * right.get(token, 0.0) for token, value in left.items())
+
+
+# 서브벡터 필드 → IdfTable. 표에 없는 필드는 모든 토큰의 IDF 가 1 인 빈 표로 본다.
+IdfTables = dict[str, IdfTable]
+
+_EMPTY_TABLE = IdfTable()
+
+
+def vectorize_fields(
+    weights: dict[str, dict[str, float]], idf_tables: IdfTables
+) -> dict[str, dict[str, float]]:
+    """필드마다 vectorize. 입력의 필드 집합이 그대로 출력의 필드 집합이다."""
+    return {
+        field: vectorize(terms.items(), idf_tables.get(field, _EMPTY_TABLE))
+        for field, terms in weights.items()
+    }

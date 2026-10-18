@@ -26,8 +26,7 @@ from typing import Any, Protocol
 from pipelines.common.gazetteer import CompanyMatch
 from pipelines.news.transformers.summarizer import PointKind
 
-# 임베딩 텍스트에 넣는 멤버 기사 제목 수다. 저장소가 준 순서대로 앞에서부터 넣는다. 저장소는 후보
-# 기사(승격 전에 들어온 기사)를 먼저 주고, 그 안에서는 발행 시각순으로 준다.
+# 임베딩 텍스트에 넣는 멤버 기사 제목 수다. 저장소가 준 순서(발행 시각순)대로 앞에서부터 넣는다.
 EMBEDDING_ARTICLE_TITLES = 3
 
 SAME_EVENT = "same_event"
@@ -115,8 +114,8 @@ def build_embedding_text(
     제목은 금액·수치를 뺀 사건 이름이라 회차만 다른 이슈끼리 잘 묶고, 요약과 기사 제목은
     당사자·지표 같은 맥락을 보탠다. 연결 임계값은 이 텍스트로 계산한 코사인에 맞춰 정했으므로,
     구성을 바꾸면 임계값도 다시 맞춰야 한다. 전재 기사의 중복 제목을 빼지 않는 것도 같은 이유다.
-    언제 만들어도 같은 텍스트가 나오도록, 저장소는 승격 뒤에 바뀌지 않는 후보 기사를 앞에 둔다
-    (SELECT_CLUSTER_MEMBERS_SQL).
+    저장소가 멤버를 발행 시각순으로 주므로(SELECT_CLUSTER_MEMBERS_SQL) 승격 직후에 만들든 기사가 더
+    붙은 뒤에 만들든 앞 제목은 거의 같다 — 더 이른 기사가 늦게 도착하는 드문 경우만 다르다.
     """
 
     lines = [_collapse(title)]

@@ -73,10 +73,10 @@ def story():
                 text(
                     """
                     INSERT INTO news_clusters (
-                        first_published_at, last_published_at, original_size, member_count,
+                        first_published_at, last_published_at, mean_published_at, member_count,
                         title, updated_at
                     )
-                    VALUES (:t, :t, 5, 5, :title, :u) RETURNING id
+                    VALUES (:t, :t, :t, 5, :title, :u) RETURNING id
                     """
                 ),
                 {"t": BASE + timedelta(days=day), "title": title, "u": updated_at},
@@ -91,18 +91,15 @@ def story():
             summary: str | None = None,
             points: list | None = None,
             representative: bool = False,
-            candidate: bool = False,
         ) -> int:
             news_id = session.execute(
                 text(
                     """
                     INSERT INTO news (
-                        title, text, link, published_at, cluster_id, summary, summary_points,
-                        cluster_terms
+                        title, text, link, published_at, cluster_id, summary, summary_points
                     )
                     VALUES (
-                        :title, '본문', :link, :p, :c, :summary, CAST(:points AS jsonb),
-                        CAST(:terms AS jsonb)
+                        :title, '본문', :link, :p, :c, :summary, CAST(:points AS jsonb)
                     )
                     RETURNING id
                     """
@@ -114,8 +111,6 @@ def story():
                     "c": cluster_id,
                     "summary": summary,
                     "points": None if points is None else json.dumps(points, ensure_ascii=False),
-                    # 후보 기사(승격 전에 들어온 기사)만 토큰 가중치가 있다.
-                    "terms": '{"실적": 1.0}' if candidate else None,
                 },
             ).scalar_one()
             news_ids.append(news_id)
@@ -151,11 +146,10 @@ def story():
             summary="첫 문장이에요. 둘째 문장이에요.",
             points=CHANGE_POINTS,
             representative=True,
-            candidate=True,
         )
-        # 둘째·넷째는 승격 뒤에 붙은 기사이고, 셋째는 후보 기사다.
+        # 멤버 넷은 발행 시각순으로 읽힌다.
         member(ids["root"], "둘째 기사", 2, (company_a, company_b))
-        member(ids["root"], "셋째 기사", 3, candidate=True)
+        member(ids["root"], "셋째 기사", 3)
         member(ids["root"], "넷째 기사", 4)
         member(
             ids["plain"], "건설지출 기사", 50, summary="건설지출이 늘었어요.", representative=True
@@ -253,18 +247,18 @@ def test_targets_need_title_representative_and_summary_or_wait(story):
     ]
 
 
-def test_members_candidates_first_by_published_at_with_companies(story):
+def test_members_by_published_at_with_companies(story):
     members = fetch_cluster_members([story["root"], story["plain"], -1])
 
     def at(hours: int) -> datetime:
         return BASE + timedelta(hours=hours)
 
-    # 후보 기사(승격 뒤에 바뀌지 않는다)를 먼저, 그 안에서는 발행 시각순으로 읽는다.
+    # 멤버를 발행 시각순으로 읽는다.
     assert members == {
         story["root"]: [
             ClusterMember("첫 기사", frozenset({story["a"]}), at(1)),
-            ClusterMember("셋째 기사", frozenset(), at(3)),
             ClusterMember("둘째 기사", frozenset({story["a"], story["b"]}), at(2)),
+            ClusterMember("셋째 기사", frozenset(), at(3)),
             ClusterMember("넷째 기사", frozenset(), at(4)),
         ],
         story["plain"]: [ClusterMember("건설지출 기사", frozenset(), at(50))],

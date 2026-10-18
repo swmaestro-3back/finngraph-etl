@@ -22,7 +22,7 @@ DB migration 파일을 관리합니다. 운영 DB에 migration을 적용하기 �
 
 코드보다 마이그레이션을 먼저 적용합니다. 테이블·컬럼이 없으면 해당 태스크가 실패하고, 그 태스크가
 Asset 을 발행하는 경우 하류 DAG까지 그날 멈춥니다. 버전별 주의 사항(V5 테마 봉, V6 등락률, V9 개체
-사전, V10 요약 핵심 포인트, V11 일봉 기준가, V12 이슈 타임라인, V13 이슈 연결 판정)은
+사전, V10 요약 핵심 포인트, V11 일봉 기준가, V12 이슈 타임라인, V13 이슈 연결 판정, V14 클러스터링 모델)은
 `dags/README.md` 의 "배포 순서" 를 참고하세요.
 
 V13(`V13__issue_link_votes.sql`)은 이슈 연결 투표 판정에 쓰는 컬럼과 테이블을 더합니다.
@@ -31,3 +31,13 @@ V13(`V13__issue_link_votes.sql`)은 이슈 연결 투표 판정에 쓰는 컬럼
 `news_issue_link_llm_calls` 는 LLM 응답을 입력 해시로 캐시하면서 감사 기록으로도 씁니다. 이 테이블에는
 뉴스 텍스트가 담긴 요청 원문을 저장하지 않고 해시만 남깁니다. 최종 연결 결과는 V12 의 컬럼에 그대로
 씁니다.
+
+V14(`V14__news_clustering_paper_model.sql`)는 뉴스 클러스터링을 서브벡터 + 시간 피처 모델로 바꿉니다. `news` 에
+`term_weights`·`cluster_score`·`cluster_features` 가, `news_clusters` 에 `centroids`·`mean_published_at` 이 생기고
+옛 프로필 컬럼(`news.cluster_terms`, `news_clusters.term_weights`·`original_size`·`cohesion`)은 지워집니다. IDF 사전 표
+`news_cluster_idf_terms`·`news_cluster_idf_meta` 가 새로 생깁니다. **데이터를 보존하지 않습니다** — 적용 전 백업하고,
+적용 뒤 `news_cluster_articles` 를 멈춘 채 `scripts/recluster_news.py --apply` 로 전체를 다시 판정한 다음
+`news_backfill_issue_timeline`(`reset=true, links=true, apply=true`)으로 이슈 연결을 다시 만듭니다
+(`pipelines/news/README.md` "클러스터와 하류"). 배포 환경의 `.env`·`.env.news` 에 남은 옛 `NEWS_CLUSTER_THRESHOLD`(0.35, 코사인
+스케일)는 반드시 새 스케일(Γ, 운영값 1.5)로 바꾼다 — 그대로 두면 거의 모든 기사가 한 클러스터로 합쳐진다. `.env.news` 가
+`.env` 보다 나중에 읽혀 값을 덮어쓴다.
