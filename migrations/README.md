@@ -38,6 +38,9 @@ V14(`V14__news_clustering_paper_model.sql`)는 뉴스 클러스터링을 서브�
 `news_cluster_idf_terms`·`news_cluster_idf_meta` 가 새로 생깁니다. **데이터를 보존하지 않습니다** — 적용 전 백업하고,
 적용 뒤 `news_cluster_articles` 를 멈춘 채 `scripts/recluster_news.py --apply` 로 전체를 다시 판정한 다음
 `news_backfill_issue_timeline`(`reset=true, links=true, apply=true`)으로 이슈 연결을 다시 만듭니다
-(`pipelines/news/README.md` "클러스터와 하류"). 배포 환경의 `.env`·`.env.news` 에 남은 옛 `NEWS_CLUSTER_THRESHOLD`(0.35, 코사인
+(`pipelines/news/README.md` "클러스터와 하류"). 기존 클러스터·Event·트리플·요약·연결을 보존한 채 새 컬럼
+(`term_weights`·IDF 표·`centroids`·`mean_published_at`·`member_count`)만 채우려면 대신
+`news_backfill_cluster_centroids` DAG 를 수동으로 한 번 돌립니다 — 클러스터 구성은 바뀌지 않고, 다음 판정 런부터 새 기사가
+옛 클러스터와도 정상적으로 비교됩니다. 배포 환경의 `.env`·`.env.news` 에 남은 옛 `NEWS_CLUSTER_THRESHOLD`(0.35, 코사인
 스케일)는 반드시 새 스케일(Γ, 운영값 1.5)로 바꾼다 — 그대로 두면 거의 모든 기사가 한 클러스터로 합쳐진다. `.env.news` 가
 `.env` 보다 나중에 읽혀 값을 덮어쓴다.

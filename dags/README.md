@@ -40,6 +40,7 @@ dags/
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | news | `news/backfill_cluster_articles.py` | `news_backfill_cluster_articles` | `news`, `backfill` | Asset ← `etl://news/backfill-articles` |
 | news | `news/rebuild_idf.py` | `news_rebuild_idf` | `news` | cron `0 3 * * *` (KST) |
+| news | `news/backfill_cluster_centroids.py` | `news_backfill_cluster_centroids` | `news`, `backfill`, `manual` | 수동 |
 | news | `news/backfill_issue_timeline.py` | `news_backfill_issue_timeline` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `30 7 * * 1-5` (평일 07:30) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 8-19 * * 1-5` (평일 08~19시 매 정각), `etl://themes/hot` 발행 |
@@ -183,6 +184,9 @@ IDF 사전은 평소 `news_rebuild_idf`(매일 03:00) 가 갱신하고 클러스
 > `reset=true, links=true, apply=true` 로 실행 → `news_cluster_articles`·`news_rebuild_idf` 를 켠다.
 > 배포 환경의 `.env`·`.env.news` 에 남은 옛 `NEWS_CLUSTER_THRESHOLD`(0.35, 코사인 스케일)는 새 스케일(Γ, 운영값
 > 1.5)로 바꾼다 — `.env.news` 가 `.env` 를 덮어쓴다. 자세한 절차는 `pipelines/news/README.md` "클러스터와 하류".
+> 기존 클러스터·Event·트리플·요약·연결을 지우지 않고 새 컬럼만 채우려면 대신 `news_backfill_cluster_centroids`
+> (수동, `vectorize_articles` → `rebuild_idf` → `compute_cluster_centroids`)를 한 번 돌린다 — 클러스터 구성은 그대로고
+> 다음 판정 런부터 새 기사가 옛 클러스터와도 정상적으로 비교된다.
 
 `link_issues` 는 먼저 시작한 이슈가 늦게 판정되면 그 뒤에 시작한 판정을 다시 만들지만, 지금부터
 `NEWS_ISSUE_RELINK_WINDOW_HOURS`(기본 72) 안에 시작한 판정만 다시 만든다. 그래서 `news_backfill_krx100`

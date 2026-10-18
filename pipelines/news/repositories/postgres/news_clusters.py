@@ -766,3 +766,68 @@ def release_link_decisions(cluster_ids: list[int]) -> int:
                 RELEASE_LINK_DECISIONS_SQL, {"cluster_ids": sorted({int(c) for c in cluster_ids})}
             ).rowcount
         )
+
+
+# ── centroid 백필 ─────────────────────────────────────────────────────────────
+
+# 클러스터별 멤버 term_weights 합(title·body·entities)과 발행 시각 평균·멤버 수. 벡터화되지 않은
+# 멤버는 합에 들지 않지만 수에는 든다. 세 필드 키를 항상 두어 record_assignments 가 쓰는 형태와
+# 같게 만든다.
+REFILL_CLUSTER_CENTROIDS_SQL = text(
+    """
+    WITH member AS (
+        SELECT cluster_id, term_weights, COALESCE(published_at, collected_at) AS published_at
+          FROM news
+         WHERE cluster_id IS NOT NULL
+    ),
+    field_sum AS (
+        SELECT m.cluster_id, f.field, t.token, SUM(CAST(t.weight AS numeric)) AS weight
+          FROM member m
+         CROSS JOIN (VALUES ('title'), ('body'), ('entities')) AS f(field)
+         CROSS JOIN LATERAL jsonb_each_text(
+                   COALESCE(m.term_weights -> f.field, CAST('{}' AS jsonb))
+               ) AS t(token, weight)
+         GROUP BY m.cluster_id, f.field, t.token
+    ),
+    field_obj AS (
+        SELECT cluster_id, field, jsonb_object_agg(token, weight) AS tokens
+          FROM field_sum
+         GROUP BY cluster_id, field
+    ),
+    centroid AS (
+        SELECT cluster_id,
+               CAST('{"title": {}, "body": {}, "entities": {}}' AS jsonb)
+                   || jsonb_object_agg(field, tokens) AS centroids
+          FROM field_obj
+         GROUP BY cluster_id
+    ),
+    stats AS (
+        SELECT cluster_id,
+               COUNT(*) AS member_count,
+               to_timestamp(AVG(EXTRACT(EPOCH FROM published_at))) AS mean_published_at
+          FROM member
+         GROUP BY cluster_id
+    )
+    UPDATE news_clusters c
+       SET centroids = COALESCE(
+               ce.centroids, CAST('{"title": {}, "body": {}, "entities": {}}' AS jsonb)
+           ),
+           member_count = s.member_count,
+           mean_published_at = s.mean_published_at
+      FROM stats s
+      LEFT JOIN centroid ce ON ce.cluster_id = s.cluster_id
+     WHERE c.id = s.cluster_id;
+    """
+)
+
+
+def refill_cluster_centroids() -> int:
+    """멤버가 있는 모든 클러스터의 centroids·mean_published_at·member_count 를 멤버에서 유도한다.
+
+    V14 직후 옛 클러스터는 centroids 가 비어 있어 새 기사가 편입되지 못한다. cluster_id 와 승격·
+    제목·이슈 연결은 건드리지 않고 updated_at 도 바꾸지 않는다(승격 재시도·연결 대기 기준이다).
+    갱신한 클러스터 수를 돌려준다. 한 트랜잭션이다.
+    """
+
+    with session_scope() as session:
+        return int(session.execute(REFILL_CLUSTER_CENTROIDS_SQL).rowcount or 0)

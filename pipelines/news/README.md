@@ -137,6 +137,13 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 벡터화 → IDF 재구축 → 판정 → 승격·제목 → Event 를 다시 만듭니다. 요약은 다음 DAG 런이 채우고, 이슈 연결은
 `news_backfill_issue_timeline`(`reset=true, links=true, apply=true`)으로 다시 만든 뒤 DAG 를 켭니다.
 
+**기존 클러스터를 보존한 채 새 컬럼만 채울 때** (`news_backfill_cluster_centroids` DAG, 수동): V14 직후 옛 클러스터는
+`centroids` 가 비어 있어 새 기사가 편입되지 못합니다. `vectorize_articles` → `rebuild_idf` →
+`compute_cluster_centroids`(`jobs/compute_cluster_centroids.py`) 순으로 돌며, 마지막 task 가 멤버 `term_weights` 합으로
+`centroids`·`mean_published_at`·`member_count` 를 다시 유도합니다(`repositories/postgres/news_clusters.py` 의
+`refill_cluster_centroids`). `cluster_id`·Event·트리플·요약·제목·이슈 연결은 그대로 두고 `updated_at` 도 바꾸지 않으며 LLM 을
+부르지 않습니다. 멱등이라 여러 번 돌려도 같습니다. 옛 모델이 만든 클러스터 구성은 바뀌지 않습니다.
+
 설계: `docs/superpowers/specs/2026-10-16-news-clustering-paper-model-port-design.md`,
 `transformers/clustering/docs/news-clustering-data.md`.
 
