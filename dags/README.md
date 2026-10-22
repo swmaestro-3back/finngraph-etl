@@ -39,6 +39,8 @@ dags/
 | news | `news/cluster_articles.py` | `news_cluster_articles` | `news` | Asset ← `etl://news/articles` |
 | news | `news/backfill_krx100.py` | `news_backfill_krx100` | `news`, `backfill`, `manual` | 수동 |
 | news | `news/backfill_cluster_articles.py` | `news_backfill_cluster_articles` | `news`, `backfill` | Asset ← `etl://news/backfill-articles` |
+| news | `news/rebuild_idf.py` | `news_rebuild_idf` | `news` | cron `0 3 * * *` (KST) |
+| news | `news/backfill_cluster_centroids.py` | `news_backfill_cluster_centroids` | `news`, `backfill`, `manual` | 수동 |
 | news | `news/backfill_issue_timeline.py` | `news_backfill_issue_timeline` | `news`, `backfill`, `manual` | 수동 |
 | stocks | `stocks/sync_master.py` | `stocks_sync_master` | `stocks` | `30 7 * * 1-5` (평일 07:30) |
 | stocks | `stocks/intraday_candles.py` | `stocks_intraday_candles` | `stocks` | `0 8-19 * * 1-5` (평일 08~19시 매 정각), `etl://themes/hot` 발행 |
@@ -147,10 +149,13 @@ news_backfill_krx100 ───► etl://news/backfill-articles ──► news_ba
   (수동)                    (publish_backfill, 전체 청크가 끝난 뒤 1회)
 
 news_cluster_articles·news_backfill_cluster_articles:
-  assign_clusters ──► promote_clusters ──┬──► generate_events
-                                         └──► summarize_articles ──┬──► link_issues (all_done)
-                                                                   └──► finish
+  vectorize_articles ──► assign_clusters ──► promote_clusters ──┬──► generate_events
+                                                                └──► summarize_articles ──┬──► link_issues (all_done)
+                                                                                          └──► finish
 ```
+
+`news_backfill_cluster_articles` 는 `vectorize_articles` 와 `assign_clusters` 사이에 `rebuild_idf` 가 하나 더 있다.
+IDF 사전은 평소 `news_rebuild_idf`(매일 03:00) 가 갱신하고 클러스터 DAG 는 읽기만 한다.
 
 > **배포 순서(요약 핵심 포인트).** `V10__news_summary_points.sql`(컬럼만 추가)을 코드보다 먼저 적용한다.
 > V10 없이 배포하면 `summarize_articles` 가 실패한다. 요약 대상이 `summary_points IS NULL` 인 대표
@@ -173,6 +178,16 @@ news_cluster_articles·news_backfill_cluster_articles:
 > 있으면 `reset=true, links=true, apply=true` 로 다시 만든다. 문제가 생기면
 > `NEWS_ISSUE_LINK_METHOD=cosine` 으로 되돌린다(LLM 을 부르지 않는다).
 
+> **배포 순서(클러스터링 모델, V14).** `V14__news_clustering_paper_model.sql` 은 옛 프로필 컬럼을 지우므로
+> 백업 뒤 `news_cluster_articles` 를 멈추고 적용한다 → 배포 → `scripts/recluster_news.py --apply`(Event·
+> 클러스터·연결을 지우고 전체를 다시 판정) → 요약이 끝나면 `news_backfill_issue_timeline` 을
+> `reset=true, links=true, apply=true` 로 실행 → `news_cluster_articles`·`news_rebuild_idf` 를 켠다.
+> 배포 환경의 `.env`·`.env.news` 에 남은 옛 `NEWS_CLUSTER_THRESHOLD`(0.35, 코사인 스케일)는 새 스케일(Γ, 운영값
+> 1.5)로 바꾼다 — `.env.news` 가 `.env` 를 덮어쓴다. 자세한 절차는 `pipelines/news/README.md` "클러스터와 하류".
+> 기존 클러스터·Event·트리플·요약·연결을 지우지 않고 새 컬럼만 채우려면 대신 `news_backfill_cluster_centroids`
+> (수동, `vectorize_articles` → `rebuild_idf` → `compute_cluster_centroids`)를 한 번 돌린다 — 클러스터 구성은 그대로고
+> 다음 판정 런부터 새 기사가 옛 클러스터와도 정상적으로 비교된다.
+
 `link_issues` 는 먼저 시작한 이슈가 늦게 판정되면 그 뒤에 시작한 판정을 다시 만들지만, 지금부터
 `NEWS_ISSUE_RELINK_WINDOW_HOURS`(기본 72) 안에 시작한 판정만 다시 만든다. 그래서 `news_backfill_krx100`
 으로 옛 기사를 들인 뒤에는 `news_backfill_cluster_articles` 와 요약이 끝나면 설정을 끄고
@@ -188,8 +203,8 @@ news_cluster_articles·news_backfill_cluster_articles:
 백필은 클러스터 DAG를 따로 둔다. 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터의
 시간 창보다 이르게 도착해 같은 사건이 갈라지므로, `publish_backfill`이 모든 청크가 끝난 뒤 한 번만
 발행한다(실패한 청크가 있으면 발행하지 않는다). `news_backfill_cluster_articles`는 task 구성이
-`news_cluster_articles`와 같고, 저장된 IDF 표에 배치 문서 수를 더해 판정하는 점만 다르다 — 초기
-백필에는 표가 비어 있다.
+`news_cluster_articles`와 같고, 판정 앞에 `rebuild_idf` 로 IDF 사전을 한 번 다시 만드는 점만 다르다 —
+초기 백필에는 표가 비어 있어 그대로 쓰면 기업명 같은 흔한 토큰이 눌리지 않는다.
 
 > **백필 중에는 `news_cluster_articles`를 꺼 둔다.** 두 클러스터 DAG 모두 출처를 가리지 않고
 > `cluster_id`가 없는 기사 전량을 읽는다. 켜 두면 정시 수집이 깨운 `news_cluster_articles`가 수집

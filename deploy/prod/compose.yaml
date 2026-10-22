@@ -6,10 +6,13 @@ x-hardening: &hardening
   security_opt:
     - no-new-privileges:true
   logging:
-    driver: json-file
+    driver: awslogs
     options:
-      max-size: "10m"
-      max-file: "3"
+      awslogs-region: ap-northeast-2
+      awslogs-group: /finngraph/prod/etl
+      tag: "{{.Name}}/{{.ID}}"
+      mode: non-blocking
+      max-buffer-size: 4m
 
 x-airflow: &airflow
   <<: *hardening

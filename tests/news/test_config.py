@@ -41,39 +41,88 @@ def test_search_settings_read_env(monkeypatch):
     assert settings.search_interval_hours == 1
 
 
-def test_cluster_promotion_defaults(monkeypatch):
+CLUSTER_ENV = (
+    "NEWS_CLUSTER_THRESHOLD",
+    "NEWS_CLUSTER_TEXT_WEIGHTS",
+    "NEWS_CLUSTER_TIME_WEIGHTS",
+    "NEWS_CLUSTER_TIME_SIGMA_HOURS",
+    "NEWS_CLUSTER_CANDIDATE_DAYS",
+    "NEWS_CLUSTER_MAX_SPAN_DAYS",
+    "NEWS_CLUSTER_IDF_DAYS",
+    "NEWS_CLUSTER_PROMOTE_SIZE",
+    "NEWS_CLUSTER_PROMOTE_RETRY_DAYS",
+    "NEWS_CLUSTER_REPRESENTATIVE_MIN_CHARS",
+    "NEWS_CLUSTER_KEYWORD_COUNT",
+    "NEWS_CLUSTER_TITLE_MAX_CHARS",
+    "NEWS_CLUSTER_TITLE_HEADLINES",
+)
+
+
+def test_cluster_defaults(monkeypatch):
     from pipelines.news.config import NewsSettings
 
-    for key in (
-        "NEWS_CLUSTER_BACKWARD_DAYS",
-        "NEWS_CLUSTER_IDF_DAYS",
-        "NEWS_CLUSTER_PROMOTE_SIZE",
-        "NEWS_CLUSTER_PROMOTE_RETRY_DAYS",
-        "NEWS_CLUSTER_REPRESENTATIVE_MIN_CHARS",
-        "NEWS_CLUSTER_LEAD_CHARS",
-    ):
+    for key in CLUSTER_ENV:
         monkeypatch.delenv(key, raising=False)
 
-    settings = NewsSettings(_env_file=None)
+    s = NewsSettings(_env_file=None)
 
-    assert settings.cluster_backward_days == 1
-    assert settings.cluster_idf_days == 90
-    assert settings.cluster_promote_size == 3
-    assert settings.cluster_promote_retry_days == 3
-    assert settings.cluster_representative_min_chars == 200
-    assert settings.cluster_lead_chars == 200
+    assert s.cluster_threshold == 1.0
+    assert s.cluster_text_weights == (1.0, 1.0, 1.0, 1.0)
+    assert s.cluster_time_weights == (0.1, 0.1, 0.1)
+    assert (s.cluster_time_sigma_hours, s.cluster_candidate_days, s.cluster_max_span_days) == (
+        72.0,
+        10,
+        10,
+    )
+    assert (s.cluster_idf_days, s.cluster_promote_size, s.cluster_promote_retry_days) == (90, 3, 3)
+    assert (s.cluster_representative_min_chars, s.cluster_keyword_count) == (200, 6)
+    assert (s.cluster_title_max_chars, s.cluster_title_headlines) == (25, 10)
+    # 단일 벡터·고정 시간 창 시절 설정은 없다
+    for removed in (
+        "cluster_description_weight",
+        "cluster_lead_chars",
+        "cluster_window_days",
+        "cluster_backward_days",
+    ):
+        assert not hasattr(s, removed)
 
 
-def test_cluster_promotion_settings_read_env(monkeypatch):
+def test_cluster_settings_read_env(monkeypatch):
     from pipelines.news.config import NewsSettings
 
     monkeypatch.setenv("NEWS_CLUSTER_PROMOTE_SIZE", "5")
-    monkeypatch.setenv("NEWS_CLUSTER_BACKWARD_DAYS", "2")
+    monkeypatch.setenv("NEWS_CLUSTER_THRESHOLD", "1.5")
+    monkeypatch.setenv("NEWS_CLUSTER_TEXT_WEIGHTS", "0.5, 1, 2,0.25")
+    monkeypatch.setenv("NEWS_CLUSTER_TIME_WEIGHTS", "0,0,1")
+    monkeypatch.setenv("NEWS_CLUSTER_MAX_SPAN_DAYS", "14")
 
-    settings = NewsSettings(_env_file=None)
+    s = NewsSettings(_env_file=None)
 
-    assert settings.cluster_promote_size == 5
-    assert settings.cluster_backward_days == 2
+    assert s.cluster_promote_size == 5
+    assert s.cluster_threshold == 1.5
+    assert s.cluster_text_weights == (0.5, 1.0, 2.0, 0.25)
+    assert s.cluster_time_weights == (0.0, 0.0, 1.0)
+    assert s.cluster_max_span_days == 14
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("NEWS_CLUSTER_TEXT_WEIGHTS", "1,1,1"),
+        ("NEWS_CLUSTER_TEXT_WEIGHTS", "1,1,1,1,1"),
+        ("NEWS_CLUSTER_TIME_WEIGHTS", "0.1,0.1"),
+        ("NEWS_CLUSTER_TIME_WEIGHTS", "a,b,c"),
+    ],
+)
+def test_cluster_weight_length_is_validated(monkeypatch, name, value):
+    """가중치 개수가 피처 수와 다르면 task 가 시작 시점에 실패해야 한다."""
+    from pydantic import ValidationError
+
+    from pipelines.news.config import NewsSettings
+
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValidationError):
+        NewsSettings(_env_file=None)
 
 
 def test_body_candidate_max_default(monkeypatch):
@@ -114,7 +163,7 @@ def test_issue_link_defaults(monkeypatch):
     assert settings.issue_link_max_per_run == 200
     assert settings.issue_same_event_max_gap_hours == 24
     assert settings.issue_same_event_score == 0.75
-    # 코사인만으로 같은 사건이라고 보는 간격 상한은 클러스터 기간(NEWS_CLUSTER_WINDOW_DAYS, 7일)과 같다.
+    # 코사인만으로 같은 사건이라고 보는 간격 상한(7일). 클러스터 수명 NEWS_CLUSTER_MAX_SPAN_DAYS(10일) 안이다.
     assert settings.issue_same_event_score_max_gap_hours == 168
     assert settings.issue_relink_window_hours == 72
     assert settings.issue_embedding_model == "amazon.titan-embed-text-v2:0"

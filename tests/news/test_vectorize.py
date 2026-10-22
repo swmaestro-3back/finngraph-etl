@@ -17,7 +17,7 @@ def test_idf_is_one_when_table_is_empty():
 
 
 def test_rare_token_gets_higher_idf_than_common_token():
-    table = IdfTable(document_frequency={"삼성전자": 90, "해상변전소": 2}, document_count=100)
+    table = IdfTable(document_frequency={"삼성전자": 90, "해상변전소": 2}, article_count=100)
 
     assert table.idf("해상변전소") > table.idf("삼성전자")
     # 처음 보는 토큰은 df=0 으로 보고 가장 큰 값을 준다
@@ -41,7 +41,7 @@ def test_vectorize_without_terms_is_empty():
 
 def test_vectorize_weights_rare_tokens_by_the_fixed_table():
     # 표가 고정이라 같은 문서는 어떤 배치에 섞여도 같은 벡터다. 흔한 토큰은 눌리고 드문 토큰이 선다.
-    table = IdfTable(document_frequency={"삼성전자": 90}, document_count=100)
+    table = IdfTable(document_frequency={"삼성전자": 90}, article_count=100)
 
     vector = vectorize([("삼성전자", 1.0), ("해상변전소", 1.0)], table)
 
@@ -59,3 +59,22 @@ def test_cosine_of_identical_vectors_is_one_and_disjoint_is_zero():
     assert cosine(left, left) == pytest.approx(1.0)
     assert cosine(left, other) == 0.0
     assert cosine(left, {}) == 0.0
+
+
+def test_vectorize_fields_uses_the_table_of_each_field():
+    from pipelines.news.transformers.clustering.vectorize import vectorize_fields
+
+    tables = {"title": IdfTable(document_frequency={"삼성전자": 90}, article_count=100)}
+    weights = {
+        "title": {"삼성전자": 1.0, "해상변전소": 1.0},
+        "body": {"삼성전자": 1.0},
+        "entities": {},
+    }
+
+    vectors = vectorize_fields(weights, tables)
+
+    assert set(vectors) == {"title", "body", "entities"}
+    assert vectors["title"]["해상변전소"] > vectors["title"]["삼성전자"]
+    # 표가 없는 필드는 모든 IDF 1 — 토큰 하나면 값 1.0
+    assert vectors["body"] == {"삼성전자": pytest.approx(1.0)}
+    assert vectors["entities"] == {}

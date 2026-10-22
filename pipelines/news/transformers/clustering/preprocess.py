@@ -153,15 +153,3 @@ def _keep(surface: str) -> bool:
     if len(surface) < 2:
         return False
     return True
-
-
-def document_terms(
-    title: str,
-    description: str = "",
-    description_weight: float = 0.4,
-) -> list[tuple[str, float]]:
-    """제목을 주 신호로, description 을 낮은 가중치의 보조 신호로 합친다."""
-    terms = tokenize(title)
-    if description and description_weight > 0:
-        terms += [(term, weight * description_weight) for term, weight in tokenize(description)]
-    return terms

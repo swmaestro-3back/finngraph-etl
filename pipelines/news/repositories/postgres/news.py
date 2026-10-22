@@ -9,6 +9,7 @@ from pipelines.news.repositories.postgres.news_companies import (
     link_news_companies,
     linked_company_ids,
 )
+from pipelines.news.transformers.clustering.document import TermWeights
 from pipelines.news.transformers.filters.duplicate_filter import normalize_url_for_duplicate
 from pipelines.news.utils.date_utils import parse_news_pub_date
 from pipelines.news.utils.text_utils import (
@@ -326,3 +327,150 @@ def save_news_summaries(rows: list[tuple[int, str, list[dict[str, str]]]]) -> di
     logging.debug(f"요약 저장 완료: {saved_count}개")
 
     return {"saved_count": saved_count}
+
+
+# ── 클러스터링 입력 ──────────────────────────────────────────────────────────
+# 벡터화 대상: term_weights 없는 저장 기사 전량. 본문이 없는 행은 옛 구조에서 남은 것이고 판정하지
+# 않으므로 벡터화도 하지 않는다. 기업은 news_companies 에서 모아 entities 서브벡터가 된다.
+SELECT_UNVECTORIZED_NEWS_SQL = text(
+    """
+    SELECT n.id, n.title, n.text,
+           COALESCE(ARRAY_AGG(nc.company_id ORDER BY nc.company_id)
+                    FILTER (WHERE nc.company_id IS NOT NULL), '{}') AS company_ids
+      FROM news n
+      LEFT JOIN news_companies nc ON nc.news_id = n.id
+     WHERE n.term_weights IS NULL
+       AND n.text IS NOT NULL
+       AND BTRIM(n.text) <> ''
+     GROUP BY n.id
+     ORDER BY n.id ASC;
+    """
+)
+
+UPDATE_TERM_WEIGHTS_SQL = text(
+    "UPDATE news SET term_weights = CAST(:terms AS jsonb) WHERE id = :news_id;"
+)
+
+# 판정 대상: 벡터화는 됐고 클러스터는 없는 기사 전량(발행 시각순). 발행 시각이 없으면 수집 시각으로
+# 본다.
+SELECT_UNCLUSTERED_NEWS_SQL = text(
+    """
+    SELECT id, title, term_weights, COALESCE(published_at, collected_at, now()) AS published_at
+      FROM news
+     WHERE cluster_id IS NULL
+       AND term_weights IS NOT NULL
+     ORDER BY 4 ASC, id ASC;
+    """
+)
+
+# 백필 DAG 가 하류를 깨울지 정하는 수. 벡터화 전 기사도 본문만 있으면 곧 판정되므로 센다 — 백필 수집
+# 직후에는 아무 기사도 벡터화되지 않았다. 본문 없는 옛 행은 벡터화·판정 모두 하지 않으므로 뺀다.
+COUNT_UNCLUSTERED_NEWS_SQL = text(
+    "SELECT COUNT(*) FROM news WHERE cluster_id IS NULL AND text IS NOT NULL AND BTRIM(text) <> '';"
+)
+
+# 클러스터별 멤버 기사(발행 시각순). 대표 선정과 제목 생성의 입력이다. 본문은 길이만 읽는다.
+SELECT_CLUSTER_MEMBER_ARTICLES_SQL = text(
+    """
+    SELECT cluster_id, id, title, term_weights, COALESCE(length(text), 0) AS body_length,
+           COALESCE(published_at, collected_at) AS published_at
+      FROM news
+     WHERE cluster_id = ANY(:cluster_ids)
+     ORDER BY cluster_id, 6 ASC NULLS LAST, id ASC;
+    """
+)
+
+
+def fetch_unvectorized_news() -> list[dict[str, Any]]:
+    """벡터화 대상 전량(id 순). company_ids 는 news_companies 의 기업이다(없으면 빈 목록)."""
+
+    with session_scope() as session:
+        rows = session.execute(SELECT_UNVECTORIZED_NEWS_SQL).fetchall()
+
+    return [
+        {
+            "_news_id": int(news_id),
+            "title": title or "",
+            "text": body or "",
+            "company_ids": [int(company_id) for company_id in company_ids or []],
+        }
+        for news_id, title, body, company_ids in rows
+    ]
+
+
+def save_term_weights(rows: list[tuple[int, TermWeights]]) -> dict[str, int]:
+    """(news_id, term_weights) 를 저장한다. 기사마다 SAVEPOINT 라 실패는 그 기사만 되돌린다."""
+
+    counts = {"saved": 0, "failed": 0}
+    if not rows:
+        return counts
+
+    with session_scope() as session:
+        for news_id, term_weights in rows:
+            try:
+                with session.begin_nested():
+                    session.execute(
+                        UPDATE_TERM_WEIGHTS_SQL,
+                        {
+                            "news_id": int(news_id),
+                            "terms": json.dumps(term_weights, ensure_ascii=False),
+                        },
+                    )
+            except Exception as e:
+                counts["failed"] += 1
+                logging.error(
+                    f"벡터화 기록 실패(건너뜀): news_id={news_id}, error={type(e).__name__}: {e}"
+                )
+                continue
+            counts["saved"] += 1
+
+    return counts
+
+
+def fetch_unclustered_news() -> list[dict[str, Any]]:
+    """클러스터 판정 대상 전량(발행 시각순). 기록에 실패해 cluster_id 가 없는 기사도 다시 든다."""
+
+    with session_scope() as session:
+        rows = session.execute(SELECT_UNCLUSTERED_NEWS_SQL).fetchall()
+
+    return [
+        {
+            "_news_id": int(news_id),
+            "title": title or "",
+            "term_weights": term_weights or {},
+            "published_at": published_at,
+        }
+        for news_id, title, term_weights, published_at in rows
+    ]
+
+
+def count_unclustered_news() -> int:
+    """클러스터가 없고 본문이 있는 기사 수(벡터화 전 포함). 백필 DAG 의 하류 발행 판단에 쓴다."""
+
+    with session_scope() as session:
+        return int(session.execute(COUNT_UNCLUSTERED_NEWS_SQL).scalar_one())
+
+
+def fetch_cluster_member_articles(cluster_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """클러스터별 멤버 기사(발행 시각순). 멤버가 없는 클러스터는 키가 없다."""
+
+    if not cluster_ids:
+        return {}
+
+    with session_scope() as session:
+        rows = session.execute(
+            SELECT_CLUSTER_MEMBER_ARTICLES_SQL, {"cluster_ids": [int(c) for c in cluster_ids]}
+        ).fetchall()
+
+    members: dict[int, list[dict[str, Any]]] = {}
+    for cluster_id, news_id, title, term_weights, body_length, published_at in rows:
+        members.setdefault(int(cluster_id), []).append(
+            {
+                "_news_id": int(news_id),
+                "title": title or "",
+                "term_weights": term_weights or {},
+                "body_length": int(body_length or 0),
+                "published_at": published_at,
+            }
+        )
+    return members

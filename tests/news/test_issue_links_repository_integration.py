@@ -85,10 +85,10 @@ def story():
                 text(
                     """
                     INSERT INTO news_clusters (
-                        first_published_at, last_published_at, original_size, member_count,
+                        first_published_at, last_published_at, mean_published_at, member_count,
                         title, embedding, linked_at, issue_kind
                     )
-                    VALUES (:t, :t, 3, 3, :title, CAST(:v AS vector), :linked, :kind)
+                    VALUES (:t, :t, :t, 3, :title, CAST(:v AS vector), :linked, :kind)
                     RETURNING id
                     """
                 ),

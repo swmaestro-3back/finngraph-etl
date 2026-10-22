@@ -112,7 +112,7 @@ if dag and task:
         # 건너뛰어진 런에는 돈다(지난 런이 남긴 미판정 기사를 처리한다).
         @task(trigger_rule="none_failed", outlets=[news_backfill_articles_saved])
         def publish_backfill() -> dict[str, int]:
-            from pipelines.news.jobs.cluster_articles import count_unclustered
+            from pipelines.news.jobs.assign_clusters import count_unclustered
 
             unclustered = count_unclustered()
             if unclustered == 0:

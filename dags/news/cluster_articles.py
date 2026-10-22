@@ -1,8 +1,15 @@
-"""뉴스 클러스터 판정 → 대표 선정 → Event 생성·요약 → 이슈 타임라인 연결.
+"""뉴스 벡터화 → 클러스터 판정 → 대표 선정 → Event 생성·요약 → 이슈 타임라인 연결.
+
+    vectorize_articles ──► assign_clusters ──► promote_clusters ──┬──► generate_events
+                                                                  └──► summarize_articles
+    summarize_articles ──┬──► link_issues (all_done)
+                         └──► finish
 
 `news_collect_articles` 가 발행하는 `etl://news/articles` Asset 으로 깨어난다. 이벤트 내용은 쓰지
-않고 DB 를 폴링한다 — `assign_clusters` 는 cluster_id 가 없는 기사 전량을, 나머지 task 는 각자의
-미처리분 전량을 읽는다. 런이 도는 동안 쌓인 이벤트는 다음 런 하나가 한꺼번에 처리한다.
+않고 DB 를 폴링한다 — `vectorize_articles` 는 term_weights 가 없는 기사 전량을, `assign_clusters` 는
+벡터화됐고 cluster_id 가 없는 기사 전량을, 나머지 task 는 각자의 미처리분 전량을 읽는다. IDF 사전은
+`news_rebuild_idf` 가 매일 갱신하는 표를 읽기만 한다. 런이 도는 동안 쌓인 이벤트는 다음 런 하나가
+한꺼번에 처리한다.
 
 `max_active_runs=1` 이라 수집이 겹쳐도 같은 사건에 클러스터가 둘 생기지 않는다. 클러스터를 쓰는
 DAG 는 이것과 백필 전용 `news_backfill_cluster_articles` 둘이고 서로는 막지 않는다 —
@@ -48,16 +55,22 @@ if dag and task:
     )
     def news_cluster_articles():
         @task(retries=1, retry_delay=timedelta(minutes=5))
-        def assign_clusters() -> dict[str, int]:
-            from pipelines.news.jobs.cluster_articles import assign
+        def vectorize_articles() -> dict[str, int]:
+            from pipelines.news.jobs.vectorize_articles import run
 
-            return assign()
+            return run()
+
+        @task(retries=1, retry_delay=timedelta(minutes=5))
+        def assign_clusters() -> dict[str, int]:
+            from pipelines.news.jobs.assign_clusters import run
+
+            return run()
 
         @task(retries=1, retry_delay=timedelta(minutes=5), outlets=[news_clusters_updated])
         def promote_clusters() -> dict[str, int]:
-            from pipelines.news.jobs.cluster_articles import promote
+            from pipelines.news.jobs.promote_clusters import run
 
-            result = promote()
+            result = run()
             if result["pending_triples"] == 0:
                 # 스킵하면 outlets 를 발행하지 않는다. 실패가 아니라 "삼중항이 할 일이 없다"다.
                 raise AirflowSkipException("삼중항 미처리 대표 0건 — 삼중항 DAG 를 깨우지 않는다")
@@ -96,7 +109,7 @@ if dag and task:
 
         promoted = promote_clusters()
         summarized = summarize_articles()
-        assign_clusters() >> promoted
+        vectorize_articles() >> assign_clusters() >> promoted
         promoted >> [generate_events(), summarized]
         summarized >> [link_issues(), finish()]
 

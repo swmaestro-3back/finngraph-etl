@@ -11,6 +11,14 @@ x-airflow-common:
   image: ${ECR_REGISTRY}/finngraph/etl-airflow:${IMAGE_TAG:?IMAGE_TAG 를 지정하세요 (커밋 SHA 권장)}
   user: "50000:0"
   restart: unless-stopped
+  logging: &logging
+    driver: awslogs
+    options:
+      awslogs-region: ap-northeast-2
+      awslogs-group: /finngraph/dev/etl
+      tag: "{{.Name}}/{{.ID}}"
+      mode: non-blocking
+      max-buffer-size: 4m
 
   env_file:
     - path: .env
@@ -43,11 +51,13 @@ services:
       -baselineOnMigrate=true -baselineVersion=1
       migrate
     volumes: [../../migrations/versions:/flyway/sql:ro]
+    logging: *logging
 
   # cypher-shell 을 쓰려고 neo4j 이미지를 빌린다. 대상은 원격 인스턴스다.
   neo4j-init:
     image: neo4j:5
     restart: "no"
+    logging: *logging
     env_file:
       - path: .env
         required: true

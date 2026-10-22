@@ -89,34 +89,63 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
   판정합니다.
 - 수집 잡은 클러스터를 판정하지 않습니다. 아래 "클러스터와 하류" 절을 봅니다.
 
-## 클러스터와 하류 (jobs/cluster_articles.py)
+## 클러스터와 하류 (jobs/vectorize_articles.py · assign_clusters.py · promote_clusters.py · rebuild_idf.py)
 
 수집 DAG 는 새 기사를 저장하면 `etl://news/articles` 를 발행하고, `news_cluster_articles` DAG 가
-이어서 돕니다: `assign_clusters` → `promote_clusters` → `generate_events` ∥ `summarize_articles`,
-요약 뒤에 `link_issues`(아래 "이슈 타임라인" 절).
+이어서 돕니다: `vectorize_articles` → `assign_clusters` → `promote_clusters` → `generate_events` ∥
+`summarize_articles`, 요약 뒤에 `link_issues`(아래 "이슈 타임라인" 절). 판정 모델은 Miranda et al.
+2018(다국어 뉴스 스트림 클러스터링)의 단일 언어판이며 v2 ETL 과 같습니다.
 
-- **판정** (`assign`, `transformers/clustering/online.py`): `cluster_id` 가 없는 저장 기사를 발행
-  시각순으로 하나씩, 시간 창(클러스터 첫 기사 1일 전 ~ 7일 뒤) 안 클러스터의 프로필과 비교합니다.
-  문서는 제목 + 본문 앞 `NEWS_CLUSTER_LEAD_CHARS` 자입니다. 유사도가 `NEWS_CLUSTER_THRESHOLD` 이상이면
-  가장 가까운 클러스터에 편입하고, 아니면 새 클러스터를 만듭니다. 기록에 실패한 기사는 다음 런에
-  다시 판정됩니다.
-- **후보와 대표**: 클러스터는 후보를 `NEWS_CLUSTER_PROMOTE_SIZE`(기본 3)건까지만 받습니다. 후보가 다
-  차면 저장된 본문으로 대표 1건을 고릅니다(`transformers/clustering/representative.py`). 크롤링하지
-  않습니다. 그 뒤에 붙는 기사는 `cluster_id` 만 받고 `original_size` 를 올립니다.
-- **제목**: 후보 기사 전부의 제목을 LLM 에 넣어 사건 이름을 짓습니다(`transformers/cluster_titler.py`,
-  프롬프트 `transformers/prompts/cluster_title.py`). `NEWS_CLUSTER_TITLE_MAX_CHARS`(기본 25)를 넘으면
-  축약 지시를 붙여 한 번 더 묻고, 그래도 실패한 클러스터는 이름이 NULL 로 남아 다음 런에 다시
-  시도됩니다.
-- **하류**: Event 생성·요약·삼중항 추출은 대표 기사가 정해진 클러스터만 합니다. 삼중항은
-  `promote_clusters` 가 발행하는 `etl://news/clusters` 를 따라 `triples_extract_triples` 가 처리하고,
-  엔티티는 `news_companies` 에서 읽습니다. 후보가 기준에 못 미친 사건은 추출하지 않습니다.
+- **벡터화** (`vectorize_articles`, `transformers/clustering/document.py`): `term_weights` 가 없는 저장
+  기사마다 제목·본문 전체를 Kiwi 로 토큰화해 서브벡터 3개(`title`·`body`·`entities`)의 토큰 TF 가중치를
+  `news.term_weights` 에 한 번 저장합니다. `entities` 는 `news_companies` 의 `company_id` 입니다.
+  `all`(제목+본문)은 저장하지 않고 합으로 유도합니다. 본문이 없는 옛 행은 벡터화하지 않으므로 판정 대상도
+  아닙니다.
+- **IDF 사전** (`rebuild_idf`, `repositories/postgres/news_cluster_idf.py`): 매일 03:00 `news_rebuild_idf`
+  DAG 가 최근 `NEWS_CLUSTER_IDF_DAYS`(90)일의 벡터화된 기사 전체를 필드별 문서 수로 집계해
+  `news_cluster_idf_terms`·`news_cluster_idf_meta` 를 통째로 바꿉니다. 판정 런은 시작 때 읽어 런 내내
+  고정합니다 — 그날 새 토큰은 다음 재구축까지 최대 IDF 를 받습니다.
+- **판정** (`assign_clusters`, `transformers/clustering/online.py`·`features.py`): `cluster_id` 가 없는 벡터화된
+  기사를 발행 시각순으로 하나씩 봅니다. 후보는 가장 최신 멤버가 기사 발행 − `NEWS_CLUSTER_CANDIDATE_DAYS`(10)일
+  이후이고 첫 멤버가 기사 발행 − `NEWS_CLUSTER_MAX_SPAN_DAYS`(10)일 이후인 클러스터입니다. 후보마다 서브벡터
+  4개(`title`·`body`·`all`·`entities`)의 TF-IDF 코사인과 시간 피처 3개(최신·평균·최고 멤버 시각과의 차이를
+  σ=`NEWS_CLUSTER_TIME_SIGMA_HOURS`(72h) 가우시안에 넣은 값)를 `NEWS_CLUSTER_TEXT_WEIGHTS`·
+  `NEWS_CLUSTER_TIME_WEIGHTS` 로 가중합한 점수 Γ 를 구해, 가장 높은 Γ 가 `NEWS_CLUSTER_THRESHOLD` 를 넘으면
+  그 클러스터에 편입하고 아니면 새 클러스터를 만듭니다. 모든 멤버가 클러스터의 TF 합(`news_clusters.centroids`)과
+  시각 셋(`first`·`mean`·`last_published_at`)·`member_count` 를 갱신합니다. 기사에는 배정 점수(`cluster_score`)와
+  피처 7개(`cluster_features`)가 남아 τ 조정과 오배정 점검에 씁니다. 클러스터 하나가 트랜잭션 하나라 기록에
+  실패한 기사는 다음 런에 다시 판정됩니다.
+- **대표** (`promote_clusters`, `transformers/clustering/representative.py`): `member_count` 가
+  `NEWS_CLUSTER_PROMOTE_SIZE`(3) 에 이르면 저장된 `term_weights` 의 `all` 벡터로 멤버끼리의 유사도를 구해
+  가장 중심에 있는 기사(메도이드)를 대표로 정합니다. 본문이 `NEWS_CLUSTER_REPRESENTATIVE_MIN_CHARS` 미만인
+  기사는 더 긴 본문이 있으면 대표가 되지 않습니다. 승격 뒤에도 기사는 계속 붙습니다.
+- **제목**: 멤버 제목(발행 시각순 앞 `NEWS_CLUSTER_TITLE_HEADLINES`(10)건)을 LLM 에 넣어 사건 이름을 짓습니다
+  (`transformers/cluster_titler.py`, 프롬프트 `transformers/prompts/cluster_title.py`).
+  `NEWS_CLUSTER_TITLE_MAX_CHARS`(25)를 넘으면 축약 지시를 붙여 한 번 더 묻고, 그래도 실패한 클러스터는 이름이
+  NULL 로 남아 다음 런에 다시 시도됩니다.
+- **하류**: Event 생성·요약·삼중항 추출은 대표 기사가 정해진 클러스터만 합니다. 삼중항은 `promote_clusters` 가
+  발행하는 `etl://news/clusters` 를 따라 `triples_extract_triples` 가 처리하고, 엔티티는 `news_companies` 에서
+  읽습니다. Event 당사자 기업은 멤버 기사 `NEWS_EVENT_COMPANY_MIN_ARTICLES` 건 이상에 연결된 기업입니다.
 - `promote_clusters` 는 삼중항 미처리 대표 기사가 남아 있을 때만 Asset 을 발행합니다. 추출에 실패한
   대표는 미처리로 남아 다음 클러스터 런(다음에 새 기사가 저장된 시점)에 다시 깨워집니다.
 - 수집 잡은 클러스터를 쓰지 않고 이 DAG 가 `max_active_runs=1` 로 직렬화하므로, 수집이 겹쳐도 같은
-  사건에 클러스터가 둘 생기지 않습니다. 백필은 클러스터 DAG 를 따로 둡니다(아래 "KRX100 백필" 절).
+  사건에 클러스터가 둘 생기지 않습니다. 백필은 클러스터 DAG 를 따로 두고(아래 "KRX100 백필" 절) 판정 앞에
+  `rebuild_idf` 를 한 번 더 돕니다.
 
-설계: `docs/superpowers/specs/2026-10-04-news-pipeline-three-dags-design.md`,
-`transformers/clustering/docs/` 의 세 문서.
+**모델을 바꾸거나 전체를 다시 판정할 때** (`scripts/recluster_news.py`): `--dry-run` 으로 τ·가중치별 크기
+분포를 본 뒤, `news_cluster_articles` 를 멈추고 `--apply` 를 돌립니다. Event·클러스터·이슈 연결을 지우고
+벡터화 → IDF 재구축 → 판정 → 승격·제목 → Event 를 다시 만듭니다. 요약은 다음 DAG 런이 채우고, 이슈 연결은
+`news_backfill_issue_timeline`(`reset=true, links=true, apply=true`)으로 다시 만든 뒤 DAG 를 켭니다.
+
+**기존 클러스터를 보존한 채 새 컬럼만 채울 때** (`news_backfill_cluster_centroids` DAG, 수동): V14 직후 옛 클러스터는
+`centroids` 가 비어 있어 새 기사가 편입되지 못합니다. `vectorize_articles` → `rebuild_idf` →
+`compute_cluster_centroids`(`jobs/compute_cluster_centroids.py`) 순으로 돌며, 마지막 task 가 멤버 `term_weights` 합으로
+`centroids`·`mean_published_at`·`member_count` 를 다시 유도합니다(`repositories/postgres/news_clusters.py` 의
+`refill_cluster_centroids`). `cluster_id`·Event·트리플·요약·제목·이슈 연결은 그대로 두고 `updated_at` 도 바꾸지 않으며 LLM 을
+부르지 않습니다. 멱등이라 여러 번 돌려도 같습니다. 옛 모델이 만든 클러스터 구성은 바뀌지 않습니다.
+
+설계: `docs/superpowers/specs/2026-10-16-news-clustering-paper-model-port-design.md`,
+`transformers/clustering/docs/news-clustering-data.md`.
 
 ## 이슈 타임라인 (jobs/link_issues.py)
 
@@ -142,11 +171,10 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 - **요약 대기**: 대표 기사에 요약(포인트나 문단)이 아직 없으면, 클러스터 `updated_at` 에서 24시간이
   지난 뒤에만 요약 없이 잇습니다. `updated_at` 은 승격과 제목 생성 때 갱신되므로, 그동안 클러스터 DAG
   가 실행될 때마다 요약을 다시 시도합니다. 후속 기사가 붙을 때도 갱신되므로 기사가 계속 붙는 이슈는
-  그만큼 더 기다립니다. 대개 클러스터 기간(`NEWS_CLUSTER_WINDOW_DAYS`) 안에 끝납니다.
-- **임베딩**: 제목, 한 줄 요약, 멤버 기사 제목 3개(후보 기사부터 발행 시각순)를 줄바꿈으로 이어
-  Titan v2(1024)로 만들고 `news_clusters.embedding` 에 저장합니다. 후보 기사는 승격 전에 모두
-  들어오고 그 뒤로 바뀌지 않으므로, 승격 직후에 만들든 기사가 더 붙은 뒤 백필에서 만들든 입력이
-  같습니다. 모델은 테마용 `BEDROCK_EMBEDDING_MODEL` 과 별개인 `NEWS_ISSUE_EMBEDDING_MODEL` 입니다.
+  그만큼 더 기다립니다. 대개 클러스터 수명(`NEWS_CLUSTER_MAX_SPAN_DAYS`) 안에 끝납니다.
+- **임베딩**: 제목, 한 줄 요약, 멤버 기사 제목 3개(발행 시각순)를 줄바꿈으로 이어
+  Titan v2(1024)로 만들고 `news_clusters.embedding` 에 저장합니다. 발행 시각순이라 승격 직후에 만들든 기사가 더 붙은 뒤 백필에서 만들든 입력이 거의 같습니다(더 이른
+  기사가 늦게 도착하는 드문 경우만 다릅니다). 모델은 테마용 `BEDROCK_EMBEDDING_MODEL` 과 별개인 `NEWS_ISSUE_EMBEDDING_MODEL` 입니다.
   한 번 저장한 임베딩은 다시 만들지 않습니다.
 - **주요 기업**: 이슈의 `news_companies` 기업 가운데 멤버 기사 제목 하나 이상에 나온 기업입니다. 제목
   매치는 기사 수집 작업과 같은 개체 사전 매처(`common/gazetteer.py`)를 쓰므로 약칭도 같은 기업으로
@@ -160,7 +188,7 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
   나올 때까지 다음 페이지를 읽습니다. SQL 은 본문에만 언급된 기업까지 함께 거르므로, 그런 후보가 앞을
   채우면 맞는 부모가 뒤 페이지에 있을 수 있기 때문입니다.
 - **재판정**: 이슈는 시작 순서가 아니라 승격과 요약을 받는 순서로 들어옵니다. 먼저 시작한 이슈가 늦게
-  들어오면(후보 기사가 늦게 차거나 요약이 늦을 때), 그 뒤에 시작해 이미 판정된 이슈는 그 이슈를 부모로
+  들어오면(멤버가 늦게 차거나 요약이 늦을 때), 그 뒤에 시작해 이미 판정된 이슈는 그 이슈를 부모로
   보지 못한 채 판정돼 있습니다. 예를 들어 같은 사건이 나뉜 두 클러스터가 각각 루트로 남습니다. 그래서
   실행마다 이번 대상 중 가장 먼저 시작한 이슈보다 뒤에 시작한 이슈(재판정 대상)를 대상과 함께 시작
   순서대로 다시 판정합니다. 부모는 늘 먼저 시작한 이슈이므로 재판정 대상의 자식도 모두 재판정 대상에
@@ -173,8 +201,8 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 - **관계(`cosine` 방식)**: 같은 사건이 클러스터 둘로 나뉘는 일이 잦아서 연결마다 관계를 붙입니다. 첫 기사 시각 차가
   `NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS` 이내이거나, 코사인이 `NEWS_ISSUE_SAME_EVENT_SCORE` 이상이면서
   시각 차가 `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` 이내이면 `same_event`(백엔드가 노드 하나로
-  합칩니다)이고, 아니면 `follow_up` 입니다. 코사인 쪽 간격 상한은 클러스터 기간
-  `NEWS_CLUSTER_WINDOW_DAYS`(7일)와 같습니다. 한 사건이 클러스터 둘로 나뉘는 일은 그 기간 안에서
+  합칩니다)이고, 아니면 `follow_up` 입니다. 코사인 쪽 간격 상한(7일)은 클러스터 수명
+  `NEWS_CLUSTER_MAX_SPAN_DAYS`(10일) 안의 값입니다. 한 사건이 클러스터 둘로 나뉘는 일은 그 기간 안에서
   일어나지만, 시리즈 지표의 다음 회차(7월 건설지출 → 8월 건설지출)는 제목과 요약이 거의 같아 코사인이
   높아도 몇 주 떨어져 있기 때문입니다. 이 상한이 없으면, 하한(0.75)이 같은 사건 기준과 같은 기업 없는
   연결은 모두 노드 하나로 합쳐집니다. 첫 기사 시각만 보므로 하루 안에 이어진 서로 다른 사건도
@@ -195,7 +223,7 @@ LLM 관련성 필터(제목만, 판정 기업마다, `transformers/filters/relev
 | `NEWS_ISSUE_LINK_MAX_PER_RUN` | `200` | 실행당 대상 상한 |
 | `NEWS_ISSUE_SAME_EVENT_MAX_GAP_HOURS` | `24` | 같은 사건으로 보는 첫 기사 시각 차 |
 | `NEWS_ISSUE_SAME_EVENT_SCORE` | `0.75` | 같은 사건으로 보는 코사인(아래 간격 상한 안에서만) |
-| `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` | `168` | 코사인으로 같은 사건을 판단하는 첫 기사 시각 차 상한(클러스터 기간과 같은 7일) |
+| `NEWS_ISSUE_SAME_EVENT_SCORE_MAX_GAP_HOURS` | `168` | 코사인으로 같은 사건을 판단하는 첫 기사 시각 차 상한(7일) |
 | `NEWS_ISSUE_RELINK_WINDOW_HOURS` | `72` | 재판정 대상을 고르는 기간(지금부터, 시간). `0` 이면 다시 판정하지 않습니다 |
 | `NEWS_ISSUE_EMBEDDING_MODEL` | `amazon.titan-embed-text-v2:0` | 연결용 임베딩 모델 |
 | `NEWS_ISSUE_LINK_METHOD` | `vote` | 판정 방식. `vote`(LLM 투표) 또는 `cosine`(이전 규칙, 되돌리기용) |
@@ -355,11 +383,10 @@ DAG `news_backfill_issue_timeline` 으로 그 기간의 연결을 다시 만든 
 (`dags/news/backfill_cluster_articles.py`)가 저장된 미판정 기사 전량을 한 번에 판정합니다. task 구성은
 `news_cluster_articles` 와 같고 삼중항 DAG 도 같이 씁니다.
 
-- **한 번에 판정하는 이유**: 시간 창의 기준점은 먼저 판정된 기사의 발행 시각이고, 그보다 이른 기사는
-  1일 전까지만 붙습니다. 청크마다 판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터보다 이르게
-  도착해 같은 사건에 클러스터가 하나 더 생깁니다.
-- **IDF**: 백필 판정은 저장된 IDF 표에 이번 배치의 문서 수를 더해 씁니다
-  (`assign(include_batch_idf=True)`, `transformers/clustering/batch.py` 의 `add_batch_frequency`). 초기
+- **한 번에 판정하는 이유**: 기사는 발행 시각순으로 판정되고 시간 피처가 그 순서를 전제합니다. 청크마다
+  판정하면 뒤 청크 기업의 기사가 앞 청크가 만든 클러스터보다 이르게 도착해 같은 사건에 클러스터가 하나 더
+  생깁니다.
+- **IDF**: 백필 DAG 는 벡터화 뒤·판정 앞에 `rebuild_idf` task 로 IDF 사전을 한 번 다시 만듭니다. 초기
   백필에는 표가 비어 있어, 그대로 쓰면 기업명 같은 흔한 토큰이 눌리지 않습니다.
 - **발행 조건**: 실패한 청크가 있으면 발행하지 않습니다. 다시 트리거하면 남은 기업만 수집한 뒤
   발행합니다. 미판정 기사가 없으면 발행을 건너뜁니다.
