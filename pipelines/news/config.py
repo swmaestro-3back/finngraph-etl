@@ -47,6 +47,14 @@ class NewsSettings(BaseSettings):
     search_lookback_days: int = Field(default=180, validation_alias="NEWS_SEARCH_LOOKBACK_DAYS")
     # search_history.last_searched_at 이 이 간격을 넘긴 기업만 이번 런의 검색 대상이다.
     search_interval_hours: int = Field(default=2, validation_alias="NEWS_SEARCH_INTERVAL_HOURS")
+    search_interval_slack_minutes: int = Field(
+        default=10, validation_alias="NEWS_SEARCH_INTERVAL_SLACK_MINUTES"
+    )
+    search_stale_count: int = Field(default=20, validation_alias="NEWS_SEARCH_STALE_COUNT")
+    search_stale_lookback_days: int = Field(
+        default=30, validation_alias="NEWS_SEARCH_STALE_LOOKBACK_DAYS"
+    )
+    search_stale_max_pages: int = Field(default=2, validation_alias="NEWS_SEARCH_STALE_MAX_PAGES")
     hot_themes_redis_url: str = Field(
         default="redis://localhost:16379/0", validation_alias="HOT_THEMES_REDIS_URL"
     )
