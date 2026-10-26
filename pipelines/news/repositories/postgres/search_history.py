@@ -54,6 +54,25 @@ SELECT_TICKER_COMPANIES_SQL = text(
     """
 )
 
+SELECT_STALE_COMPANIES_SQL = text(
+    """
+    SELECT company_id, name, last_searched_at
+      FROM (
+            SELECT DISTINCT ON (sc.company_id) sc.company_id, s.name, sh.last_searched_at
+              FROM service_companies sc
+              JOIN stocks s ON s.company_id = sc.company_id
+                           AND s.is_active
+                           AND s.market IN ('KOSPI', 'KOSDAQ')
+              LEFT JOIN search_history sh ON sh.company_id = sc.company_id
+             WHERE NOT (sc.company_id = ANY(CAST(:exclude AS BIGINT[])))
+             ORDER BY sc.company_id, s.id
+           ) AS candidates
+     WHERE last_searched_at IS NULL OR last_searched_at <= :due_before
+     ORDER BY last_searched_at NULLS FIRST, company_id
+     LIMIT :limit;
+    """
+)
+
 # 검색을 마친 기업의 마지막 검색 시각 upsert
 UPSERT_SEARCH_HISTORY_SQL = text(
     """
@@ -71,6 +90,8 @@ class CompanyQuery:
     name: str
     # search_history.last_searched_at. None 이면 검색한 적이 없어 lookback 전체를 읽는다.
     watermark: datetime | None = None
+    lookback_days: int | None = None
+    max_pages: int | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +107,7 @@ def group_company_rows(
     rows: list[tuple[int | None, str, datetime | None]],
     interval_hours: int,
     now: datetime,
+    slack_minutes: int = 0,
 ) -> CompanyQueryBatch:
     """(company_id, name, last_searched_at) 행을 기업 단위 쿼리로 합친다.
 
@@ -94,7 +116,7 @@ def group_company_rows(
     company_id 가 NULL 인 종목은 news_companies 에 연결할 수 없어 경고 후 제외한다.
     """
 
-    due_before = now - timedelta(hours=interval_hours)
+    due_before = now - timedelta(hours=interval_hours) + timedelta(minutes=slack_minutes)
     by_company: dict[int, CompanyQuery] = {}
     skipped_names: set[str] = set()
     skipped_not_due: set[int] = set()
@@ -127,18 +149,20 @@ def group_company_rows(
 
 
 def fetch_due_company_queries(
-    theme_ids: list[int], interval_hours: int, now: datetime
+    theme_ids: list[int], interval_hours: int, now: datetime, slack_minutes: int = 0
 ) -> CompanyQueryBatch:
     """테마 편입 기업 중 재검색 시점이 된 기업 조회"""
 
     unique_ids = sorted({int(theme_id) for theme_id in theme_ids})
     if not unique_ids:
-        return group_company_rows([], [], interval_hours, now)
+        return group_company_rows([], [], interval_hours, now, slack_minutes)
 
     with session_scope() as session:
         rows = session.execute(SELECT_THEME_COMPANIES_SQL, {"theme_ids": unique_ids}).fetchall()
 
-    return group_company_rows(unique_ids, [tuple(row) for row in rows], interval_hours, now)
+    return group_company_rows(
+        unique_ids, [tuple(row) for row in rows], interval_hours, now, slack_minutes
+    )
 
 
 def fetch_due_krx100_queries(
@@ -157,17 +181,54 @@ def fetch_due_krx100_queries(
 
 
 def fetch_due_ticker_queries(
-    theme_ids: list[int], tickers: list[str], interval_hours: int, now: datetime
+    theme_ids: list[int],
+    tickers: list[str],
+    interval_hours: int,
+    now: datetime,
+    slack_minutes: int = 0,
 ) -> CompanyQueryBatch:
     unique_ids = sorted({int(theme_id) for theme_id in theme_ids})
     unique_tickers = sorted({str(ticker) for ticker in tickers})
     if not unique_tickers:
-        return group_company_rows(unique_ids, [], interval_hours, now)
+        return group_company_rows(unique_ids, [], interval_hours, now, slack_minutes)
 
     with session_scope() as session:
         rows = session.execute(SELECT_TICKER_COMPANIES_SQL, {"tickers": unique_tickers}).fetchall()
 
-    return group_company_rows(unique_ids, [tuple(row) for row in rows], interval_hours, now)
+    return group_company_rows(
+        unique_ids, [tuple(row) for row in rows], interval_hours, now, slack_minutes
+    )
+
+
+def fetch_stale_company_queries(
+    limit: int,
+    exclude: list[int],
+    interval_hours: int,
+    now: datetime,
+    lookback_days: int,
+    max_pages: int,
+) -> list[CompanyQuery]:
+    if limit <= 0:
+        return []
+
+    params = {
+        "exclude": sorted({int(company_id) for company_id in exclude}),
+        "due_before": now - timedelta(hours=interval_hours),
+        "limit": limit,
+    }
+    with session_scope() as session:
+        rows = session.execute(SELECT_STALE_COMPANIES_SQL, params).fetchall()
+
+    return [
+        CompanyQuery(
+            company_id=int(company_id),
+            name=name,
+            watermark=last_searched_at,
+            lookback_days=lookback_days,
+            max_pages=max_pages,
+        )
+        for company_id, name, last_searched_at in rows
+    ]
 
 
 def mark_companies_searched(company_ids: list[int], searched_at: datetime) -> int:

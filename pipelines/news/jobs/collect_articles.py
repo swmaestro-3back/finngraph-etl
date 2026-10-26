@@ -5,6 +5,7 @@ from datetime import datetime
 from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
 from pipelines.news.extractors.search_collector import (
+    SearchQuotaExceededError,
     collect_company_news,
     validate_search_settings,
 )
@@ -19,6 +20,7 @@ from pipelines.news.repositories.postgres.search_history import (
     fetch_due_company_queries,
     fetch_due_krx100_queries,
     fetch_due_ticker_queries,
+    fetch_stale_company_queries,
     mark_companies_searched,
 )
 from pipelines.news.transformers.company_matches import (
@@ -42,12 +44,19 @@ def run(theme_ids: list[int], tickers: list[str] | None = None) -> dict[str, int
     run_started_at = datetime.now(SEOUL_TIMEZONE)
 
     # 1. 테마 편입 기업 중 search_history 기준 재검색 시점이 된 기업 조회
+    slack_minutes = settings.search_interval_slack_minutes
     if tickers:
         batch = fetch_due_ticker_queries(
-            theme_ids, tickers, settings.search_interval_hours, run_started_at
+            theme_ids,
+            tickers,
+            settings.search_interval_hours,
+            run_started_at,
+            slack_minutes=slack_minutes,
         )
     else:
-        batch = fetch_due_company_queries(theme_ids, settings.search_interval_hours, run_started_at)
+        batch = fetch_due_company_queries(
+            theme_ids, settings.search_interval_hours, run_started_at, slack_minutes=slack_minutes
+        )
     logger.info(
         "[collect_articles] 대상: 테마 %d개(%s) → 검색 기업 %d개 "
         "(간격 미도래 %d, company_id 없음 %d, 첫 검색 %d)",
@@ -59,7 +68,24 @@ def run(theme_ids: list[int], tickers: list[str] | None = None) -> dict[str, int
         sum(1 for q in batch.queries if q.watermark is None),
     )
 
-    return collect(batch.queries, run_started_at)
+    stale = fetch_stale_company_queries(
+        settings.search_stale_count,
+        [q.company_id for q in batch.queries],
+        settings.search_interval_hours,
+        run_started_at,
+        settings.search_stale_lookback_days,
+        settings.search_stale_max_pages,
+    )
+    logger.info(
+        "[collect_articles] 오래 검색 안 된 기업 %d개 추가 "
+        "(첫 검색 %d, 최근 %d일·검색어당 %d페이지)",
+        len(stale),
+        sum(1 for q in stale if q.watermark is None),
+        settings.search_stale_lookback_days,
+        settings.search_stale_max_pages,
+    )
+
+    return collect(batch.queries + stale, run_started_at)
 
 
 def run_krx100(
@@ -115,7 +141,7 @@ def collect(
         return {"saved": 0, "linked": 0}
 
     # 1. 네이버 API 호출 후 수동 필터링 + 연관성 필터링
-    passed, failed_company_ids = _collect_and_filter(
+    passed, failed_company_ids, quota_error = _collect_and_filter(
         queries, run_started_at, lookback_days, max_pages, query_templates
     )
 
@@ -147,6 +173,9 @@ def collect(
         marked,
     )
 
+    if quota_error is not None:
+        raise quota_error
+
     return {"saved": save_result["inserted_count"], "linked": save_result["linked_count"]}
 
 
@@ -156,15 +185,20 @@ def _collect_and_filter(
     lookback_days: int | None,
     max_pages: int | None,
     query_templates: list[str] | None,
-) -> tuple[list[dict], list[int]]:
+) -> tuple[list[dict], list[int], SearchQuotaExceededError | None]:
     """네이버 수집부터 LLM 관련성 필터까지. (통과 기사, 수집에 실패한 company_id)를 돌려준다."""
 
     settings = get_news_settings()
 
     # 2. 네이버 기사 수집
-    collected, failed_company_ids = collect_company_news(
-        queries, run_started_at, lookback_days, max_pages, query_templates
-    )
+    quota_error: SearchQuotaExceededError | None = None
+    try:
+        collected, failed_company_ids = collect_company_news(
+            queries, run_started_at, lookback_days, max_pages, query_templates
+        )
+    except SearchQuotaExceededError as e:
+        quota_error = e
+        collected, failed_company_ids = e.collected, e.failed_company_ids
     logger.info(
         "[collect_articles] 수집: 기사 %d건 (기업 %d개 중 실패 %d개)",
         len(collected),
@@ -217,7 +251,7 @@ def _collect_and_filter(
         len(relevance.failed),
     )
 
-    return relevance.passed, failed_company_ids
+    return relevance.passed, failed_company_ids, quota_error
 
 
 def _fetch_bodies(items: list[dict]) -> list[dict]:
