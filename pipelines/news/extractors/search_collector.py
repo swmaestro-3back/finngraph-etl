@@ -16,6 +16,18 @@ class NewsSearchError(RuntimeError):
     """네이버 검색 API 요청·응답 파싱 실패 에러"""
 
 
+class SearchQuotaExceededError(NewsSearchError):
+    def __init__(
+        self,
+        message: str,
+        collected: list[dict[str, Any]] | None = None,
+        failed_company_ids: list[int] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.collected = collected or []
+        self.failed_company_ids = failed_company_ids or []
+
+
 def validate_search_settings() -> None:
     settings = get_news_settings()
 
@@ -84,6 +96,10 @@ def fetch_search_news_page(
             headers=build_request_headers(),
             timeout=timeout,
         )
+        if response.status_code == 429:
+            raise SearchQuotaExceededError(
+                f"검색 API 호출 한도 초과 (keyword={keyword}, start={start}): {response.text[:200]}"
+            )
         response.raise_for_status()
     except requests.RequestException as e:
         raise NewsSearchError(f"요청 실패 (keyword={keyword}, start={start}): {e}") from e
@@ -230,6 +246,10 @@ def collect_stock_news(
     None 이면 설정값.
     """
 
+    if query.lookback_days is not None:
+        lookback_days = query.lookback_days
+    if query.max_pages is not None:
+        max_pages = query.max_pages
     cutoff = collection_cutoff(query, run_started_at, lookback_days)
     collected: list[dict[str, Any]] = []
 
@@ -269,6 +289,16 @@ def collect_company_news(
             collected.extend(
                 collect_stock_news(query, run_started_at, lookback_days, max_pages, query_templates)
             )
+        except SearchQuotaExceededError as e:
+            failed_company_ids.extend(remaining.company_id for remaining in queries[index:])
+            logging.error(
+                "검색 API 호출 한도 초과 — 남은 기업 %d개 검색 중단: %s", len(queries) - index, e
+            )
+            raise SearchQuotaExceededError(
+                f"검색 API 호출 한도 초과 — 기업 {len(queries) - index}개 미검색: {e}",
+                collected,
+                sorted(failed_company_ids),
+            ) from e
         except NewsSearchError as e:
             failed_company_ids.append(query.company_id)
             logging.debug(

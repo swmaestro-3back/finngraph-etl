@@ -96,8 +96,11 @@ def wired(monkeypatch):
 
     monkeypatch.setattr(company_matches, "get_company_matcher", lambda: MATCHER)
     monkeypatch.setattr(job, "validate_search_settings", lambda: None)
-    monkeypatch.setattr(job, "fetch_due_company_queries", lambda ids, hours, now: batch)
+    monkeypatch.setattr(
+        job, "fetch_due_company_queries", lambda ids, hours, now, slack_minutes=0: batch
+    )
     monkeypatch.setattr(job, "fetch_due_krx100_queries", lambda hours, now, company_ids: batch)
+    monkeypatch.setattr(job, "fetch_stale_company_queries", lambda *args, **kwargs: [])
 
     # 200 번 기업의 검색은 실패한 것으로 본다
     def fake_collect(queries, run_started_at, lookback_days, max_pages, query_templates):
@@ -418,7 +421,7 @@ def test_run_with_tickers_searches_backend_hot_theme_stocks(wired, monkeypatch):
     job, calls, _ = wired
     seen: list[tuple] = []
 
-    def fake_ticker_queries(ids, tickers, hours, now):
+    def fake_ticker_queries(ids, tickers, hours, now, slack_minutes=0):
         seen.append((ids, tickers, hours))
         return CompanyQueryBatch(theme_ids=ids, queries=[], skipped_no_company=0, skipped_not_due=0)
 
@@ -426,7 +429,9 @@ def test_run_with_tickers_searches_backend_hot_theme_stocks(wired, monkeypatch):
     monkeypatch.setattr(
         job,
         "fetch_due_company_queries",
-        lambda ids, hours, now: (_ for _ in ()).throw(AssertionError("편입 종목 전체를 조회함")),
+        lambda ids, hours, now, slack_minutes=0: (_ for _ in ()).throw(
+            AssertionError("편입 종목 전체를 조회함")
+        ),
     )
 
     assert job.run(theme_ids=[10], tickers=["066970"]) == {"saved": 0, "linked": 0}
@@ -438,7 +443,7 @@ def test_run_with_no_due_companies_does_nothing(wired, monkeypatch):
     monkeypatch.setattr(
         job,
         "fetch_due_company_queries",
-        lambda ids, hours, now: CompanyQueryBatch(
+        lambda ids, hours, now, slack_minutes=0: CompanyQueryBatch(
             theme_ids=[10], queries=[], skipped_no_company=0, skipped_not_due=3
         ),
     )
