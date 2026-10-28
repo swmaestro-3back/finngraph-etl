@@ -114,6 +114,12 @@ if dag and task:
 
             return run_change_rates()
 
+        @task(retries=2)
+        def calculate_stock_week52_ranges() -> int:
+            from pipelines.stocks.jobs.calculate_week52_ranges import run
+
+            return run()
+
         # 수급은 네이버 비공식 API 라 차단 의심 시 즉시 실패한다. 기본 5분 재시도는
         # 차단이 풀리기에 짧아 간격을 늘려 둔다.
         @task(retries=2, retry_delay=timedelta(minutes=15), outlets=[stocks_daily_collected])
@@ -126,6 +132,7 @@ if dag and task:
         repaired = repair_adjusted_history(candles)
         flows = collect_investor_flows()
         repaired >> aggregate_period_candles() >> calculate_stock_change_rates() >> flows
+        repaired >> calculate_stock_week52_ranges() >> flows
         (
             repaired
             >> calculate_theme_daily()

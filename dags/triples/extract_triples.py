@@ -41,6 +41,18 @@ if dag and task:
 
             return run()
 
-        extract_triples()
+        @task(retries=1, retry_delay=timedelta(minutes=5), trigger_rule="all_done")
+        def refresh_issue_visibility() -> int:
+            from pipelines.news.jobs.refresh_issue_visibility import run
+
+            return run()
+
+        @task(retries=1, retry_delay=timedelta(minutes=5), trigger_rule="all_done")
+        def refresh_event_leads() -> int:
+            from pipelines.news.jobs.refresh_event_leads import run
+
+            return run()
+
+        extract_triples() >> refresh_issue_visibility() >> refresh_event_leads()
 
     triples_extract_triples()

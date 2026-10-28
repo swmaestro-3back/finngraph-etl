@@ -99,6 +99,12 @@ if dag and task:
                 max_llm_calls=params["max_llm_calls"],
             )
 
-        backfill_issue_timeline()
+        @task(retries=1, retry_delay=timedelta(minutes=5), trigger_rule="all_done")
+        def refresh_event_leads() -> int:
+            from pipelines.news.jobs.refresh_event_leads import run
+
+            return run()
+
+        backfill_issue_timeline() >> refresh_event_leads()
 
     news_backfill_issue_timeline()
