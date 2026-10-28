@@ -37,6 +37,80 @@ def update_cluster_title(cluster_id: int, title: str) -> None:
         session.execute(UPDATE_CLUSTER_TITLE_SQL, {"cluster_id": cluster_id, "title": title})
 
 
+REFRESH_VISIBILITY_SQL = text(
+    """
+    UPDATE news_clusters AS c
+       SET visible = v.visible
+      FROM (
+            SELECT nc.id,
+                   (nc.title IS NOT NULL AND nc.representative_news_id IS NOT NULL)
+                   OR EXISTS (
+                        SELECT 1 FROM news AS n
+                         WHERE n.cluster_id = nc.id
+                           AND n.triple_extracted = true
+                   ) AS visible
+              FROM news_clusters AS nc
+           ) AS v
+     WHERE c.id = v.id
+       AND c.visible IS DISTINCT FROM v.visible;
+    """
+)
+
+
+def refresh_cluster_visibility() -> int:
+    with session_scope() as session:
+        return session.execute(REFRESH_VISIBILITY_SQL).rowcount
+
+
+REFRESH_EVENT_LEADS_SQL = text(
+    """
+    WITH RECURSIVE up AS (
+        SELECT nc.id AS start_id, nc.id, nc.parent_cluster_id, nc.link_relation, 0 AS depth
+          FROM news_clusters AS nc
+         WHERE nc.visible
+        UNION ALL
+        SELECT up.start_id, p.id, p.parent_cluster_id, p.link_relation, up.depth + 1
+          FROM up
+          JOIN news_clusters AS p ON p.id = up.parent_cluster_id
+         WHERE up.link_relation = 'same_event'
+           AND up.depth < 100
+    ),
+    roots AS (
+        SELECT DISTINCT ON (start_id) start_id, id AS root_id
+          FROM up
+         ORDER BY start_id,
+                  link_relation IS DISTINCT FROM 'same_event' DESC,
+                  CASE WHEN link_relation IS DISTINCT FROM 'same_event' THEN depth ELSE -depth END
+    ),
+    leads AS (
+        SELECT DISTINCT ON (r.root_id) r.root_id, nc.id AS lead_id
+          FROM roots AS r
+          JOIN news_clusters AS nc ON nc.id = r.start_id
+         ORDER BY r.root_id,
+                  nc.title IS NULL OR nc.title ~ '^[[:space:]]*$',
+                  nc.member_count DESC,
+                  nc.first_published_at,
+                  nc.id
+    )
+    UPDATE news_clusters AS c
+       SET event_lead_id = v.lead_id
+      FROM (
+            SELECT nc.id, l.lead_id
+              FROM news_clusters AS nc
+              LEFT JOIN roots AS r ON r.start_id = nc.id
+              LEFT JOIN leads AS l ON l.root_id = r.root_id
+           ) AS v
+     WHERE c.id = v.id
+       AND c.event_lead_id IS DISTINCT FROM v.lead_id;
+    """
+)
+
+
+def refresh_event_leads() -> int:
+    with session_scope() as session:
+        return session.execute(REFRESH_EVENT_LEADS_SQL).rowcount
+
+
 # ── 온라인 판정 ──────────────────────────────────────────────────────────────
 
 # 후보 시드: 가장 최신 멤버가 since 이후(candidate_days — 그보다 오래 끊긴 클러스터는 시간 피처가
