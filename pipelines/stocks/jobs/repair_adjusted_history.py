@@ -6,6 +6,7 @@ from pipelines.stocks.jobs import (
     backfill_daily_candles,
     backfill_period_candles,
     calculate_change_rates,
+    calculate_week52_ranges,
 )
 from pipelines.stocks.repositories.postgres.stocks import fetch_active_stock_ids
 from pipelines.themes.jobs import calculate_theme_candles
@@ -38,6 +39,7 @@ def run(tickers: list[str]) -> int:
             backfill_period_candles.run(tickers=[ticker])
             calculate_change_rates.run_daily(since=since, tickers=[ticker])
             calculate_change_rates.run_period(since=since, tickers=[ticker])
+            calculate_week52_ranges.run(since=since, tickers=[ticker])
         except Exception:
             logger.exception("수정주가 복구 실패: ticker=%s", ticker)
             continue

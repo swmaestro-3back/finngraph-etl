@@ -103,6 +103,12 @@ if dag and task:
 
             return run_change_rates()
 
+        @task(retries=1)
+        def calculate_stock_week52_ranges() -> int:
+            from pipelines.stocks.jobs.calculate_week52_ranges import run
+
+            return run()
+
         @task(retries=1, outlets=[hot_themes_published])
         def publish_hot_themes() -> dict:
             from pipelines.themes.jobs.publish_hot_themes import run
@@ -112,8 +118,9 @@ if dag and task:
         candles = check_market_open() >> collect_daily_candles()
         repaired = repair_adjusted_history(candles)
         repaired >> aggregate_period_candles() >> calculate_stock_change_rates()
+        week52 = repaired >> calculate_stock_week52_ranges()
         theme_daily = repaired >> calculate_theme_daily()
         theme_daily >> aggregate_theme_period() >> calculate_theme_change_rates()
-        theme_daily >> publish_hot_themes()
+        [theme_daily, week52] >> publish_hot_themes()
 
     stocks_intraday_candles()
