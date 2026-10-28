@@ -129,6 +129,7 @@ jobs:
           -url="jdbc:postgresql://localhost:5432/finngraph" \
           -user="threeback" \
           -password="12345678" \
+          -postgresql.transactional.lock=false \
           migrate
       - name: pytest (integration만)
         run: uv run pytest -m integration

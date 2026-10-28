@@ -49,6 +49,7 @@ services:
     command: -url=jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}?sslmode=require
       -user=${DB_USER} -password=${DB_PASSWORD}
       -baselineOnMigrate=true -baselineVersion=1
+      -postgresql.transactional.lock=false
       migrate
     volumes: [../../migrations/versions:/flyway/sql:ro]
     logging: *logging
