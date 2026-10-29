@@ -173,15 +173,35 @@ class NewsSettings(BaseSettings):
     # 이 값이 유일한 상한이다.
     news_body_fetch_workers: int = Field(default=8, validation_alias="NEWS_BODY_FETCH_WORKERS")
 
-    # 본문에만 나온 기업 후보(표기)가 이 수를 넘는 기사는 여러 종목을 모은 기사로 보고 저장하지
-    # 않는다. 엔티티 LLM 도 부르지 않는다.
+    # 제목·본문의 후보 기업(검색 종목 제외, 표기 기준)이 이 수를 넘는 기사는 여러 종목을 모은
+    # 기사로 보고 저장하지 않는다. 엔티티 필터(jev)도 부르지 않는다.
     news_body_candidate_max: int = Field(default=15, validation_alias="NEWS_BODY_CANDIDATE_MAX")
 
+    # 요약(Bedrock)에 넣는 본문 길이. jev 필터는 state 를 리드·문장으로 줄이므로 쓰지 않는다
     news_llm_body_limit: int = Field(default=12000, validation_alias="NEWS_LLM_BODY_LIMIT")
     news_llm_max_tokens: int = Field(default=1024, validation_alias="NEWS_LLM_MAX_TOKENS")
     news_llm_max_concurrency: int = Field(default=8, validation_alias="NEWS_LLM_MAX_CONCURRENCY")
-    # 관련성 필터가 한 번의 LLM 호출에 넣는 기사 수. 시스템 프롬프트 반복과 요청 수를 줄인다.
-    news_llm_batch_size: int = Field(default=10, validation_alias="NEWS_LLM_BATCH_SIZE")
+
+    # jev 판정 임계값. 접속 설정(JEV_*)은 pipelines.common.config.Settings 에 있다. 스윕 결과는
+    # finngraph-v2 의 evals/relevance·evals/entity_filtering README 참조.
+    # 관련성: is_company 가 relevance_company_min 이상이고 has_event·has_driver 중 최댓값이
+    # relevance_gate_min 이상이면 통과. company_min 0.7 은 제목 필터를 빠져나온 구단 이름(KT 0.63)을
+    # 떨어뜨린다. gate_min 0.55 는 0.50 대비 기부·학회 참가·기술 소개 기사를 더 떨어뜨리고,
+    # 0.60 부터는 자사주 취득·생산거점 구축 같은 사건이 섞여 들어 손실이 크다.
+    relevance_company_min: float = Field(
+        default=0.7, ge=0, le=1, validation_alias="NEWS_RELEVANCE_COMPANY_MIN"
+    )
+    relevance_gate_min: float = Field(
+        default=0.55, ge=0, le=1, validation_alias="NEWS_RELEVANCE_GATE_MIN"
+    )
+    # 엔티티: is_company 가 entity_company_min 미만이면 not_company, p(party) 가 entity_party_min
+    # 이상이면 party. 올리면 정밀도가 오르는 만큼 주체 기업을 더 놓친다(0.7: 오탐 -2, 놓침 +3)
+    entity_company_min: float = Field(
+        default=0.5, ge=0, le=1, validation_alias="NEWS_ENTITY_COMPANY_MIN"
+    )
+    entity_party_min: float = Field(
+        default=0.5, ge=0, le=1, validation_alias="NEWS_ENTITY_PARTY_MIN"
+    )
 
     @field_validator("cluster_text_weights", "cluster_time_weights", mode="before")
     @classmethod
@@ -218,3 +238,9 @@ def get_news_settings() -> NewsSettings:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+# typesafe_sdk(jev)는 요청마다 INFO 한 줄을 내고, 요청은 httpx 가 아니라 httpx2 로 보낸다. jev 는
+# 기사당 1요청이라 런 하나에 수백 줄이 되므로 WARNING 으로 내린다. 응답 속도는 collect_articles 의
+# 청크 요약(jev.latency_summary) 한 줄로 본다.
+logging.getLogger("typesafe_sdk").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
+logging.getLogger("httpcore2").setLevel(logging.WARNING)

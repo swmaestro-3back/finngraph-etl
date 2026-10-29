@@ -7,8 +7,6 @@ import pytest
 from pipelines.common.config import Settings
 
 ROLES = {
-    "relevance": "BEDROCK_RELEVANCE_MODEL",
-    "entity": "BEDROCK_ENTITY_MODEL",
     "cluster_title": "BEDROCK_CLUSTER_TITLE_MODEL",
     "summary": "BEDROCK_SUMMARY_MODEL",
     "triples": "BEDROCK_TRIPLES_MODEL",
@@ -69,3 +67,10 @@ def test_empty_issue_kind_screen_model_stays_off(env):
 def test_unknown_role_is_rejected(env):
     with pytest.raises(ValueError):
         Settings(_env_file=None).chat_model("titles")
+
+
+@pytest.mark.parametrize("role", ["relevance", "entity"])
+def test_jev_filter_roles_are_not_bedrock_roles(env, role):
+    # 뉴스 관련성·엔티티 필터는 jev(JEV_*)를 쓴다 — Bedrock 모델 역할이 아니다
+    with pytest.raises(ValueError):
+        Settings(_env_file=None).chat_model(role)

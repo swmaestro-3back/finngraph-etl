@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pipelines.common.gazetteer import CompanyMatcher, GazetteerEntry
 from pipelines.news.transformers import company_matches
-from pipelines.news.transformers.company_matches import match_body_companies, match_title_companies
+from pipelines.news.transformers.company_matches import match_candidates, match_title_companies
 
 
 def _entry(company_id: int, canonical: str) -> GazetteerEntry:
@@ -157,72 +157,108 @@ def test_default_matcher_is_loaded_lazily(monkeypatch):
     assert [c["company_id"] for c in item["_title_companies"]] == [100, 300]
 
 
-# ── 본문 기업 매치 ───────────────────────────────────────────────────────────
+# ── 후보 매치 (제목+본문, 엔티티 필터 입력) ───────────────────────────────────
 
 
-def _body_item(text: str, title_companies: list[dict] | None = None) -> dict:
+def _body_item(
+    text: str,
+    title: str = "두산밥캣, 북미 공장 증설",
+    linked: list[dict] | None = None,
+    query_companies: list[dict] | None = None,
+) -> dict:
     item = {
-        "title": "두산밥캣, 북미 공장 증설",
+        "title": title,
         "_text": text,
         "_query_company": {"company_id": 100, "name": "두산밥캣"},
     }
-    if title_companies is not None:
-        item["_title_companies"] = title_companies
+    if linked is not None:
+        item["_linked_companies"] = linked
+    if query_companies is not None:
+        item["_query_companies"] = query_companies
     return item
 
 
-def test_body_companies_exclude_companies_judged_from_the_title():
-    # 현대차는 제목에서 판정받았다(통과했든 탈락했든). 본문에 다시 나와도 후보가 아니다.
+def test_candidates_come_from_title_and_body_minus_search_and_linked_companies():
+    # 검색 종목(두산밥캣)은 관련성 필터가 판정했다. 나머지 제목 기업(현대차·LG엔솔)은 본문 기업과
+    # 함께 엔티티 필터의 후보다 — 제목에만 나온 현대차는 제목 표기로 든다
     item = _body_item(
-        "두산밥캣은 LG엔솔 배터리를 쓴다. 현대차도 참여했다. SK하이닉스가 칩을 댄다.",
-        [
-            {"company_id": 100, "name": "두산밥캣", "surface": "두산밥캣"},
-            {"company_id": 400, "name": "현대차", "surface": "현대차"},
-        ],
+        "두산밥캣은 LG엔솔 배터리를 쓴다. SK하이닉스가 칩을 댄다.",
+        title="두산밥캣·현대차, LG엔솔과 협약",
+        linked=[{"company_id": 100, "name": "두산밥캣"}],
     )
 
-    count = match_body_companies([item], MATCHER)
+    count = match_candidates([item], MATCHER)
 
-    assert count == 2
-    assert item["_body_companies"] == [
+    assert count == 3
+    assert item["_candidates"] == [
+        {"company_id": 400, "name": "현대차", "surface": "현대차"},
         {"company_id": 300, "name": "LG에너지솔루션", "surface": "LG엔솔"},
         {"company_id": 500, "name": "SK하이닉스", "surface": "SK하이닉스"},
     ]
 
 
-def test_body_companies_keep_each_spelling_of_one_company_once():
+def test_candidates_exclude_every_company_already_linked():
     item = _body_item(
-        "LG엔솔이 증설한다. LG에너지솔루션은 공급을 늘린다. LG엔솔은 투자한다.",
-        [{"company_id": 100, "name": "두산밥캣", "surface": "두산밥캣"}],
+        "현대차도 참여했다.",
+        title="두산밥캣·현대차 협약",
+        linked=[{"company_id": 100, "name": "두산밥캣"}, {"company_id": 400, "name": "현대차"}],
     )
 
-    match_body_companies([item], MATCHER)
+    match_candidates([item], MATCHER)
+
+    assert item["_candidates"] == []
+
+
+def test_candidates_exclude_fetching_search_companies_even_when_they_failed_relevance():
+    # 현대차 검색에도 걸린 기사인데 현대차는 관련성에서 탈락했다 — 그 판정이 최종이라 다시 묻지 않는다
+    item = _body_item(
+        "현대차도 참여했다.",
+        title="두산밥캣·현대차 협약",
+        linked=[{"company_id": 100, "name": "두산밥캣"}],
+        query_companies=[
+            {"company_id": 100, "name": "두산밥캣"},
+            {"company_id": 400, "name": "현대차"},
+        ],
+    )
+
+    match_candidates([item], MATCHER)
+
+    assert item["_candidates"] == []
+
+
+def test_candidates_keep_each_spelling_of_one_company_once():
+    item = _body_item(
+        "LG엔솔이 증설한다. LG에너지솔루션은 공급을 늘린다. LG엔솔은 투자한다.",
+        linked=[{"company_id": 100, "name": "두산밥캣"}],
+    )
+
+    match_candidates([item], MATCHER)
 
     # 같은 기업의 다른 표기는 따로 판정받는다. 같은 표기는 한 번만 든다.
-    assert [c["surface"] for c in item["_body_companies"]] == ["LG엔솔", "LG에너지솔루션"]
+    assert [c["surface"] for c in item["_candidates"]] == ["LG엔솔", "LG에너지솔루션"]
 
 
-def test_body_companies_exclude_query_company_without_title_companies():
-    # 제목 매치를 거치지 않은 기사도 검색 종목은 관련성 필터가 판정했다
+def test_candidates_exclude_query_company_without_linked_companies():
+    # 연결 정보가 없어도 검색 종목은 관련성 필터가 판정했다
     item = _body_item("두산밥캣이 현대차와 손잡았다.")
 
-    match_body_companies([item], MATCHER)
+    match_candidates([item], MATCHER)
 
-    assert [c["company_id"] for c in item["_body_companies"]] == [400]
+    assert [c["company_id"] for c in item["_candidates"]] == [400]
 
 
-def test_body_companies_are_empty_without_body():
-    item = _body_item("", [{"company_id": 100, "name": "두산밥캣", "surface": "두산밥캣"}])
+def test_candidates_are_empty_without_body_or_other_title_companies():
+    item = _body_item("", linked=[{"company_id": 100, "name": "두산밥캣"}])
     del item["_text"]
 
-    assert match_body_companies([item], MATCHER) == 0
-    assert item["_body_companies"] == []
+    assert match_candidates([item], MATCHER) == 0
+    assert item["_candidates"] == []
 
 
-def test_body_match_with_empty_items_does_not_load_gazetteer(monkeypatch):
+def test_candidate_match_with_empty_items_does_not_load_gazetteer(monkeypatch):
     def fail():
         raise AssertionError("개체 사전을 읽음")
 
     monkeypatch.setattr(company_matches, "get_company_matcher", fail)
 
-    assert match_body_companies([]) == 0
+    assert match_candidates([]) == 0

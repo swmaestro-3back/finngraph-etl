@@ -22,7 +22,8 @@ def test_search_defaults():
     assert settings.search_max_pages == 5
     assert settings.search_lookback_days == 180
     assert settings.search_interval_hours == 2
-    assert settings.news_llm_batch_size == 10
+    # 관련성 묶음 호출 설정은 jev 전환으로 없다
+    assert not hasattr(settings, "news_llm_batch_size")
 
 
 def test_search_settings_read_env(monkeypatch):
@@ -131,6 +132,63 @@ def test_body_candidate_max_default(monkeypatch):
     monkeypatch.delenv("NEWS_BODY_CANDIDATE_MAX", raising=False)
 
     assert NewsSettings(_env_file=None).news_body_candidate_max == 15
+
+
+JEV_THRESHOLD_ENV = (
+    "NEWS_RELEVANCE_COMPANY_MIN",
+    "NEWS_RELEVANCE_GATE_MIN",
+    "NEWS_ENTITY_COMPANY_MIN",
+    "NEWS_ENTITY_PARTY_MIN",
+)
+
+
+def test_jev_threshold_defaults(monkeypatch):
+    from pipelines.news.config import NewsSettings
+
+    for key in JEV_THRESHOLD_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+    s = NewsSettings(_env_file=None)
+
+    assert (s.relevance_company_min, s.relevance_gate_min) == (0.7, 0.55)
+    assert (s.entity_company_min, s.entity_party_min) == (0.5, 0.5)
+
+
+def test_jev_thresholds_read_env(monkeypatch):
+    from pipelines.news.config import NewsSettings
+
+    monkeypatch.setenv("NEWS_RELEVANCE_COMPANY_MIN", "0.8")
+    monkeypatch.setenv("NEWS_RELEVANCE_GATE_MIN", "0.6")
+    monkeypatch.setenv("NEWS_ENTITY_COMPANY_MIN", "0.55")
+    monkeypatch.setenv("NEWS_ENTITY_PARTY_MIN", "0.7")
+
+    s = NewsSettings(_env_file=None)
+
+    assert (s.relevance_company_min, s.relevance_gate_min) == (0.8, 0.6)
+    assert (s.entity_company_min, s.entity_party_min) == (0.55, 0.7)
+
+
+@pytest.mark.parametrize("name", JEV_THRESHOLD_ENV)
+def test_jev_threshold_must_be_a_probability(monkeypatch, name):
+    from pydantic import ValidationError
+
+    from pipelines.news.config import NewsSettings
+
+    monkeypatch.setenv(name, "1.5")
+    with pytest.raises(ValidationError):
+        NewsSettings(_env_file=None)
+
+
+def test_env_example_lists_jev_settings():
+    from pathlib import Path
+
+    env_example = (Path(__file__).resolve().parents[2] / ".env.example").read_text()
+
+    for key in ("JEV_API_KEY", "JEV_MODEL", "JEV_REQUEST_TIMEOUT", *JEV_THRESHOLD_ENV):
+        assert f"\n{key}=" in env_example, key
+    # jev 가 맡은 역할의 Bedrock 모델과 묶음 크기는 없다
+    for removed in ("BEDROCK_RELEVANCE_MODEL", "BEDROCK_ENTITY_MODEL", "NEWS_LLM_BATCH_SIZE"):
+        assert f"\n{removed}=" not in env_example, removed
 
 
 ISSUE_LINK_ENV = (

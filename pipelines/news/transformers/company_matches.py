@@ -7,8 +7,9 @@
 남긴다. 약칭('LG엔솔')으로만 적힌 제목도 통과하고, 다른 상장사 이름의 일부('SK하이닉스' 안의
 'SK')는 최장 일치라 언급으로 치지 않는다.
 
-본문 매치(match_body_companies)는 관련성 필터와 본문 크롤링 뒤에 돈다. 제목에서 이미 판정받은
-기업을 빼고 본문에만 나온 기업을 후보로 붙인다. 걸러내는 것은 LLM 엔티티 필터의 몫이다.
+후보 매치(match_candidates)는 관련성 필터와 본문 크롤링 뒤에 돈다. 제목과 본문을 한 번에 훑어
+검색 종목(관련성 필터가 판정했다)과 이미 연결된 기업을 뺀 나머지를 후보 `_candidates` 로 붙인다 —
+제목에만 나온 기업도 여기 든다. 걸러내는 것은 jev 엔티티 필터의 몫이다.
 """
 
 from __future__ import annotations
@@ -105,12 +106,14 @@ def match_title_companies(
     return result
 
 
-def match_body_companies(items: list[dict[str, Any]], matcher: CompanyMatcher | None = None) -> int:
-    """본문에만 나온 기업을 `_body_companies` 로 붙인다. 붙인 표기 수의 합을 돌려준다.
+def match_candidates(items: list[dict[str, Any]], matcher: CompanyMatcher | None = None) -> int:
+    """제목·본문의 기업을 엔티티 필터 후보 `_candidates` 로 붙인다. 붙인 표기 수의 합을 돌려준다.
 
-    제목에서 판정받은 기업(`_title_companies`, 통과·탈락 모두)과 검색 종목은 뺀다 — 관련성 필터의
-    판정이 그 기업들의 최종 판정이다. 표기 기준으로 중복을 제거하므로 같은 기업의 다른 표기는 따로
-    남는다(엔티티 필터가 표기마다 판정한다). 본문 등장 순서다. 기사가 없으면 사전을 읽지 않는다.
+    이 기사를 가져온 검색 종목(`_query_companies`·`_query_company`)과 이미 연결된 기업
+    (`_linked_companies`)은 뺀다 — 검색 종목은 관련성 필터의 판정이 최종이고(탈락했어도 다시 묻지
+    않는다), 연결된 기업은 이미 답이 있다. 표기 기준으로 중복을 제거하므로 같은 기업의 다른 표기는
+    따로 남는다(엔티티 필터가 표기마다 판정한다). 제목 등장 순서 뒤에 본문 등장 순서다. 기사가
+    없으면 사전을 읽지 않는다.
     """
 
     if not items:
@@ -121,15 +124,21 @@ def match_body_companies(items: list[dict[str, Any]], matcher: CompanyMatcher | 
 
     total = 0
     for item in items:
-        judged_ids = {int(company["company_id"]) for company in item.get("_title_companies") or []}
+        settled_ids = {
+            int(company["company_id"]) for company in item.get("_linked_companies") or []
+        }
+        settled_ids |= {
+            int(company["company_id"]) for company in item.get("_query_companies") or []
+        }
         query_company = item.get("_query_company")
         if query_company:
-            judged_ids.add(int(query_company["company_id"]))
+            settled_ids.add(int(query_company["company_id"]))
 
         seen: set[str] = set()
         companies: list[dict[str, Any]] = []
-        for match in matcher.extract(item.get("_text") or ""):
-            if match.entry.company_id in judged_ids or match.text in seen:
+        text = "\n".join(part for part in (item.get("title"), item.get("_text")) if part)
+        for match in matcher.extract(text):
+            if match.entry.company_id in settled_ids or match.text in seen:
                 continue
             seen.add(match.text)
             companies.append(
@@ -139,8 +148,7 @@ def match_body_companies(items: list[dict[str, Any]], matcher: CompanyMatcher | 
                     "surface": match.text,
                 }
             )
-
-        item["_body_companies"] = companies
+        item["_candidates"] = companies
         total += len(companies)
 
     return total
