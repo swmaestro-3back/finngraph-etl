@@ -10,14 +10,10 @@ from pipelines.news.repositories.postgres.search_history import CompanyQuery, Co
 from pipelines.news.transformers import company_matches
 from pipelines.news.transformers.filters import entity_filter, relevance_filter
 from pipelines.news.transformers.filters.entity_filter import EntityJudgement, EntityJudgementList
-from pipelines.news.transformers.filters.relevance_filter import (
-    ArticleVerdict,
-    BatchVerdict,
-    CompanyVerdict,
-)
+from pipelines.news.transformers.filters.relevance_filter import ArticleVerdict, CompanyVerdict
 
 # 개체 사전 대역: 검색 종목 엘앤에프(100), 제목에 함께 나오는 삼성SDI(300), 본문에만 나오는
-# 포스코퓨처엠(400)
+# 포스코퓨처엠(400). 관련성은 검색 종목만 판정하고 나머지 둘은 엔티티 필터의 후보다
 MATCHER = CompanyMatcher(
     {
         "엘앤에프": GazetteerEntry(
@@ -33,8 +29,9 @@ MATCHER = CompanyMatcher(
 )
 
 BODY = "엘앤에프가 삼성SDI에 양극재를 공급한다. 원료는 포스코퓨처엠이 댄다. " * 10
-BODY_WITHOUT_OTHERS = "엘앤에프가 삼성SDI에 양극재를 공급한다. " * 10
+BODY_ALONE = "엘앤에프가 양극재를 공급한다. " * 10
 FRESH_TITLE = "엘앤에프, 삼성SDI에 양극재 공급 계약"
+ALONE_TITLE = "엘앤에프, 양극재 공급 계약"
 
 
 def _item(title: str, link: str, description: str = "") -> dict:
@@ -48,13 +45,30 @@ def _item(title: str, link: str, description: str = "") -> dict:
     }
 
 
-def _keep_all(surfaces: list[str]) -> EntityJudgementList:
+def _keep_all(candidates: list[dict]) -> EntityJudgementList:
     return EntityJudgementList(
-        judgements=[
-            EntityJudgement(
-                entity=surface, mention=f"{surface} 원문 문장", reason="근거", role="party"
+        judgements=[EntityJudgement(entity=c["surface"], role="party") for c in candidates]
+    )
+
+
+def _reject_all(candidates: list[dict]) -> EntityJudgementList:
+    return EntityJudgementList(
+        judgements=[EntityJudgement(entity=c["surface"], role="background") for c in candidates]
+    )
+
+
+def _verdict(article, valid_by_surface: dict[str, bool] | None = None) -> ArticleVerdict:
+    """검색 종목마다 판정 하나. valid_by_surface 가 없으면 시황 제목만 무효다."""
+    return ArticleVerdict(
+        companies=[
+            CompanyVerdict(
+                name=c["surface"],
+                is_company=True,
+                valid=(valid_by_surface or {}).get(
+                    c["surface"], not article.title.startswith("코스피")
+                ),
             )
-            for surface in surfaces
+            for c in article.companies
         ]
     )
 
@@ -69,7 +83,6 @@ def wired(monkeypatch):
     monkeypatch.setenv("NEWS_SEARCH_INTERVAL_HOURS", "2")
     monkeypatch.setenv("NEWS_SEARCH_LOOKBACK_DAYS", "180")
     monkeypatch.setenv("NEWS_LLM_MAX_CONCURRENCY", "2")
-    monkeypatch.setenv("NEWS_LLM_BODY_LIMIT", "12000")
     monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "15")
     config.get_news_settings.cache_clear()
 
@@ -78,6 +91,7 @@ def wired(monkeypatch):
         "marked": [],
         "crawled": [],
         "saved": [],
+        "relevance_judged": [],
         "entity_judged": [],
         "collect_window": [],
         "query_templates": [],
@@ -146,28 +160,16 @@ def wired(monkeypatch):
         lambda ids, searched_at: calls["marked"].append(list(ids)) or len(ids),
     )
 
-    async def relevance_judge(articles):
-        # 시황 기사는 무효, 나머지는 판정 기업 모두 통과로 본다
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=article.id,
-                    companies=[
-                        CompanyVerdict(
-                            is_company=True, name=name, valid=not article.title.startswith("코스피")
-                        )
-                        for name in article.companies
-                    ],
-                )
-                for article in articles
-            ]
-        )
+    async def relevance_judge(article):
+        # 시황 기사는 무효, 나머지는 검색 종목 모두 통과로 본다
+        calls["relevance_judged"].append(list(article.companies))
+        return _verdict(article)
 
-    async def entity_judge(title, headline_companies, text, surfaces):
-        calls["entity_judged"].append(list(surfaces))
-        return _keep_all(surfaces)
+    async def entity_judge(title, query_companies, text, candidates):
+        calls["entity_judged"].append([c["surface"] for c in candidates])
+        return _keep_all(candidates)
 
-    # Bedrock 싱글톤 대신 가짜 judge
+    # jev 싱글톤 대신 가짜 judge
     monkeypatch.setattr(relevance_filter, "get_relevance_judge", lambda: relevance_judge)
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: entity_judge)
 
@@ -175,7 +177,7 @@ def wired(monkeypatch):
     config.get_news_settings.cache_clear()
 
 
-def test_run_crawls_relevant_articles_judges_body_companies_and_saves(wired):
+def test_run_crawls_relevant_articles_judges_candidates_and_saves(wired):
     job, calls, _ = wired
 
     result = job.run(theme_ids=[10, 11])
@@ -184,9 +186,11 @@ def test_run_crawls_relevant_articles_judges_body_companies_and_saves(wired):
     # fresh 하나만 크롤링하고 저장한다.
     assert calls["crawled"] == [["https://a/1"]]
     assert calls["saved"] == [["https://a/1"]]
-    # 본문 판정 후보는 본문에만 나온 포스코퓨처엠뿐이다 — 제목 기업은 다시 판정하지 않는다
-    assert calls["entity_judged"] == [["포스코퓨처엠"]]
-    # 제목 통과 기업(엘앤에프·삼성SDI) 뒤에 본문 통과 기업이 붙는다
+    # 관련성은 검색 종목(엘앤에프)만 판정한다. 제목의 삼성SDI 와 본문의 포스코퓨처엠은 후보로 엔티티
+    # 필터가 함께 판정한다
+    assert calls["relevance_judged"] == [[{"surface": "엘앤에프", "name": "엘앤에프"}]]
+    assert calls["entity_judged"] == [["삼성SDI", "포스코퓨처엠"]]
+    # 통과한 검색 종목 뒤에 party 후보가 붙는다
     assert calls["news_companies"] == [(900, [100, 300, 400])]
     # 검색에 성공한 기업만 search_history 에 기록된다 — 실패한 200 은 다음 런에 다시 읽는다
     assert calls["marked"] == [[100]]
@@ -208,9 +212,15 @@ def test_run_drops_articles_whose_body_could_not_be_fetched(wired):
     assert calls["marked"] == [[100]]
 
 
-def test_article_without_body_only_companies_skips_entity_llm(wired, monkeypatch):
+def test_article_without_candidates_skips_entity_jev(wired, monkeypatch):
     job, calls, bodies = wired
-    bodies["https://a/1"] = BODY_WITHOUT_OTHERS
+    alone = _item(ALONE_TITLE, "https://a/1")
+    bodies["https://a/1"] = BODY_ALONE
+    monkeypatch.setattr(
+        job,
+        "collect_company_news",
+        lambda queries, now, lookback, pages, templates: ([alone], []),
+    )
 
     def fail():
         raise AssertionError("엔티티 judge 를 만듦")
@@ -219,16 +229,16 @@ def test_article_without_body_only_companies_skips_entity_llm(wired, monkeypatch
 
     result = job.run(theme_ids=[10, 11])
 
-    assert calls["news_companies"] == [(900, [100, 300])]
-    assert result == {"saved": 1, "linked": 2}
+    assert calls["news_companies"] == [(900, [100])]
+    assert result == {"saved": 1, "linked": 1}
 
 
-def test_article_with_too_many_body_candidates_is_dropped_without_entity_llm(wired, monkeypatch):
+def test_article_with_too_many_candidates_is_dropped_without_entity_jev(wired, monkeypatch):
     from pipelines.news import config
 
     job, calls, _ = wired
-    # 본문 후보(포스코퓨처엠 1개)가 상한(0)을 넘는다 — 여러 종목을 모은 기사로 보고 저장하지 않는다
-    monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "0")
+    # 후보(삼성SDI·포스코퓨처엠 2개)가 상한(1)을 넘는다 — 여러 종목을 모은 기사로 보고 저장하지 않는다
+    monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "1")
     config.get_news_settings.cache_clear()
 
     result = job.run(theme_ids=[10, 11])
@@ -241,16 +251,16 @@ def test_article_with_too_many_body_candidates_is_dropped_without_entity_llm(wir
     assert calls["marked"] == [[100]]
 
 
-def test_article_at_the_body_candidate_limit_is_judged_and_saved(wired, monkeypatch):
+def test_article_at_the_candidate_limit_is_judged_and_saved(wired, monkeypatch):
     from pipelines.news import config
 
     job, calls, _ = wired
-    monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "1")
+    monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "2")
     config.get_news_settings.cache_clear()
 
     result = job.run(theme_ids=[10, 11])
 
-    assert calls["entity_judged"] == [["포스코퓨처엠"]]
+    assert calls["entity_judged"] == [["삼성SDI", "포스코퓨처엠"]]
     assert result == {"saved": 1, "linked": 3}
 
 
@@ -261,8 +271,8 @@ def test_dropping_every_article_for_too_many_candidates_is_not_an_llm_outage(wir
     monkeypatch.setenv("NEWS_BODY_CANDIDATE_MAX", "0")
     config.get_news_settings.cache_clear()
 
-    async def boom(title, headline_companies, text, surfaces):
-        raise RuntimeError("bedrock down")
+    async def boom(title, query_companies, text, candidates):
+        raise RuntimeError("jev down")
 
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: boom)
 
@@ -290,52 +300,45 @@ def test_listing_title_is_dropped_before_relevance_and_crawl(wired, monkeypatch)
     assert result == {"saved": 0, "linked": 0}
 
 
-def test_body_company_rejected_by_entity_filter_is_not_linked(wired, monkeypatch):
+def test_candidate_rejected_by_entity_filter_is_not_linked(wired, monkeypatch):
     job, calls, _ = wired
 
-    async def reject(title, headline_companies, text, surfaces):
-        return EntityJudgementList(
-            judgements=[
-                EntityJudgement(
-                    entity=surface, mention="문장", reason="배경 언급", role="background"
-                )
-                for surface in surfaces
-            ]
-        )
+    async def reject(title, query_companies, text, candidates):
+        return _reject_all(candidates)
 
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: reject)
 
     job.run(theme_ids=[10, 11])
 
-    assert calls["news_companies"] == [(900, [100, 300])]
+    # 제목의 삼성SDI 도 후보라 배경이면 연결되지 않는다 — 검색 종목만 남는다
+    assert calls["news_companies"] == [(900, [100])]
 
 
-def test_title_company_rejected_by_relevance_is_not_rejudged_from_body(wired, monkeypatch):
+def test_search_company_rejected_by_relevance_is_not_rejudged_as_candidate(wired, monkeypatch):
     job, calls, _ = wired
-    sent: list[tuple[str, ...]] = []
+    # 같은 기사가 엘앤에프(100)·삼성SDI(300) 두 검색에 걸렸다. 삼성SDI 는 관련성에서 탈락했다 —
+    # 그 판정이 최종이라 제목·본문에 나와도 후보로 다시 묻지 않는다
+    fresh = _item(FRESH_TITLE, "https://a/1", "LFP 양극재")
+    sdi_copy = dict(fresh, _query_company={"company_id": 300, "name": "삼성SDI"})
+    monkeypatch.setattr(
+        job,
+        "collect_company_news",
+        lambda queries, now, lookback, pages, templates: ([fresh, sdi_copy], []),
+    )
+    sent: list[tuple[dict, ...]] = []
 
-    async def judge(articles):
-        sent.extend(article.companies for article in articles)
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=article.id,
-                    companies=[
-                        CompanyVerdict(is_company=True, name="엘앤에프", valid=True),
-                        CompanyVerdict(is_company=True, name="삼성SDI", valid=False),
-                    ],
-                )
-                for article in articles
-            ]
-        )
+    async def judge(article):
+        sent.append(article.companies)
+        return _verdict(article, {"엘앤에프": True, "삼성SDI": False})
 
     monkeypatch.setattr(relevance_filter, "get_relevance_judge", lambda: judge)
 
     job.run(theme_ids=[10, 11])
 
-    # 검색 종목이 첫 번째, 제목 표기 그대로
-    assert sent == [("엘앤에프", "삼성SDI")]
-    # 삼성SDI 는 본문에도 나오지만 제목 판정에서 탈락했으므로 본문 후보에 들지 않는다
+    # 검색에 걸린 두 종목만, 제목 표기 그대로
+    assert sent == [
+        ({"surface": "엘앤에프", "name": "엘앤에프"}, {"surface": "삼성SDI", "name": "삼성SDI"})
+    ]
     assert calls["entity_judged"] == [["포스코퓨처엠"]]
     assert calls["news_companies"] == [(900, [100, 400])]
 
@@ -351,16 +354,16 @@ def test_entity_failure_on_one_article_links_only_its_title_companies(wired, mon
         lambda queries, now, lookback, pages, templates: ([fresh, second], []),
     )
 
-    async def flaky(title, headline_companies, text, surfaces):
+    async def flaky(title, query_companies, text, candidates):
         if "미국" in text:
-            raise RuntimeError("bedrock down")
-        return _keep_all(surfaces)
+            raise RuntimeError("jev down")
+        return _keep_all(candidates)
 
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: flaky)
 
     result = job.run(theme_ids=[10, 11])
 
-    # 실패한 기사도 저장하고 제목 기업만 연결한다. 런은 계속된다.
+    # 실패한 기사도 저장하고 검색 종목만 연결한다. 런은 계속된다.
     assert calls["news_companies"] == [(900, [100, 300, 400]), (901, [100])]
     assert result == {"saved": 2, "linked": 4}
 
@@ -368,8 +371,8 @@ def test_entity_failure_on_one_article_links_only_its_title_companies(wired, mon
 def test_run_raises_before_saving_when_all_entity_judgments_fail(wired, monkeypatch):
     job, calls, _ = wired
 
-    async def always_failing(title, headline_companies, text, surfaces):
-        raise RuntimeError("bedrock down")
+    async def always_failing(title, query_companies, text, candidates):
+        raise RuntimeError("jev down")
 
     monkeypatch.setattr(entity_filter, "get_entity_judge", lambda: always_failing)
 
@@ -384,8 +387,8 @@ def test_run_raises_before_saving_when_all_entity_judgments_fail(wired, monkeypa
 def test_run_raises_before_marking_when_all_relevance_judgments_fail(wired, monkeypatch):
     job, calls, _ = wired
 
-    async def always_failing_judge(articles):
-        raise RuntimeError("bedrock down")
+    async def always_failing_judge(article):
+        raise RuntimeError("jev down")
 
     monkeypatch.setattr(relevance_filter, "get_relevance_judge", lambda: always_failing_judge)
 
@@ -557,19 +560,8 @@ def test_run_stores_article_when_another_fetching_search_company_is_valid(wired,
         lambda queries, now, lookback, pages, templates: ([fresh, sdi_copy], []),
     )
 
-    async def judge(articles):
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=article.id,
-                    companies=[
-                        CompanyVerdict(is_company=True, name="엘앤에프", valid=False),
-                        CompanyVerdict(is_company=True, name="삼성SDI", valid=True),
-                    ],
-                )
-                for article in articles
-            ]
-        )
+    async def judge(article):
+        return _verdict(article, {"엘앤에프": False, "삼성SDI": True})
 
     monkeypatch.setattr(relevance_filter, "get_relevance_judge", lambda: judge)
 
