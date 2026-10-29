@@ -7,6 +7,9 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
+from pipelines.news.transformers.filters import relevance_filter
 from pipelines.news.transformers.filters.relevance_filter import (
     GATES,
     ArticleInput,
@@ -415,3 +418,67 @@ def test_latency_is_recorded_per_judge_call_including_failures():
     # 호출한 기사(성공·실패)마다 하나. jev 를 부르지 않은 기사는 세지 않는다
     assert len(result.latencies_ms) == 2
     assert all(ms >= 0 for ms in result.latencies_ms)
+
+
+# ── 운영 judge: 클라이언트 수명과 응답 검증 (jev 는 가짜 클라이언트) ─────────────
+
+
+class _FakeClient:
+    """만든 루프에 묶인 클라이언트 흉내. 다른 루프에서 부르면 실제 SDK 처럼 루프가 닫혔다고 한다."""
+
+    def __init__(self, drop: set[str]):
+        self.loop = asyncio.get_running_loop()
+        self.drop = drop
+        self.closed = False
+
+    async def system_one(self, state, questions):
+        if asyncio.get_running_loop() is not self.loop:
+            raise RuntimeError("Event loop is closed")
+        return SimpleNamespace(
+            answers={k: SimpleNamespace(noul=0.9) for k in questions if k not in self.drop}
+        )
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_jev(monkeypatch):
+    from pipelines.common.clients import jev
+
+    created: list[_FakeClient] = []
+    drop: set[str] = set()
+
+    def factory():
+        client = _FakeClient(drop)
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(jev, "async_client", factory)
+    relevance_filter.get_relevance_judge.cache_clear()
+    yield created, drop
+    relevance_filter.get_relevance_judge.cache_clear()
+
+
+def test_production_judge_survives_a_second_asyncio_run(fake_jev):
+    created, _ = fake_jev
+
+    for _ in range(2):
+        item = _item("엘앤에프, 양극재 공급 계약", "엘앤에프")
+        result = filter_relevant_news([item], max_concurrency=1)
+        assert result.passed == [item] and result.failed == []
+
+    # asyncio.run 마다 루프가 새로 생기므로 클라이언트도 런마다 열고 닫는다
+    assert len(created) == 2 and all(client.closed for client in created)
+
+
+def test_production_judge_fails_the_article_naming_missing_answers(fake_jev, caplog):
+    _, drop = fake_jev
+    drop.add("c0_has_driver")
+    item = _item("엘앤에프, 양극재 공급 계약", "엘앤에프")
+
+    with caplog.at_level("WARNING"):
+        result = filter_relevant_news([item], max_concurrency=1)
+
+    assert result.failed == [item]
+    assert "c0_has_driver" in caplog.text  # KeyError 대신 빠진 질문 키를 말한다

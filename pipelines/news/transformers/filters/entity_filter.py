@@ -20,6 +20,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from pipelines.common.clients.jev import aclose_judge, check_answers
 from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
 
@@ -232,13 +233,19 @@ def decide(answers: dict[str, Any], i: int) -> tuple[Role, dict[str, float]]:
         return "party", scores
     if role.choice != "party":
         return role.choice, scores
-    # party 로 골랐지만 임계값에 못 미쳤다 — 그 다음으로 높은 비-party 역할을 보고한다
-    best = max((k for k in role.probabilities if k != "party"), key=role.probabilities.__getitem__)
+    # party 로 골랐지만 임계값에 못 미쳤다 — 그 다음으로 높은 비-party 역할을 보고한다. 응답에
+    # 다른 역할의 확률이 없으면(옵션이 하나뿐이거나 일부만 돌아온 때) background 로 둔다
+    best = max(
+        (k for k in role.probabilities if k != "party"),
+        key=role.probabilities.__getitem__,
+        default="background",
+    )
     return best, scores
 
 
 class EntityJudge:
-    """jev 호출. 클라이언트는 이벤트 루프 안에서 처음 부를 때 만들어 재사용한다."""
+    """jev 호출. 클라이언트는 이벤트 루프 안에서 처음 부를 때 만들고, 런(asyncio.run)이 끝날 때
+    filter_candidates 가 aclose() 로 닫는다 — 풀이 루프에 묶여 있어 다음 런에서 다시 연다."""
 
     def __init__(self):
         from pipelines.news.transformers.prompts.entity import build_questions
@@ -253,6 +260,20 @@ class EntityJudge:
             self._client = async_client()
         return self._client
 
+    async def aclose(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
+
+    async def __call__(
+        self,
+        title: str,
+        query_companies: list[str],
+        text: str,
+        candidates: list[dict[str, str]],
+    ) -> EntityJudgementList:
+        return await self.judge(title, query_companies, text, candidates)
+
     async def judge(
         self,
         title: str,
@@ -265,6 +286,7 @@ class EntityJudge:
         if state["candidates"]:
             questions = self._build_questions(len(state["candidates"]), "lead")
             response = await self._get_client().system_one(state, questions)
+            check_answers(questions, response.answers)
             for i, candidate in enumerate(state["candidates"]):
                 role, scores = decide(response.answers, i)
                 judgements.append(
@@ -277,7 +299,7 @@ class EntityJudge:
 def get_entity_judge() -> Judge:
     """프로세스당 하나. 처음 부를 때 typesafe_sdk 를 로드하므로 import 시점엔 비용이 없다."""
 
-    return EntityJudge().judge
+    return EntityJudge()
 
 
 async def judge_items(
@@ -329,6 +351,15 @@ async def judge_items(
     return result
 
 
+async def _judge_and_close(
+    items: list[dict[str, Any]], judge: Judge, max_concurrency: int
+) -> EntityFilterResult:
+    try:
+        return await judge_items(items, judge, max_concurrency)
+    finally:
+        await aclose_judge(judge)
+
+
 def filter_candidates(
     items: list[dict[str, Any]],
     judge: Judge | None = None,
@@ -354,4 +385,4 @@ def filter_candidates(
     if max_concurrency is None:
         max_concurrency = get_news_settings().news_llm_max_concurrency
 
-    return asyncio.run(judge_items(targets, judge, max_concurrency))
+    return asyncio.run(_judge_and_close(targets, judge, max_concurrency))

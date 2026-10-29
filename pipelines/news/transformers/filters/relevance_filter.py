@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from pipelines.common.clients.jev import aclose_judge, check_answers
 from pipelines.common.logging import get_logger
 from pipelines.news.config import get_news_settings
 
@@ -156,7 +157,8 @@ def decide(answers: dict[str, Any], i: int) -> tuple[bool, bool, dict[str, float
 
 
 class RelevanceJudge:
-    """jev 호출. 클라이언트는 이벤트 루프 안에서 처음 부를 때 만들어 재사용한다."""
+    """jev 호출. 클라이언트는 이벤트 루프 안에서 처음 부를 때 만들고, 런(asyncio.run)이 끝날 때
+    filter_relevant_news 가 aclose() 로 닫는다 — 풀이 루프에 묶여 있어 다음 런에서 다시 연다."""
 
     def __init__(self):
         from pipelines.news.transformers.prompts.relevance import build_questions
@@ -171,10 +173,19 @@ class RelevanceJudge:
             self._client = async_client()
         return self._client
 
+    async def aclose(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
+
+    async def __call__(self, article: ArticleInput) -> ArticleVerdict:
+        return await self.judge(article)
+
     async def judge(self, article: ArticleInput) -> ArticleVerdict:
         state = build_state(article)
         questions = self._build_questions(len(article.companies))
         response = await self._get_client().system_one(state, questions)
+        check_answers(questions, response.answers)
         companies = []
         for i, company in enumerate(article.companies):
             is_company, valid, scores = decide(response.answers, i)
@@ -190,7 +201,7 @@ class RelevanceJudge:
 def get_relevance_judge() -> Judge:
     """프로세스당 하나. 처음 부를 때 typesafe_sdk 를 로드하므로 import 시점엔 비용이 없다."""
 
-    return RelevanceJudge().judge
+    return RelevanceJudge()
 
 
 # ── 기사 묶음 처리 ───────────────────────────────────────────────────────────
@@ -258,6 +269,15 @@ async def judge_items(
     return result
 
 
+async def _judge_and_close(
+    items: list[dict[str, Any]], judge: Judge, max_concurrency: int
+) -> RelevanceResult:
+    try:
+        return await judge_items(items, judge, max_concurrency)
+    finally:
+        await aclose_judge(judge)
+
+
 def filter_relevant_news(
     items: list[dict[str, Any]],
     judge: Judge | None = None,
@@ -274,4 +294,4 @@ def filter_relevant_news(
     if max_concurrency is None:
         max_concurrency = get_news_settings().news_llm_max_concurrency
 
-    return asyncio.run(judge_items(items, judge, max_concurrency))
+    return asyncio.run(_judge_and_close(items, judge, max_concurrency))

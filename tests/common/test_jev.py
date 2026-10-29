@@ -59,3 +59,16 @@ def test_async_client_refuses_to_start_without_api_key(monkeypatch):
             async_client()
     finally:
         config.get_settings.cache_clear()
+
+
+def test_check_answers_names_the_missing_question_keys():
+    from pipelines.common.clients.jev import check_answers
+
+    with pytest.raises(RuntimeError, match="c1_role"):
+        check_answers({"c0_is_company": 1, "c1_role": 2}, {"c0_is_company": object()})
+
+
+def test_check_answers_passes_when_every_question_is_answered():
+    from pipelines.common.clients.jev import check_answers
+
+    check_answers({"a": 1}, {"a": 2, "extra": 3})

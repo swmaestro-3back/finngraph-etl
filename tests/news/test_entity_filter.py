@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pipelines.news.transformers.filters import entity_filter
 from pipelines.news.transformers.filters.entity_filter import (
     KEPT_ROLES,
@@ -416,3 +418,82 @@ def test_role_criteria_keep_the_boundary_rules_and_the_bias():
     assert "existing customer, supplier, or partner" in background["what"]  # 고객 설명
     assert "counterparties of one contract" in listed["not_for"]  # 고객사 열거는 나열이 아니다
     assert "won currency notation" in questions.IS_COMPANY_FALSE
+
+
+def test_decide_without_non_party_probabilities_does_not_raise():
+    # SDK 가 party 확률만 돌려줘도 임계값 미달이면 예외 없이 party 가 아닌 역할을 보고한다
+    role, _ = decide(_answers(0.9, party=0.4), 0)
+    assert role != "party"
+
+
+# ── 운영 judge: 클라이언트 수명과 응답 검증 (jev 는 가짜 클라이언트) ─────────────
+
+
+class _FakeClient:
+    """만든 루프에 묶인 클라이언트 흉내. 다른 루프에서 부르면 실제 SDK 처럼 루프가 닫혔다고 한다."""
+
+    def __init__(self, drop: set[str]):
+        import asyncio
+
+        self.loop = asyncio.get_running_loop()
+        self.drop = drop
+        self.closed = False
+
+    async def system_one(self, state, questions):
+        import asyncio
+
+        if asyncio.get_running_loop() is not self.loop:
+            raise RuntimeError("Event loop is closed")
+        answers = {}
+        for key in questions:
+            if key in self.drop:
+                continue
+            if key.endswith("_is_company"):
+                answers[key] = _Noul(0.9)
+            else:
+                answers[key] = _Choice({"party": 0.9, "background": 0.1})
+        return type("Response", (), {"answers": answers})()
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_jev(monkeypatch):
+    from pipelines.common.clients import jev
+
+    created: list[_FakeClient] = []
+    drop: set[str] = set()
+
+    def factory():
+        client = _FakeClient(drop)
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(jev, "async_client", factory)
+    entity_filter.get_entity_judge.cache_clear()
+    yield created, drop
+    entity_filter.get_entity_judge.cache_clear()
+
+
+def test_production_judge_survives_a_second_asyncio_run(fake_jev):
+    created, _ = fake_jev
+
+    for _ in range(2):
+        item = _item([_company(300, "삼성SDI")], text="엘앤에프가 삼성SDI에 공급한다.")
+        result = filter_candidates([item], max_concurrency=1)
+        assert (result.judged, result.failed, result.kept) == (1, 0, 1)
+
+    assert len(created) == 2 and all(client.closed for client in created)
+
+
+def test_production_judge_fails_the_article_naming_missing_answers(fake_jev, caplog):
+    _, drop = fake_jev
+    drop.add("c0_role")
+    item = _item([_company(300, "삼성SDI")], text="엘앤에프가 삼성SDI에 공급한다.")
+
+    with caplog.at_level("WARNING"):
+        result = filter_candidates([item], max_concurrency=1)
+
+    assert (result.judged, result.failed) == (1, 1)
+    assert "c0_role" in caplog.text
