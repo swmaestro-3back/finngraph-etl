@@ -30,6 +30,7 @@ dependencies = [
   "kiwipiepy>=0.23.2",
   "numpy>=1.26",
   "redis>=5.0",
+  "typesafe-sdk>=0.7.5",
 ]
 
 [dependency-groups]

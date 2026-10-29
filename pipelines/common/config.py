@@ -8,9 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
+# 뉴스 관련성 필터와 엔티티 필터는 Bedrock 이 아니라 jev 를 쓴다 (JEV_*).
 CHAT_MODEL_ROLES = (
-    "relevance",
-    "entity",
     "cluster_title",
     "summary",
     "triples",
@@ -122,8 +121,6 @@ class Settings(BaseSettings):
     bedrock_chat_model: str = Field(default="", validation_alias="BEDROCK_CHAT_MODEL")
     # 역할별 채팅 모델. 비어 있으면 BEDROCK_CHAT_MODEL 을 쓴다 — chat_model(role) 로 읽는다.
     # 출력이 짧고 호출이 많은 판정·라벨은 작은 모델로 내려 지연과 비용을 줄일 수 있다.
-    bedrock_relevance_model: str = Field(default="", validation_alias="BEDROCK_RELEVANCE_MODEL")
-    bedrock_entity_model: str = Field(default="", validation_alias="BEDROCK_ENTITY_MODEL")
     bedrock_cluster_title_model: str = Field(
         default="", validation_alias="BEDROCK_CLUSTER_TITLE_MODEL"
     )
@@ -152,6 +149,13 @@ class Settings(BaseSettings):
     )
     bedrock_request_timeout: int = Field(default=300, validation_alias="BEDROCK_REQUEST_TIMEOUT")
     aws_bearer_token_bedrock: str = Field(default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK")
+
+    # === JEV / TYPESAFE (뉴스 관련성 필터·엔티티 필터) ===
+    # 모델 별칭 jev-latest 는 릴리스마다 바뀐다. 임계값을 고정하려면 jev-1.14.0 처럼 버전을 박는다.
+    # 판정 임계값(NEWS_RELEVANCE_*·NEWS_ENTITY_*)은 pipelines.news.config.NewsSettings 에 있다.
+    jev_api_key: str = Field(default="", validation_alias="JEV_API_KEY")
+    jev_model: str = Field(default="jev-latest", validation_alias="JEV_MODEL")
+    jev_request_timeout: int = Field(default=60, validation_alias="JEV_REQUEST_TIMEOUT")
 
     neo4j_uri: str = Field(default="", validation_alias="NEO4J_URI")
     neo4j_username: str = Field(default="", validation_alias="NEO4J_USERNAME")
