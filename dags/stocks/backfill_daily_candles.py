@@ -74,6 +74,16 @@ if dag and task:
             start = date.fromisoformat(params["start_date"]) if params["start_date"] else None
             return run_daily(since=backfill_since(start), tickers=params["tickers"] or None)
 
-        backfill_daily_candles() >> calculate_change_rates()
+        @task(retries=1)
+        def calculate_week52_ranges(params: dict) -> int:
+            from pipelines.stocks.jobs.calculate_change_rates import backfill_since
+            from pipelines.stocks.jobs.calculate_week52_ranges import run
+
+            start = date.fromisoformat(params["start_date"]) if params["start_date"] else None
+            return run(since=backfill_since(start), tickers=params["tickers"] or None)
+
+        backfilled = backfill_daily_candles()
+        backfilled >> calculate_change_rates()
+        backfilled >> calculate_week52_ranges()
 
     stocks_backfill_daily_candles()

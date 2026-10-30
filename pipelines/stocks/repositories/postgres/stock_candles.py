@@ -181,6 +181,47 @@ REFRESH_PERIOD_CHANGE_RATE_SQL = text(
     """
 )
 
+REFRESH_DAILY_WEEK52_SQL = text(
+    """
+    UPDATE stock_candles_daily AS c
+       SET high_52w = r.high_52w,
+           high_52w_date = r.high_52w_date,
+           low_52w = r.low_52w,
+           low_52w_date = r.low_52w_date
+      FROM (
+        SELECT d.stock_id, d.trade_date,
+               hi.close AS high_52w, hi.trade_date AS high_52w_date,
+               lo.close AS low_52w, lo.trade_date AS low_52w_date
+          FROM stock_candles_daily AS d
+          CROSS JOIN LATERAL (
+                 SELECT p.close, p.trade_date FROM stock_candles_daily AS p
+                  WHERE p.stock_id = d.stock_id
+                    AND p.trade_date > CAST(d.trade_date - INTERVAL '12 months' AS date)
+                    AND p.trade_date <= d.trade_date
+                  ORDER BY p.close DESC, p.trade_date
+                  LIMIT 1
+               ) AS hi
+          CROSS JOIN LATERAL (
+                 SELECT p.close, p.trade_date FROM stock_candles_daily AS p
+                  WHERE p.stock_id = d.stock_id
+                    AND p.trade_date > CAST(d.trade_date - INTERVAL '12 months' AS date)
+                    AND p.trade_date <= d.trade_date
+                  ORDER BY p.close, p.trade_date
+                  LIMIT 1
+               ) AS lo
+         WHERE d.trade_date >= :since
+           AND (
+                 CAST(:stock_ids AS bigint[]) IS NULL
+                 OR d.stock_id = ANY(CAST(:stock_ids AS bigint[]))
+               )
+      ) AS r
+     WHERE c.stock_id = r.stock_id
+       AND c.trade_date = r.trade_date
+       AND (c.high_52w, c.high_52w_date, c.low_52w, c.low_52w_date)
+           IS DISTINCT FROM (r.high_52w, r.high_52w_date, r.low_52w, r.low_52w_date)
+    """
+)
+
 FETCH_FIRST_TRADE_DATE_SQL = text("SELECT min(trade_date) FROM stock_candles_daily")
 
 FETCH_TRADING_CALENDAR_SQL = text(
@@ -329,6 +370,15 @@ def refresh_period_change_rates(
 
     return session.execute(
         REFRESH_PERIOD_CHANGE_RATE_SQL,
+        {"since": since, "stock_ids": list(stock_ids) if stock_ids else None},
+    ).rowcount
+
+
+def refresh_daily_week52_ranges(
+    session: Session, since: date, stock_ids: list[int] | None = None
+) -> int:
+    return session.execute(
+        REFRESH_DAILY_WEEK52_SQL,
         {"since": since, "stock_ids": list(stock_ids) if stock_ids else None},
     ).rowcount
 

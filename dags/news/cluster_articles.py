@@ -100,6 +100,18 @@ if dag and task:
 
             return run()
 
+        @task(retries=1, retry_delay=timedelta(minutes=5), trigger_rule="all_done")
+        def refresh_issue_visibility() -> int:
+            from pipelines.news.jobs.refresh_issue_visibility import run
+
+            return run()
+
+        @task(retries=1, retry_delay=timedelta(minutes=5), trigger_rule="all_done")
+        def refresh_event_leads() -> int:
+            from pipelines.news.jobs.refresh_event_leads import run
+
+            return run()
+
         # DAG run 상태는 뒤에 이어지는 task 가 없는 마지막 task 들로만 정해진다. all_done 인
         # link_issues 만 마지막 task 로 두면 요약이 실패해도 실행이 성공으로 끝나므로, 요약 성공을
         # 요구하는 마지막 task 를 하나 더 둔다.
@@ -109,8 +121,11 @@ if dag and task:
 
         promoted = promote_clusters()
         summarized = summarize_articles()
+        visibility = refresh_issue_visibility()
+        linked = link_issues()
         vectorize_articles() >> assign_clusters() >> promoted
-        promoted >> [generate_events(), summarized]
-        summarized >> [link_issues(), finish()]
+        promoted >> [generate_events(), summarized, visibility]
+        summarized >> [linked, finish()]
+        [visibility, linked] >> refresh_event_leads()
 
     news_cluster_articles()

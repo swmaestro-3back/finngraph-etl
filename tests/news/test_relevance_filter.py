@@ -1,18 +1,25 @@
-"""LLM 관련성 필터(묶음 호출) 단위 테스트. Bedrock 은 부르지 않고 judge 를 페이크로 준다."""
+"""jev 관련성 필터 단위 테스트. jev 는 부르지 않고 judge 를 페이크로 준다.
+
+판정 대상은 이 기사를 가져온 검색 종목뿐이다 — 다른 제목 기업은 엔티티 필터가 본문과 함께 판정한다."""
 
 from __future__ import annotations
 
-import logging
+import asyncio
+from types import SimpleNamespace
 
+import pytest
+
+from pipelines.news.transformers.filters import relevance_filter
 from pipelines.news.transformers.filters.relevance_filter import (
+    GATES,
     ArticleInput,
     ArticleVerdict,
-    BatchVerdict,
     CompanyVerdict,
-    build_relevance_input,
-    chunked,
+    build_state,
+    decide,
     filter_relevant_news,
 )
+from pipelines.news.transformers.prompts import relevance as questions
 
 
 def _company(company_id: int, name: str, surface: str | None = None) -> dict:
@@ -20,7 +27,7 @@ def _company(company_id: int, name: str, surface: str | None = None) -> dict:
 
 
 def _item(title: str, company: str, company_id: int = 100, others: tuple = ()) -> dict:
-    """검색 종목이 첫 번째인 판정 기업 목록을 단 기사."""
+    """검색 종목이 첫 번째인 제목 기업 목록을 단 기사. others 는 검색하지 않은 제목 기업이다."""
     return {
         "title": title,
         "description": "",
@@ -33,144 +40,102 @@ def _item(title: str, company: str, company_id: int = 100, others: tuple = ()) -
 def _verdict(
     article: ArticleInput, valid: bool = True, per_company: dict | None = None
 ) -> ArticleVerdict:
-    """판정 기업 전부를 valid 로 판정한다. per_company 로 기업별 값을 바꾼다."""
+    """판정 기업 전부를 valid 로 판정한다. per_company 로 표기별 값을 바꾼다."""
     per_company = per_company or {}
     return ArticleVerdict(
-        id=article.id,
         companies=[
-            CompanyVerdict(is_company=True, name=name, valid=per_company.get(name, valid))
-            for name in article.companies
-        ],
-    )
-
-
-def test_build_relevance_input_numbers_articles_and_lists_companies():
-    text = build_relevance_input(
-        [
-            ArticleInput(0, "엘앤에프, 삼성SDI에 양극재 공급", ("엘앤에프", "삼성SDI")),
-            ArticleInput(3, "코스피 마감", ("삼성전자",)),
+            CompanyVerdict(
+                name=c["surface"], is_company=True, valid=per_company.get(c["surface"], valid)
+            )
+            for c in article.companies
         ]
     )
 
-    # 스니펫은 보내지 않는다 — 제목과 판정 기업만
-    assert text == (
-        "[기사 0]\n제목: 엘앤에프, 삼성SDI에 양극재 공급\n판정 기업: 엘앤에프, 삼성SDI"
-        "\n\n[기사 3]\n제목: 코스피 마감\n판정 기업: 삼성전자"
-    )
+
+def _judge_with(**valid_by_surface):
+    """표기별 valid 를 정한 judge. 목록에 없는 표기는 판정에서 빠진다(위치 순서 유지)."""
+
+    async def judge(article):
+        companies = []
+        for c in article.companies:
+            if c["surface"] not in valid_by_surface:
+                break  # 판정이 짧게 끝난다 — 뒤쪽 기업은 판정 없음
+            companies.append(
+                CompanyVerdict(
+                    name=c["surface"], is_company=True, valid=valid_by_surface[c["surface"]]
+                )
+            )
+        return ArticleVerdict(companies=companies)
+
+    return judge
 
 
-def test_chunked():
-    assert chunked([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
-    assert chunked([], 3) == []
+# ── 기사 단위 흐름 ───────────────────────────────────────────────────────────
 
 
-def test_batch_matches_ids_out_of_order_and_skips_items_without_target():
+def test_each_article_is_judged_once_and_items_without_target_are_invalid():
     good = _item("엘앤에프, 양극재 공급 계약", "엘앤에프")
     market = _item("코스피 7000선 사수… 엘앤에프 강세", "엘앤에프")
     no_target = {"title": "대상 없음", "description": "", "link": "https://x/none"}
-    calls: list[list[int]] = []
+    sent: list[str] = []
 
-    async def judge(articles):
-        calls.append([a.id for a in articles])
-        by_id = {a.id: a for a in articles}
-        # 순서를 뒤집어 돌려준다
-        return BatchVerdict(verdicts=[_verdict(by_id[1], valid=False), _verdict(by_id[0])])
+    async def judge(article):
+        sent.append(article.title)
+        return _verdict(article, valid="코스피" not in article.title)
 
-    result = filter_relevant_news([good, market, no_target], judge, 2, 10)
+    result = filter_relevant_news([good, market, no_target], judge, 2)
 
-    assert calls == [[0, 1]]  # 검색 종목 없는 2번은 보내지 않는다
+    assert sorted(sent) == sorted(
+        [good["title"], market["title"]]
+    )  # 검색 종목 없는 기사는 안 보낸다
     assert result.passed == [good]
     assert result.invalid == [market, no_target]
     assert result.failed == []
     assert good["_linked_companies"] == [{"company_id": 100, "name": "엘앤에프"}]
+    assert "_linked_companies" not in market
 
 
-def test_missing_ids_are_rejudged_individually_and_individual_failure_is_failed():
+def test_judge_exception_fails_only_that_article():
     a = _item("A 기사", "엘앤에프")
     b = _item("B 기사", "에코프로", company_id=200)
     c = _item("C 기사", "삼성SDI", company_id=300)
-    sizes: list[int] = []
 
-    async def judge(articles):
-        sizes.append(len(articles))
-        if len(articles) == 3:
-            return BatchVerdict(verdicts=[_verdict(articles[0])])  # 1·2번 누락
-        if articles[0].id == 2:
-            raise RuntimeError("bedrock down")
-        return BatchVerdict(verdicts=[_verdict(articles[0])])
+    async def judge(article):
+        if article.title == "B 기사":
+            raise RuntimeError("jev down")
+        return _verdict(article)
 
-    result = filter_relevant_news([a, b, c], judge, 2, 10)
+    result = filter_relevant_news([a, b, c], judge, 2)
 
-    assert sizes == [3, 1, 1]
-    assert result.passed == [a, b]
-    assert result.failed == [c]
+    assert result.passed == [a, c]  # 입력 순서를 지킨다
+    assert result.failed == [b]
+    assert result.invalid == []
 
 
-def test_batch_exception_falls_back_to_individual_calls():
-    a = _item("A 기사", "엘앤에프")
-    b = _item("B 기사", "에코프로", company_id=200)
-    sizes: list[int] = []
+def test_concurrency_is_bounded_by_max_concurrency():
+    items = [_item(f"기사 {i}", "엘앤에프") for i in range(9)]
+    running = {"now": 0, "peak": 0}
 
-    async def judge(articles):
-        sizes.append(len(articles))
-        if len(articles) > 1:
-            raise RuntimeError("bad json")
-        return BatchVerdict(verdicts=[_verdict(articles[0])])
+    async def judge(article):
+        running["now"] += 1
+        running["peak"] = max(running["peak"], running["now"])
+        await asyncio.sleep(0)
+        running["now"] -= 1
+        return _verdict(article)
 
-    result = filter_relevant_news([a, b], judge, 2, 10)
+    result = filter_relevant_news(items, judge, 3)
 
-    assert sizes == [2, 1, 1]
-    assert result.passed == [a, b]
-    assert result.failed == []
-
-
-def test_items_are_split_into_batches_of_batch_size(caplog):
-    caplog.set_level(logging.DEBUG)
-    items = [_item(f"기사 {i}", "엘앤에프") for i in range(25)]
-    sizes: list[int] = []
-
-    async def judge(articles):
-        sizes.append(len(articles))
-        return BatchVerdict(verdicts=[_verdict(a) for a in articles])
-
-    result = filter_relevant_news(items, judge, 2, 10)
-
-    assert sorted(sizes, reverse=True) == [10, 10, 5]
     assert result.passed == items
-    # 묶음이 끝날 때마다 진행률을 남기고 마지막 줄은 전체 수와 같다
-    assert "[LLM] 판정 3/3 묶음 (기사 25/25건)" in caplog.text
+    assert running["peak"] <= 3
 
 
-def test_empty_input_skips_llm():
-    async def judge(articles):  # pragma: no cover - 호출되면 안 된다
-        raise AssertionError("LLM 호출됨")
+def test_empty_input_skips_jev():
+    async def judge(article):  # pragma: no cover - 호출되면 안 된다
+        raise AssertionError("jev 호출됨")
 
-    result = filter_relevant_news([], judge, 2, 10)
+    result = filter_relevant_news([], judge, 2)
 
     assert result.passed == [] and result.invalid == [] and result.failed == []
-
-
-def test_duplicate_and_unknown_ids_are_ignored_without_fallback():
-    a = _item("A 기사", "엘앤에프")
-    b = _item("B 기사", "에코프로", company_id=200)
-    sizes: list[int] = []
-
-    async def judge(articles):
-        sizes.append(len(articles))
-        first, second = articles
-        return BatchVerdict(
-            verdicts=[
-                _verdict(first),
-                _verdict(first, valid=False),  # 중복 — 첫 판정이 이긴다
-                ArticleVerdict(id=99, companies=[]),  # 미지 번호 — 무시
-                _verdict(second),
-            ]
-        )
-
-    result = filter_relevant_news([a, b], judge, 2, 10)
-
-    assert sizes == [2]  # 누락이 없으니 개별 재판정도 없다
-    assert result.passed == [a, b]
 
 
 def test_item_without_title_companies_is_judged_by_query_company_alone():
@@ -180,20 +145,42 @@ def test_item_without_title_companies_is_judged_by_query_company_alone():
         "link": "https://x/1",
         "_query_company": {"company_id": 100, "name": "엘앤에프"},
     }
-    sent: list[tuple[str, ...]] = []
+    sent: list[tuple[dict, ...]] = []
 
-    async def judge(articles):
-        sent.extend(a.companies for a in articles)
-        return BatchVerdict(verdicts=[_verdict(a) for a in articles])
+    async def judge(article):
+        sent.append(article.companies)
+        return _verdict(article)
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
-    assert sent == [("엘앤에프",)]
+    assert sent == [({"surface": "엘앤에프", "name": "엘앤에프"},)]
     assert result.passed == [item]
     assert item["_linked_companies"] == [{"company_id": 100, "name": "엘앤에프"}]
 
 
-def test_linked_companies_are_valid_title_companies_resolved_by_surface_or_name():
+def test_raw_scores_are_kept_on_the_item_for_evaluation():
+    item = _item("엘앤에프, 양극재 공급 계약", "엘앤에프")
+
+    async def judge(article):
+        return ArticleVerdict(
+            companies=[
+                CompanyVerdict(
+                    name="엘앤에프", is_company=True, valid=True, scores={"has_event": 0.9}
+                )
+            ]
+        )
+
+    filter_relevant_news([item], judge, 1)
+
+    assert item["_relevance_judgements"] == [
+        {"name": "엘앤에프", "is_company": True, "valid": True, "scores": {"has_event": 0.9}}
+    ]
+
+
+# ── 판정을 기업으로 되돌리기 ─────────────────────────────────────────────────
+
+
+def test_only_the_search_company_is_sent_and_linked_other_title_companies_go_to_the_entity_filter():
     item = _item(
         "두산밥캣·LG엔솔·현대차·SK하이닉스 협약",
         "두산밥캣",
@@ -203,99 +190,50 @@ def test_linked_companies_are_valid_title_companies_resolved_by_surface_or_name(
             _company(500, "SK하이닉스"),
         ),
     )
-    sent: list[tuple[str, ...]] = []
+    sent: list[tuple[dict, ...]] = []
 
-    async def judge(articles):
-        sent.extend(a.companies for a in articles)
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=articles[0].id,
-                    companies=[
-                        CompanyVerdict(is_company=True, name="두산밥캣", valid=True),
-                        CompanyVerdict(
-                            is_company=True, name="LG에너지솔루션", valid=True
-                        ),  # 표기 대신 정식명
-                        CompanyVerdict(is_company=True, name=" 현대차 ", valid=False),
-                        CompanyVerdict(
-                            is_company=True, name="삼성전자", valid=True
-                        ),  # 목록에 없음 — 무시
-                    ],  # SK하이닉스 판정 누락 — 연결하지 않는다
-                )
-            ]
-        )
+    async def judge(article):
+        sent.append(article.companies)
+        return _verdict(article)
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
-    # LLM 에는 제목 표기가 간다
-    assert sent == [("두산밥캣", "LG엔솔", "현대차", "SK하이닉스")]
+    # jev 에는 검색 종목의 제목 표기와 표준명만 간다 — 나머지 제목 기업은 묻지 않는다
+    assert sent == [({"surface": "두산밥캣", "name": "두산밥캣"},)]
     assert result.passed == [item]
-    assert item["_linked_companies"] == [
-        {"company_id": 100, "name": "두산밥캣"},
-        {"company_id": 300, "name": "LG에너지솔루션"},
-    ]
+    assert item["_linked_companies"] == [{"company_id": 100, "name": "두산밥캣"}]
 
 
-def test_target_invalid_drops_article_even_if_others_are_valid():
+def test_search_company_invalid_drops_article_regardless_of_other_title_companies():
     item = _item(
         "LG엔솔, 두산밥캣코리아와 협약",
         "두산밥캣",
         others=(_company(300, "LG에너지솔루션", "LG엔솔"),),
     )
 
-    async def judge(articles):
-        return BatchVerdict(verdicts=[_verdict(articles[0], per_company={"두산밥캣": False})])
+    async def judge(article):
+        return _verdict(article, valid=False)
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
     assert result.invalid == [item]
     assert "_linked_companies" not in item
 
 
-def test_missing_target_verdict_is_rejudged_then_failed():
+def test_missing_target_verdict_is_failed():
     a = _item("A 기사", "엘앤에프", others=(_company(300, "삼성SDI"),))
     b = _item("B 기사", "에코프로", company_id=200)
-    sizes: list[int] = []
-    other_only = [CompanyVerdict(is_company=True, name="삼성SDI", valid=True)]
 
-    async def judge(articles):
-        sizes.append(len(articles))
-        if len(articles) == 2:
-            # a 는 검색 종목 판정이 빠졌다 — 다른 기업 판정만으로는 통과시키지 않는다
-            return BatchVerdict(
-                verdicts=[
-                    ArticleVerdict(id=articles[0].id, companies=other_only),
-                    _verdict(articles[1]),
-                ]
-            )
-        return BatchVerdict(verdicts=[ArticleVerdict(id=articles[0].id, companies=other_only)])
+    async def judge(article):
+        if article.title == "A 기사":
+            # 검색 종목(엘앤에프) 판정이 빠졌다 — 다른 기업 판정만으로는 통과시키지 않는다
+            return ArticleVerdict(companies=[])
+        return _verdict(article)
 
-    result = filter_relevant_news([a, b], judge, 2, 10)
+    result = filter_relevant_news([a, b], judge, 2)
 
-    assert sizes == [2, 1]  # a 만 개별 재판정
     assert result.passed == [b]
     assert result.failed == [a]
-
-
-def test_verdict_names_match_ignoring_inner_whitespace():
-    # 제목 표기 'LG 엔솔' 을 LLM 이 'LG엔솔' 로 붙여 답해도 같은 기업이다 — 검색 종목이면 기사가 날아간다
-    item = _item("LG 엔솔, 美 공장 증설", "LG에너지솔루션", company_id=300)
-    item["_title_companies"] = [_company(300, "LG에너지솔루션", "LG 엔솔")]
-
-    async def judge(articles):
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=articles[0].id,
-                    companies=[CompanyVerdict(is_company=True, name="LG엔솔", valid=True)],
-                )
-            ]
-        )
-
-    result = filter_relevant_news([item], judge, 1, 10)
-
-    assert result.passed == [item]
-    assert item["_linked_companies"] == [{"company_id": 300, "name": "LG에너지솔루션"}]
 
 
 def _fetched_by_both(title: str) -> dict:
@@ -312,110 +250,235 @@ def _fetched_by_both(title: str) -> dict:
     return item
 
 
-def _judge_with(**valid_by_name):
-    async def judge(articles):
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=article.id,
-                    companies=[
-                        CompanyVerdict(is_company=True, name=name, valid=valid)
-                        for name, valid in valid_by_name.items()
-                    ],
-                )
-                for article in articles
-            ]
-        )
-
-    return judge
-
-
 def test_article_passes_when_any_fetching_search_company_is_valid():
     item = _fetched_by_both("삼성전자·SK하이닉스, 엔비디아에 HBM 공급")
-    judge = _judge_with(**{"삼성전자": False, "SK하이닉스": True, "엔비디아": True})
+    sent: list[tuple[dict, ...]] = []
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    async def judge(article):
+        sent.append(article.companies)
+        return await _judge_with(**{"삼성전자": False, "SK하이닉스": True})(article)
 
-    assert result.passed == [item]
-    assert item["_linked_companies"] == [
-        {"company_id": 200, "name": "SK하이닉스"},
-        {"company_id": 300, "name": "엔비디아"},
+    result = filter_relevant_news([item], judge, 1)
+
+    # 검색에 걸린 두 종목만 판정한다. 엔비디아는 검색하지 않았으니 엔티티 필터의 몫이다
+    assert sent == [
+        (
+            {"surface": "삼성전자", "name": "삼성전자"},
+            {"surface": "SK하이닉스", "name": "SK하이닉스"},
+        )
     ]
+    assert result.passed == [item]
+    assert item["_linked_companies"] == [{"company_id": 200, "name": "SK하이닉스"}]
 
 
-def test_valid_title_company_that_did_not_fetch_the_article_does_not_store_it():
+def test_article_is_invalid_when_every_fetching_search_company_is_invalid():
     item = _fetched_by_both("삼성전자·SK하이닉스, 엔비디아에 HBM 공급")
-    judge = _judge_with(**{"삼성전자": False, "SK하이닉스": False, "엔비디아": True})
+    judge = _judge_with(**{"삼성전자": False, "SK하이닉스": False})
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
     assert result.invalid == [item]
+    assert "_linked_companies" not in item
 
 
-def test_missing_verdict_of_a_fetching_company_is_rejudged_when_none_is_valid():
+def test_missing_verdict_of_a_fetching_company_is_failed_when_none_is_valid():
     item = _fetched_by_both("삼성전자·SK하이닉스, 엔비디아에 HBM 공급")
     # SK하이닉스 판정이 빠졌고 삼성전자는 invalid — SK하이닉스가 valid 일 수 있으니 확정하지 않는다
-    judge = _judge_with(**{"삼성전자": False, "엔비디아": True})
+    judge = _judge_with(**{"삼성전자": False})
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
     assert result.failed == [item]
 
 
 def test_one_valid_fetching_company_is_enough_even_if_another_is_missing():
     item = _fetched_by_both("삼성전자·SK하이닉스, 엔비디아에 HBM 공급")
-    judge = _judge_with(**{"SK하이닉스": True})
+    judge = _judge_with(**{"삼성전자": True})
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
     assert result.passed == [item]
-    assert item["_linked_companies"] == [{"company_id": 200, "name": "SK하이닉스"}]
+    assert item["_linked_companies"] == [{"company_id": 100, "name": "삼성전자"}]
 
 
-def test_company_that_is_not_referred_to_is_not_linked_and_does_not_store_article():
-    # 제목의 '하이브' 는 폴로하이브머티리얼즈의 일부, '대상' 은 일반 명사다 — valid 여도 통과가 아니다
-    item = _item(
-        "폴로하이브머티리얼즈, 임직원 대상 성과급",
-        "하이브",
-        others=(_company(300, "대상"),),
-    )
+def test_search_company_that_is_not_referred_to_does_not_store_article():
+    # 제목의 '하이브' 는 폴로하이브머티리얼즈의 일부다 — valid 여도 통과가 아니다
+    item = _item("폴로하이브머티리얼즈, 임직원 대상 성과급", "하이브")
 
-    async def judge(articles):
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=articles[0].id,
-                    companies=[
-                        CompanyVerdict(is_company=False, name="하이브", valid=True),
-                        CompanyVerdict(is_company=False, name="대상", valid=True),
-                    ],
-                )
-            ]
+    async def judge(article):
+        return ArticleVerdict(
+            companies=[CompanyVerdict(name="하이브", is_company=False, valid=True)]
         )
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    result = filter_relevant_news([item], judge, 1)
 
     assert result.invalid == [item]
     assert "_linked_companies" not in item
 
 
-def test_only_companies_that_are_referred_to_and_valid_are_linked():
-    item = _item("삼성전자, 임직원 대상 성과급 지급", "삼성전자", others=(_company(300, "대상"),))
+# ── jev state·질문·임계값 ────────────────────────────────────────────────────
 
-    async def judge(articles):
-        return BatchVerdict(
-            verdicts=[
-                ArticleVerdict(
-                    id=articles[0].id,
-                    companies=[
-                        CompanyVerdict(is_company=True, name="삼성전자", valid=True),
-                        CompanyVerdict(is_company=False, name="대상", valid=True),
-                    ],
-                )
-            ]
+
+def test_build_state_sends_headline_and_companies_only():
+    article = ArticleInput(
+        title="엘앤에프, 삼성SDI에 양극재 공급",
+        companies=(
+            {"surface": "엘앤에프", "name": "엘앤에프"},
+            {"surface": "삼성SDI", "name": "삼성SDI"},
+        ),
+    )
+
+    assert build_state(article) == {
+        "headline": "엘앤에프, 삼성SDI에 양극재 공급",
+        "companies": [
+            {"surface": "엘앤에프", "name": "엘앤에프"},
+            {"surface": "삼성SDI", "name": "삼성SDI"},
+        ],
+    }
+
+
+def _answers(is_company: float, **gates: float) -> dict:
+    answers = {"c0_is_company": SimpleNamespace(noul=is_company)}
+    for gate in GATES:
+        answers[f"c0_{gate}"] = SimpleNamespace(noul=gates.get(gate, 0.0))
+    return answers
+
+
+def test_decide_is_valid_when_any_gate_clears_the_threshold():
+    is_company, valid, scores = decide(_answers(0.95, has_event=0.8), 0)
+
+    assert is_company and valid
+    assert scores == {"is_company": 0.95, "has_event": 0.8, "has_driver": 0.0}
+
+
+def test_decide_is_invalid_when_every_gate_is_below_threshold():
+    _, valid, _ = decide(_answers(0.95, has_event=0.49, has_driver=0.3), 0)
+
+    assert not valid
+
+
+def test_decide_separates_is_company_from_valid():
+    is_company, valid, _ = decide(_answers(0.49, has_event=0.9), 0)
+
+    assert not is_company and valid  # 연결은 둘 다 true 여야 한다 — resolve_verdict 가 본다
+
+
+def test_questions_cover_every_company_with_three_questions_each():
+    built = questions.build_questions(3)
+
+    assert len(built) == 9
+    assert {k for k in built if k.startswith("c2_")} == {
+        "c2_is_company",
+        "c2_has_event",
+        "c2_has_driver",
+    }
+    # 질문은 state 의 기업을 경로로 가리킨다
+    assert "`companies[2].surface`" in built["c2_is_company"].instructions["question"]
+    assert "`companies[2].name`" in built["c2_has_event"].instructions["question"]
+
+
+def test_questions_keep_the_gate_boundaries_and_the_namesake_rule():
+    built = questions.build_questions(1)
+
+    # SDK 는 criteria 를 {true, false} 딕셔너리로 둔다
+    event = built["c0_has_event"].criteria
+    # 실행된 관계(계약·수주)와 기업 사건(실적·CB)이 한 질문이고, 제목에 명시된 상대도 통과한다
+    assert "counterparty passes as much as the actor" in event["true"]["what"]
+    assert "earnings" in event["true"]["what"] and "supply" in event["true"]["what"]
+    assert "'관련주'" in event["false"]["what"]
+    assert "market-wide" in built["c0_has_driver"].criteria["false"]["what"]
+    # 동반 움직임은 별도 질문이 아니라 각 질문의 false 기준이다
+    assert "only moves with it" in event["false"]["what"]
+    assert "another company" in built["c0_has_driver"].criteria["false"]["what"]
+    # 피인수·지분 매각의 대상도 참여자다
+    assert "acquired or merged company" in event["true"]["what"]
+    assert "whose stake is sold" in event["true"]["what"]
+    # 국제정세·거시 사건은 제목이 이 기업의 사업과의 연결을 말할 때만 동인이다
+    driver = built["c0_has_driver"].criteria
+    assert "geopolitical or macro event" in driver["true"]["what"]
+    assert "reaches this company's own products, markets, or projects" in driver["true"]["what"]
+    assert "only to the index" in driver["false"]["what"]
+    # 매처가 못 가르는 동명(폴로하이브머티리얼즈의 하이브, 태양광의 태양)은 is_company 가 거른다
+    assert "태양광" in built["c0_is_company"].criteria["false"]
+    assert "폴로하이브머티리얼즈" in built["c0_is_company"].criteria["false"]
+
+
+def test_latency_is_recorded_per_judge_call_including_failures():
+    a = _item("A 기사", "엘앤에프")
+    b = _item("B 기사", "에코프로", company_id=200)
+    c = {"title": "검색 종목 없음", "link": "https://x/none", "_title_companies": []}
+
+    async def judge(article):
+        if article.title == "B 기사":
+            raise RuntimeError("jev down")
+        return _verdict(article)
+
+    result = filter_relevant_news([a, b, c], judge, 2)
+
+    # 호출한 기사(성공·실패)마다 하나. jev 를 부르지 않은 기사는 세지 않는다
+    assert len(result.latencies_ms) == 2
+    assert all(ms >= 0 for ms in result.latencies_ms)
+
+
+# ── 운영 judge: 클라이언트 수명과 응답 검증 (jev 는 가짜 클라이언트) ─────────────
+
+
+class _FakeClient:
+    """만든 루프에 묶인 클라이언트 흉내. 다른 루프에서 부르면 실제 SDK 처럼 루프가 닫혔다고 한다."""
+
+    def __init__(self, drop: set[str]):
+        self.loop = asyncio.get_running_loop()
+        self.drop = drop
+        self.closed = False
+
+    async def system_one(self, state, questions):
+        if asyncio.get_running_loop() is not self.loop:
+            raise RuntimeError("Event loop is closed")
+        return SimpleNamespace(
+            answers={k: SimpleNamespace(noul=0.9) for k in questions if k not in self.drop}
         )
 
-    result = filter_relevant_news([item], judge, 1, 10)
+    async def aclose(self):
+        self.closed = True
 
-    assert result.passed == [item]
-    assert item["_linked_companies"] == [{"company_id": 100, "name": "삼성전자"}]
+
+@pytest.fixture
+def fake_jev(monkeypatch):
+    from pipelines.common.clients import jev
+
+    created: list[_FakeClient] = []
+    drop: set[str] = set()
+
+    def factory():
+        client = _FakeClient(drop)
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(jev, "async_client", factory)
+    relevance_filter.get_relevance_judge.cache_clear()
+    yield created, drop
+    relevance_filter.get_relevance_judge.cache_clear()
+
+
+def test_production_judge_survives_a_second_asyncio_run(fake_jev):
+    created, _ = fake_jev
+
+    for _ in range(2):
+        item = _item("엘앤에프, 양극재 공급 계약", "엘앤에프")
+        result = filter_relevant_news([item], max_concurrency=1)
+        assert result.passed == [item] and result.failed == []
+
+    # asyncio.run 마다 루프가 새로 생기므로 클라이언트도 런마다 열고 닫는다
+    assert len(created) == 2 and all(client.closed for client in created)
+
+
+def test_production_judge_fails_the_article_naming_missing_answers(fake_jev, caplog):
+    _, drop = fake_jev
+    drop.add("c0_has_driver")
+    item = _item("엘앤에프, 양극재 공급 계약", "엘앤에프")
+
+    with caplog.at_level("WARNING"):
+        result = filter_relevant_news([item], max_concurrency=1)
+
+    assert result.failed == [item]
+    assert "c0_has_driver" in caplog.text  # KeyError 대신 빠진 질문 키를 말한다

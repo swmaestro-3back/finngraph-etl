@@ -1,172 +1,141 @@
-"""본문 기업 판정(엔티티 필터) 프롬프트.
+"""후보 기업 판정(엔티티 필터) 질문 — jev(TypeSafe System One)용.
 
-후보는 본문에만 나온 기업이다 — 제목에 나온 기업은 관련성 필터가 이미 판정해 후보에 없다. 모델은
-제목과 제목 기업(이 기사의 주인공)을 함께 보고, 후보마다 제목이 전하는 주된 뉴스에서 맡은 역할을
-고른다. 주된 뉴스의 당사자(party)만 통과다. 결과가 기업 피드와 Event 당사자에 그대로 노출되므로
-애매하면 버린다.
+후보(candidates)는 제목·본문에 나온 기업 중 검색 종목을 뺀 것이다 — 검색 종목은 관련성 필터가
+이미 판정해 후보에 없다. 모델은 제목·검색 종목(query_stocks, 관련성을 통과한 주인공)·리드와, 후보마다
+표기가 든 문장들(제목 포함)을 보고 두 질문에 답한다. 주된 뉴스의 당사자(party)만 통과다. 결과가 기업 피드와 Event 당사자에 그대로 노출되므로 애매하면 버린다.
 
-규칙은 시스템에 한 번만 적고 패턴은 예시가 보여 준다. 예시 두 건은 저장된 기사 본문의 실제 후보에서
-뽑은 가장 흔한 오탐을 하나씩만 담는다: 긴 단어의 일부(레이), 원화 표기(한화), 공유 버튼(카카오톡),
-목표주가를 낸 증권사, 주가 나열, 계열사 소속 표기(카카오 계열사), 그리고 주인공 기업의 뉴스를
-설명하려고 인용된 다른 기업의 사실(그룹사의 계획, 다른 기업의 실적). 예시는 기사 한 건의 모양을
-그대로 흉내 낸다: 제목 기업은 본문에 나오지만 후보 목록에는 없다. 예시의 reason 은 짧게 둔다 —
-모델이 그 길이를 따라 하므로 출력 토큰이 그만큼 준다.
+jev 는 생성 모델이 아니다. 질문마다 확률만 돌려주므로 판정 기준은 아래 두 질문의 criteria 에 적고,
+"애매하면 party 아님" 은 filters.entity_filter 의 임계값이 맡는다. 긴 단어의 일부(SK하이닉스의 SK)는
+질문 전에 코드가 거른다 — 같은 모듈의 토큰 규칙.
+
+- `is_company` (Noul): 그 표기가 이 상장사를 가리키는가. 코드 규칙이 못 거르는 동명(대상·DB·흥국생명)·
+  원화 표기·페이지 보일러플레이트가 대상이다.
+- `role` (Choice): source / listed / background / party. not_company 를 옵션에 두지 않는 것은 "none of
+  the above 옵션은 잘 안 된다"는 공식 지침이고, party 를 맨 뒤에 둔 것은 첫 옵션 편향 때문이다. 옵션마다
+  `{what, not_for, examples}` 를 적는다 — 경계가 갈리는 유형(공급계약 상대, 금융 서비스 제공자, 비상장
+  계열사의 모회사, 고객 설명, 그룹 지칭, 동반 급등 속 참여사, 주인공의 다른 표기)이 여기 들어 있다.
+
+질문은 영어(jev 의 주 학습 언어), 예시는 한국어 기사 문장이다. 규칙을 고치면 finngraph-v2 의
+evals/entity_filtering 골드로 효과를 잰다.
 """
 
-import json
+from __future__ import annotations
 
-from langchain_core.messages import SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
+from typing import Any
 
-_SYSTEM = """\
-### [Role]
-You verify company mentions for a Korean stock-news service. You get an article's headline, the headline companies (the companies this article is about — already judged, not in the candidate list), the body, and candidate company names that a lexical dictionary matcher found only in the body. For each candidate, decide its role in this article. Only a party to the main news is linked to the article.
-
-### [Hard Rules]
-- Judge every candidate exactly once, in the given order. Never add, rename, or merge candidates; copy "entity" back exactly.
-- "mention" is one sentence copied verbatim from the body that contains the candidate's surface form — the occurrence that best shows its role.
-- Fill "mention" and "reason" before "role".
-
-### [Step 1 — Does the surface form mean that company?]
-The matcher ignores word boundaries, so check:
-- Ordinary word or word fragment, often with a particle attached: "대상으로" (대상), "소비자" (비자), "하이브리드" (하이브), and won notation "(한화 약 1조원)" (한화).
-- Affiliate or group label: "SK그룹 회장", "카카오 계열사", "LG 자회사" name a group, a person's affiliation, or a different unnamed company. The actor is not the listed parent — do not use outside knowledge to decide which affiliate it is, and do not link the parent for an affiliate's deal.
-- Page boilerplate: share buttons, copyright lines, bylines, and appended headlines of other articles ("[관련기사] …") are not this article.
-If no occurrence refers to the company itself, the role is "not_company".
-
-### [Step 2 — Role in the main news]
-First name the main news: the event the headline reports about the headline companies. A price move is not the event; the deal, result, or decision behind it is. Then assign one role:
-- "party": the company itself takes part in that event — jointly with the headline company (co-acquirer, co-signatory, consortium member) or as its counterparty, customer, supplier, partner, investor, acquirer, target, or lawsuit counterpart.
-- "background": its own action, plan, earnings, or situation is cited only to explain or give context to the main news — e.g. a parent or group company's plan behind a subsidiary's upside, or another company's earnings or investment as industry backdrop. Test: is the main event also news about the candidate? If not, it is background even when the candidate acts in its own sentence.
-- "listed": appears only in a list of peers, market leaders, or stocks moving together. A price move is not a business action.
-- "source": a securities firm, research house, or data provider cited only for a target price, forecast, rating, or comment.
-Judge by the candidate's strongest occurrence; any occurrence that makes it a party makes the role "party".
-
-### [Bias]
-A party is shown to users as a company this article is about, so a wrong party is worse than a miss: if you cannot state the main news and the candidate's own part in it, the role is not "party".
-"""
-
-_HUMAN = (
-    "**Headline**: {title}\n"
-    "**Headline companies**: {headline_companies}\n\n"
-    "**Article**:\n{text}\n\n"
-    "**Candidate entities**:\n{entities}"
-)
-
-# 예시 1 — 공급 계약 기사. 제목 기업 엘앤에프는 후보에 없다.
-_CONTRACT_TITLE = "엘앤에프, 1조2천억 하이니켈 양극재 공급 계약"
-_CONTRACT_COUNTERPARTY = "엘앤에프는 삼성SDI와 하이니켈 양극재 공급 계약을 체결했다고 5일 공시했다."
-_CONTRACT_AMOUNT = "계약 규모는 7억9000만 달러(한화 약 1조2200억원)다."
-_CONTRACT_PLAN = "회사는 인플레이션 감축법(IRA) 요건을 고려해 미국 공장 증설도 검토한다."
-_CONTRACT_BROKER = "키움증권은 이날 엘앤에프 목표주가를 15만원으로 올렸다."
-_CONTRACT_STOCKS = "이날 증시에서는 포스코퓨처엠(2.1%) 등 2차전지주가 함께 올랐다."
-_CONTRACT_SHARE = "페이스북 트위터 카카오톡 URL복사"
-
-# 예시 2 — 수혜 기대 기사. 주가 급등 뒤의 사건(지분 취득)에 공동 취득자가 있고, 그룹사의 계획과
-# 다른 기업의 실적이 배경으로 인용되고, 거래 상대방이 "카카오 계열사"라는 소속 표기로만 나온다.
-# 제목 기업 삼성에스디에스는 후보에 없다.
-_BENEFIT_TITLE = "삼성SDS, 그룹 AI 전환·두나무 지분 취득 소식에 27% 급등"
-_BENEFIT_MOVE = "삼성SDS 주가가 이날 27% 오르며 52주 신고가를 새로 썼다."
-_BENEFIT_STAKE = (
-    "전날 삼성SDS와 삼성카드는 카카오 계열사가 보유한 두나무 지분을 각각 1.0% 취득하기로 결의했다."
-)
-_BENEFIT_PARENT = (
-    "삼성전자는 이달 4일 2030년까지 국내외 생산 공장을 'AI 자율공장'으로 전환하겠다는 계획을 "
-    "발표했다."
-)
-_BENEFIT_ORDER = "삼성SDS는 삼성바이오로직스의 송도 신공장 스마트팩토리 구축 사업을 수주했다."
-_BENEFIT_OTHER = "SK텔레콤도 2분기 영업이익이 시장 예상치를 웃돌며 AI 사업 기대가 커졌다."
-_BENEFIT_PEERS = "같은 IT서비스주인 현대오토에버도 3% 올랐다."
-
-
-def _example(
-    title: str, headline_companies: str, sentences: tuple[str, ...], judgements: list[dict]
-) -> dict:
-    return {
-        "title": title,
-        "headline_companies": headline_companies,
-        "text": " ".join(sentences),
-        "entities": "\n".join(f"- {judgement['entity']}" for judgement in judgements),
-        "output": json.dumps({"judgements": judgements}, ensure_ascii=False),
-    }
-
-
-def _judgement(entity: str, mention: str, reason: str, role: str) -> dict:
-    return {"entity": entity, "mention": mention, "reason": reason, "role": role}
-
-
-_EXAMPLES = [
-    _example(
-        _CONTRACT_TITLE,
-        "엘앤에프",
-        (
-            _CONTRACT_COUNTERPARTY,
-            _CONTRACT_AMOUNT,
-            _CONTRACT_PLAN,
-            _CONTRACT_BROKER,
-            _CONTRACT_STOCKS,
-            _CONTRACT_SHARE,
+ROLE_CRITERIA = {
+    "source": {
+        "what": (
+            "Cited only as the source of a target price, forecast, rating, or comment: a "
+            "securities firm, research house, or data provider."
         ),
-        [
-            _judgement("삼성SDI", _CONTRACT_COUNTERPARTY, "공급 계약의 상대방.", "party"),
-            _judgement("한화", _CONTRACT_AMOUNT, "원화 환산 표기.", "not_company"),
-            _judgement("레이", _CONTRACT_PLAN, "'인플레이션'의 일부.", "not_company"),
-            _judgement("키움증권", _CONTRACT_BROKER, "목표주가를 낸 증권사.", "source"),
-            _judgement("포스코퓨처엠", _CONTRACT_STOCKS, "함께 오른 종목 나열.", "listed"),
-            _judgement("카카오", _CONTRACT_SHARE, "공유 버튼의 '카카오톡'.", "not_company"),
+        "examples": [
+            "키움증권은 이날 엘앤에프 목표주가를 15만원으로 올렸다.",
+            "에프앤가이드 컨센서스",
         ],
-    ),
-    _example(
-        _BENEFIT_TITLE,
-        "삼성에스디에스",
-        (
-            _BENEFIT_MOVE,
-            _BENEFIT_STAKE,
-            _BENEFIT_PARENT,
-            _BENEFIT_ORDER,
-            _BENEFIT_OTHER,
-            _BENEFIT_PEERS,
+    },
+    "listed": {
+        "what": (
+            "Appears only in a list of peers, market leaders, or stocks that rose or fell "
+            "together. A price move is not a business action."
         ),
-        [
-            _judgement("삼성카드", _BENEFIT_STAKE, "두나무 지분의 공동 취득자.", "party"),
-            _judgement(
-                "카카오",
-                _BENEFIT_STAKE,
-                "'카카오 계열사'는 소속 표기. 매도 주체는 그 계열사다.",
-                "not_company",
-            ),
-            _judgement(
-                "삼성전자",
-                _BENEFIT_PARENT,
-                "삼성SDS 수혜의 근거로 인용된 그룹사 계획. 삼성전자의 뉴스가 아니다.",
-                "background",
-            ),
-            _judgement(
-                "삼성바이오로직스", _BENEFIT_ORDER, "삼성SDS가 수주한 사업의 발주처.", "party"
-            ),
-            _judgement(
-                "SK텔레콤",
-                _BENEFIT_OTHER,
-                "덧붙여진 다른 기업의 실적. 주된 뉴스와 무관.",
-                "background",
-            ),
-            _judgement("현대오토에버", _BENEFIT_PEERS, "함께 오른 업종 종목.", "listed"),
+        "not_for": "Several counterparties of one contract listed in one sentence: those are parties.",
+        "examples": [
+            "이날 증시에서는 포스코퓨처엠(2.1%) 등 2차전지주가 함께 올랐다.",
+            "같은 IT서비스주인 현대오토에버도 3% 올랐다.",
         ],
-    ),
-]
+    },
+    "background": {
+        "what": (
+            "A real mention that is not a participant in the main news: its own action, plan, "
+            "earnings, or situation is cited to explain or give context. Also a group name or "
+            "group facility (SK그룹, LG그룹주, LG사이언스파크); a financial service provider for "
+            "the deal (IPO underwriter 상장주선인, subscription broker 청약 창구, sale advisor "
+            "매각주관사, treasury-stock trustee 신탁계약 수탁사); an existing customer, supplier, "
+            "or partner named only in a company profile or analyst report (주요 고객은 X, X향 "
+            "매출 비중); a company named only in page boilerplate or other articles' headlines."
+        ),
+        "examples": [
+            "삼성전자는 2030년까지 생산 공장을 'AI 자율공장'으로 전환하겠다는 계획을 발표했다. (cited to explain 삼성SDS's rally)",
+            "SK텔레콤도 2분기 영업이익이 시장 예상치를 웃돌았다. (another company's result)",
+            "카카오X는 카카오뱅크·카카오페이 등 계열사를 관리한다. (affiliates enumerated)",
+        ],
+    },
+    "party": {
+        "what": (
+            "The company itself takes part in the event the headline reports: a counterparty of "
+            "the supply, order, delivery, or sales contract (the customer as much as the "
+            "supplier), the other side of a joint development, cooperation agreement (협약, "
+            "MOU), consortium, or joint venture, a buyer or seller of the stake, an investor "
+            "that puts its own money in (CB subscriber, block-deal buyer), a co-defendant, or "
+            "the headline company itself under another spelling (English name, short name, "
+            "full name behind an abbreviation). An unlisted affiliate's action is its nearest "
+            "listed parent's action: when the seller or supplier is 'SK에코플랜트' or '카카오 "
+            "계열사', the listed parent (SK, 카카오) is the party."
+        ),
+        "not_for": (
+            "A company whose separate fact is cited as context, a peer in a stock list, a "
+            "forecast source, a financial intermediary, or an existing customer in a profile. "
+            "A wrong party is worse than a miss: if you cannot state the main news and this "
+            "company's own part in it, it is not a party."
+        ),
+        "examples": [
+            "엘앤에프는 삼성SDI와 하이니켈 양극재 공급 계약을 체결했다고 공시했다. (삼성SDI = customer)",
+            "삼성SDS와 삼성카드는 카카오 계열사가 보유한 두나무 지분을 각각 취득하기로 했다. (삼성카드 = co-buyer, 카카오 = seller through its affiliate)",
+            "STX엔진, 한화엔진과 한화오션 등에 공급계약을 체결했다. (each listed counterparty = party)",
+        ],
+    },
+}
 
-_EXAMPLE_PROMPT = ChatPromptTemplate.from_messages([("human", _HUMAN), ("ai", "{output}")])
-
-_FEW_SHOT_PROMPT = FewShotChatMessagePromptTemplate(
-    example_prompt=_EXAMPLE_PROMPT,
-    examples=_EXAMPLES,
+IS_COMPANY_TRUE = (
+    "The surface form names the listed company itself (including an English or short name), "
+    "or a group label or unlisted affiliate name that belongs to this listed company "
+    "(SK그룹 → SK, 카카오 계열사 → 카카오, 한화큐셀 → 한화)."
+)
+IS_COMPANY_FALSE = (
+    "An ordinary word that happens to be spelled like the name (대상, 전방, DB as in '재판매 및 "
+    "DB 금지'), a sports team or league sponsor that shares the name (KCC in '2026-2027 KCC "
+    "프로농구', KT in 'KT 이강철 감독'), won currency notation (한화 약 1조원), an unrelated company "
+    "that merely shares "
+    "the name (흥국생명 vs 흥국), or page boilerplate: share buttons (카카오톡 URL복사), bylines, "
+    "copyright lines, other articles' headlines."
 )
 
-# Passing a SystemMessage instance keeps the system body out of template-variable parsing
-PROMPT = ChatPromptTemplate.from_messages(
-    [
-        SystemMessage(content=_SYSTEM),
-        _FEW_SHOT_PROMPT,
-        ("human", _HUMAN),
-    ]
-)
+
+def build_questions(count: int, context_key: str = "lead") -> dict[str, Any]:
+    """state 의 `candidates[0..count)` 에 대한 질문 2×count. context_key 는 주된 뉴스를 읽을 state 필드."""
+    from typesafe_sdk import Choice, Noul, NoulCriteria
+
+    questions: dict[str, Any] = {}
+    for i in range(count):
+        ref = f"candidates[{i}]"
+        questions[f"c{i}_is_company"] = Noul(
+            instructions={
+                "question": (
+                    f"In `{ref}.sentences`, does the surface form `{ref}.surface` refer to the "
+                    f"listed company `{ref}.name`, directly or through its group or an "
+                    f"unlisted affiliate?"
+                ),
+            },
+            criteria=NoulCriteria(true=IS_COMPANY_TRUE, false=IS_COMPANY_FALSE),
+        )
+        questions[f"c{i}_role"] = Choice(
+            instructions={
+                "question": (
+                    f"What role does the company `{ref}.name` (surface form `{ref}.surface`) "
+                    f"play in the main news that `headline` reports about "
+                    f"`query_stocks`? Judge by its strongest occurrence in "
+                    f"`{ref}.sentences`; `{context_key}` tells what the main news is."
+                ),
+                "main_news": (
+                    "The event the headline reports: the deal, result, or decision. A stock "
+                    "price move is not the event; the business action behind it is."
+                ),
+                "if_not_the_company": (
+                    "If the surface form does not refer to this company at all, still pick the "
+                    "role the text gives the entity it names; a separate question handles that."
+                ),
+            },
+            criteria=ROLE_CRITERIA,
+        )
+    return questions
